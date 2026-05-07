@@ -1,0 +1,6 @@
+[submodule "manual"]
+	path = manual
+	url = https://github.com/BraneFramework/manual.git
+[submodule "specification"]
+	path = specification
+	url = https://github.com/BraneFramework/specification.git
