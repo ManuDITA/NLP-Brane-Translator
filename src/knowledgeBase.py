@@ -4,7 +4,7 @@ from langchain_text_splitters import MarkdownTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 
-REPOS = ["../manual", "../specification"]
+REPOS = ["../submodules/manual", "../submodules/specification"]
 CHROMA_PATH = "../brane_knowledge_db"
 
 def build_knowledge_base():

@@ -14,7 +14,7 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-
 db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
 
 # --- THE TEST ---
-query = "How do I define a function or a workflow in Branescript?"
+query = "Define a function or a workflow in Branescript"
 print(f"🔍 Searching for: {query}\n")
 
 # k=3 means "find the top 3 most relevant chunks"
