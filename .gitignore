@@ -1,2 +1,4 @@
 .venv/
 submodules/*
+brane_knowledge_db/*
+src/__pycache__/*
