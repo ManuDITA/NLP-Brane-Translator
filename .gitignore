@@ -1,4 +1,5 @@
 .venv/
 submodules/*
-brane_knowledge_db/*
+brane_knowledge_db/
 src/__pycache__/*
+brane_knowledge_db/chroma.sqlite3
