@@ -59,7 +59,7 @@ USER REQUEST:
 
 {error_section}Output ONLY valid BraneScript code.
 Use inline comments (// ...) to mark any assumptions about parameter names or types.
-No explanations outside of comments.
+No explanations outside of comments. Do not return anything other than the BraneScript code.
 
 BRANESCRIPT CODE:"""
 
@@ -198,6 +198,11 @@ def run_pipeline(user_query: str,
 
     # ── Step 2: Package / dataset retrieval ───────────────────────────────
     pkg_context = pkg_retriever.run(subtasks, user_query)
+    print("\n📦 Retrieved package/dataset context:")
+    if pkg_context.strip():
+        print(pkg_context)
+    else:
+        print("   - (No package/dataset context returned)")
 
     # ── Step 3: Generation loop (syntax + semantic checks with retries) ───
     prompt = ChatPromptTemplate.from_template(GENERATION_TEMPLATE)
@@ -269,9 +274,10 @@ if __name__ == "__main__":
     lang_db = Chroma(persist_directory=LANG_DB_PATH, embedding_function=embeddings)
 
     # Package/dataset DB (built by knowledgeBase.py)
-    # If it doesn't exist yet, PkgRetriever will return a graceful "not found" message
+    # If it doesn't exist yet, use lang_db as fallback so PkgRetriever still works without package context
     pkg_db = None
     if os.path.exists(PKG_DB_PATH):
+        print(f"✅  Found package DB at {PKG_DB_PATH}. Loading...")
         pkg_db = Chroma(persist_directory=PKG_DB_PATH, embedding_function=embeddings)
     else:
         print(f"⚠️  Package DB not found at {PKG_DB_PATH}.")
@@ -284,10 +290,8 @@ if __name__ == "__main__":
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     user_query = (
-        "I want to run a private analysis on the heart-disease dataset "
-        "using package \"Healthcare\". Make sure to use the correct BraneScript "
-        "syntax for function definition and package usage. If you need to make "
-        "assumptions about input parameters, mark them in comments."
+        "I want to run a private cardiovascular analysis on a random patient you want. Define the parameters of the random patient yourself. Generate a report after that and validate the data"
+        "Use package \"Healthcare\". Make sure to use the correct BraneScript "
     )
 
     print(f"\n🧠 Intent: {user_query}")

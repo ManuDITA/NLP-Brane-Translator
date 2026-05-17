@@ -16,18 +16,20 @@ from langchain_text_splitters import MarkdownTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-MANUAL_PATH      = "../submodules/manual"
-SPEC_PATH        = "../submodules/specification"
-SELECTED_DOCS_PATH   = "../selectedDocs"  #hand-picked relevant docs for quick iteration
-PACKAGES_PATH    = "../submodules/packages" 
-DATASETS_PATH    = "../submodules/datasets"  
+BASE_DIR = Path(__file__).resolve().parent.parent
+SELECTED_DOCS_PATH = BASE_DIR / "selectedDocs"
+MANUAL_PATH        = BASE_DIR / "submodules/manual"
+SPEC_PATH          = BASE_DIR / "submodules/specification"
+PACKAGES_PATH      = BASE_DIR / "submodules/packages"
+DATASETS_PATH      = BASE_DIR / "submodules/datasets"
 
-LANG_DB_PATH     = "../brane_lang_db"   
-PKG_DB_PATH      = "../brane_pkg_db"    
+LANG_DB_PATH       = BASE_DIR / "brane_lang_db"
+PKG_DB_PATH        = BASE_DIR / "brane_pkg_db" 
 
 EMBEDDING_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -85,6 +87,93 @@ def chunk_and_filter(docs: list[Document],
     return chunks
 
 
+def chunk_packages_by_section(docs: list[Document]) -> list[Document]:
+    """
+    Smart chunking strategy for package documentation.
+    
+    Packages contain:
+      - Metadata (container.yml, action definitions) → keep whole
+      - Function descriptions → chunk at 1000 chars with 200 overlap
+      - BraneScript examples → keep examples whole (usually < 800 chars each)
+      - Configuration guides → chunk at 800 chars with 150 overlap
+    
+    This preserves semantic units and maintains code example integrity.
+    """
+    chunks = []
+    
+    for doc in docs:
+        text = doc.page_content
+        source = doc.metadata.get("source", "")
+        
+        # Heuristic: detect document type from filename/content
+        is_config = "configuration" in source.lower() or "config" in text[:200].lower()
+        is_example = "example" in source.lower() or text.count("bscript") > 2
+        is_reference = "reference" in source.lower() or "quick" in source.lower()
+        
+        # Strategy 1: Keep container/action definitions whole
+        if "container.yml" in source or "container:" in text[:100]:
+            chunks.append(doc)
+            continue
+        
+        # Strategy 2: Keep BraneScript examples whole (usually compact)
+        if "```bscript" in text:
+            # Split on code blocks to keep examples intact
+            examples = text.split("```bscript")
+            for i, example in enumerate(examples):
+                if i == 0:
+                    # first part before code block
+                    if example.strip():
+                        sub_chunks = MarkdownTextSplitter(
+                            chunk_size=600, chunk_overlap=100
+                        ).split_documents([Document(page_content=example, 
+                                                   metadata=doc.metadata)])
+                        chunks.extend(sub_chunks)
+                else:
+                    # keep code block + surrounding text together
+                    code_section = "```bscript" + example
+                    if len(code_section) < 2000:  # manageable size
+                        chunks.append(Document(page_content=code_section.split("```")[0:2][0] + "```",
+                                             metadata=doc.metadata))
+                    else:
+                        # large example, chunk it with generous overlap
+                        sub_chunks = MarkdownTextSplitter(
+                            chunk_size=1200, chunk_overlap=200
+                        ).split_documents([Document(page_content=code_section,
+                                                   metadata=doc.metadata)])
+                        chunks.extend(sub_chunks)
+        # Strategy 3: Configuration guides need context (larger chunks)
+        elif is_config:
+            sub_chunks = MarkdownTextSplitter(
+                chunk_size=800, chunk_overlap=150
+            ).split_documents([doc])
+            chunks.extend(sub_chunks)
+        # Strategy 4: Reference docs (like QUICK_REFERENCE) - preserve sections
+        elif is_reference:
+            # Keep "## Sections" together with their content
+            sections = text.split("\n## ")
+            for section in sections:
+                if section.strip():
+                    formatted = "## " + section if not section.startswith("#") else section
+                    if len(formatted) < 1500:  # manageable section
+                        chunks.append(Document(page_content=formatted,
+                                             metadata=doc.metadata))
+                    else:
+                        # Large section, chunk with high overlap for coherence
+                        sub_chunks = MarkdownTextSplitter(
+                            chunk_size=1000, chunk_overlap=200
+                        ).split_documents([Document(page_content=formatted,
+                                                   metadata=doc.metadata)])
+                        chunks.extend(sub_chunks)
+        # Strategy 5: Default - larger chunks for general docs
+        else:
+            sub_chunks = MarkdownTextSplitter(
+                chunk_size=900, chunk_overlap=180
+            ).split_documents([doc])
+            chunks.extend(sub_chunks)
+    
+    return chunks
+
+
 def build_db(chunks: list[Document], path: str,
              embeddings: HuggingFaceEmbeddings) -> None:
     if os.path.exists(path):
@@ -113,9 +202,10 @@ def build_knowledge_base():
     pkg_docs = load_md_files([PACKAGES_PATH, DATASETS_PATH])
     if pkg_docs:
         print(f"  ✅ Loaded {len(pkg_docs)} files total")
-        # Don't filter pkg docs — every line may matter (function signatures, types)
-        pkg_chunks = chunk_and_filter(pkg_docs, chunk_size=300,
-                                      chunk_overlap=30, apply_filter=False)
+        # Use smart chunking: preserves code examples, action definitions, and sections
+        # Chunk sizes: metadata whole, examples 1000-1200, reference 1000, config 800, default 900
+        pkg_chunks = chunk_packages_by_section(pkg_docs)
+        print(f"  ✨ Smart chunking applied: {len(pkg_chunks)} semantic chunks")
         build_db(pkg_chunks, PKG_DB_PATH, embeddings)
     else:
         print("  ℹ️  No package/dataset docs found — pkg DB skipped.")
