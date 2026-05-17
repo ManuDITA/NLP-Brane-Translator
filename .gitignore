@@ -4,3 +4,4 @@ brane_knowledge_db/
 src/__pycache__/*
 brane_lang_db/
 brane_pkg_db/
+DYNAMOS/

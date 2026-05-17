@@ -4,3 +4,6 @@
 [submodule "specification"]
 	path = submodules/specification
 	url = https://github.com/BraneFramework/specification.git
+[submodule "DYNAMOS"]
+	path = submodules/DYNAMOS
+	url = https://github.com/ManuDITA/DYNAMOS.git
