@@ -1,0 +1,21 @@
+# container.yml for the Healthcare package
+name: healthcare
+version: 1.0.0
+kind: ecu
+
+files:
+  - healthcare.py
+
+entrypoint:
+  kind: task
+  exec: healthcare.py
+
+actions:
+  'analyze_heart_disease':
+    command:
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string

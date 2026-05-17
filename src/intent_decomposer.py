@@ -41,13 +41,6 @@ SUB-TASKS:"""
 # ---------------------------------------------------------------------------
 # Prompt 2: Query rewriter: translates English sub-tasks into BraneScript-vocabulary search terms.
 # ---------------------------------------------------------------------------
-REWRITE_TEMPLATE = """Rewrite the following sub-task as a short BraneScript
-documentation search query (one line, 5-10 words).
-Use BraneScript terms where possible: func, let, workflow, package, unit, import.
-
-SUB-TASK: {subtask}
-
-SEARCH QUERY:"""
 
 
 class IntentDecomposer:
@@ -69,11 +62,7 @@ class IntentDecomposer:
             | llm
             | StrOutputParser()
         )
-        self.rewrite_chain = (
-            PromptTemplate.from_template(REWRITE_TEMPLATE)
-            | llm
-            | StrOutputParser()
-        )
+
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -143,9 +132,9 @@ class IntentDecomposer:
         print("\n🔍 Language spec retrieval:")
         all_docs = []
         for st in subtasks:
-            query = self._rewrite(st)
-            print(f"   • {query}")
-            all_docs.extend(self._retrieve(query))
+            
+            print(f"   • {st}")
+            all_docs.extend(self._retrieve(st))
 
         docs = self._apply_token_budget(self._deduplicate(all_docs))
         print(f"   → {len(docs)} unique chunks within token budget")

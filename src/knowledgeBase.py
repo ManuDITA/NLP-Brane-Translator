@@ -22,6 +22,7 @@ from langchain_core.documents import Document
 # ---------------------------------------------------------------------------
 MANUAL_PATH      = "../submodules/manual"
 SPEC_PATH        = "../submodules/specification"
+SELECTED_DOCS_PATH   = "../selectedDocs"  #hand-picked relevant docs for quick iteration
 PACKAGES_PATH    = "../submodules/packages" 
 DATASETS_PATH    = "../submodules/datasets"  
 
@@ -101,7 +102,7 @@ def build_knowledge_base():
 
     # --- 1. Language spec DB (manual + specification) ---
     print("\n📚 Building language specification DB...")
-    lang_docs = load_md_files([MANUAL_PATH, SPEC_PATH])
+    lang_docs = load_md_files([SELECTED_DOCS_PATH])
     print(f"  ✅ Loaded {len(lang_docs)} files total")
     lang_chunks = chunk_and_filter(lang_docs, chunk_size=400,
                                    chunk_overlap=50, apply_filter=True)

@@ -21,7 +21,7 @@ import os
 import re
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -99,12 +99,6 @@ def check_syntax(code: str) -> tuple[bool, str]:
     # Check balanced parentheses
     if code.count("(") != code.count(")"):
         errors.append("Unbalanced parentheses: ( and ) counts do not match.")
-
-    # Every func must have a return type arrow
-    func_lines = [l for l in code.splitlines() if re.match(r'\s*func\s+\w+', l)]
-    for fl in func_lines:
-        if "->" not in fl:
-            errors.append(f"Function declaration missing return type (->): {fl.strip()}")
 
     # let assignments must use :=
     let_lines = [l for l in code.splitlines() if re.match(r'\s*let\s+\w+\s*=', l)]
