@@ -19,6 +19,7 @@ Run:
 
 import os
 import re
+from datetime import datetime
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM as Ollama
@@ -31,10 +32,14 @@ from pkg_retriever import PkgRetriever
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-LANG_DB_PATH    = "../brane_lang_db"
-PKG_DB_PATH     = "../brane_pkg_db"
-EXAMPLE_DB_PATH = "../brane_lang_db"    # successful scripts go back into lang DB
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+LANG_DB_PATH          = "../brane_lang_db"
+PKG_DB_PATH           = "../brane_pkg_db"
+EXAMPLE_DB_PATH       = "../brane_lang_db"    # successful scripts go back into lang DB
+BASE_DIR              = os.path.dirname(os.path.abspath(__file__))
+BRANESCRIPT_OUTPUT_DIR = os.path.abspath(
+    os.path.join(BASE_DIR, "..", "generated_branescripts")
+)
+EMBEDDING_MODEL       = "sentence-transformers/all-MiniLM-L6-v2"
 
 MAX_RETRIES = 3    # max attempts for syntax and semantic loops
 
@@ -59,7 +64,18 @@ USER REQUEST:
 
 {error_section}Output ONLY valid BraneScript code.
 Use inline comments (// ...) to mark any assumptions about parameter names or types.
-No explanations outside of comments. Do not return anything other than the BraneScript code.
+Do not assume packages, functions or datasets that are not mentioned in the PACKAGE / DATASET CONTEXT.
+Do not invent any new top-level functions or variables.
+Define every variable before it is used.
+Use exact BraneScript assignment syntax:
+  let <name> := <expression>;
+Do not use `=` for assignment.
+If the context is incomplete, ask a single clarifying question instead of making assumptions.
+If you ask a question, do not generate any code.
+If you have enough information, generate valid BraneScript code only.
+
+CLARIFICATION HISTORY:
+{clarification_section}
 
 BRANESCRIPT CODE:"""
 
@@ -169,9 +185,57 @@ def save_to_example_store(code: str, user_query: str,
         print(f"\n⚠️  Could not save example: {e}")
 
 
+def make_safe_filename(text: str, max_length: int = 50) -> str:
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", text.strip())
+    filename = re.sub(r"_+", "_", filename)
+    return filename[:max_length].strip("_") or "branescript"
+
+
+def save_branescript_to_folder(code: str, user_query: str, output_dir: str = BRANESCRIPT_OUTPUT_DIR) -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_query = make_safe_filename(user_query)
+    filename = f"branescript_{timestamp}_{safe_query}.brane"
+    path = os.path.join(output_dir, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"// Generated from user query: {user_query}\n")
+        f.write("// Saved by pipeline.py\n\n")
+        f.write(code)
+    print(f"\n💾 Saved BraneScript to folder: {path}")
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Execute workflow (placeholder)
 # ---------------------------------------------------------------------------
+def is_clarification_request(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    first_line = stripped.splitlines()[0].lower()
+    question_prefixes = (
+        "what", "which", "when", "where", "why", "how",
+        "do", "does", "did", "can", "could", "would", "should",
+        "is", "are", "may", "might", "please",
+    )
+
+    if stripped.endswith("?"):
+        return True
+    if any(first_line.startswith(prefix) for prefix in question_prefixes):
+        return True
+    if "need more information" in stripped.lower() or "clarify" in stripped.lower():
+        return True
+    return False
+
+
+def ask_for_clarification(question: str) -> str:
+    print("\n❓ The model is asking for clarification:")
+    print(question.strip())
+    answer = input("Your answer: ")
+    return answer.strip()
+
+
 def execute_workflow(code: str) -> tuple[bool, str]:
     """
     Hook your actual Brane execution here.
@@ -204,48 +268,66 @@ def run_pipeline(user_query: str,
     else:
         print("   - (No package/dataset context returned)")
 
-    # ── Step 3: Generation loop (syntax + semantic checks with retries) ───
+    clarification_history: list[tuple[str, str]] = []
+    clarification_section = ""
+
+    # ── Step 3: Generation loop (clarification + validation) ─────────────
     prompt = ChatPromptTemplate.from_template(GENERATION_TEMPLATE)
     chain = prompt | llm | StrOutputParser()
 
     error_section = ""
     code = ""
+    attempt = 1
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    while attempt <= MAX_RETRIES:
         print(f"\n⚙️  Generation attempt {attempt}/{MAX_RETRIES}...")
 
-        # ── Prompt construction + generation ──────────────────────────────
         code = chain.invoke({
-            "subtasks":     subtasks_str,
-            "lang_context": lang_context,
-            "pkg_context":  pkg_context,
-            "question":     user_query,
-            "error_section": error_section,
+            "subtasks":            subtasks_str,
+            "lang_context":       lang_context,
+            "pkg_context":        pkg_context,
+            "question":           user_query,
+            "error_section":      error_section,
+            "clarification_section": clarification_section,
         })
 
+        if is_clarification_request(code):
+            answer = ask_for_clarification(code)
+            if not answer:
+                print("   ⚠️ No clarification answer provided. Aborting.")
+                return code
+            clarification_history.append((code.strip(), answer))
+            clarification_section = "\n\n".join(
+                f"Q: {q}\nA: {a}" for q, a in clarification_history
+            )
+            error_section = ""
+            continue
+
         # ── Syntax check ──────────────────────────────────────────────────
-        #   syntax_ok, syntax_error = check_syntax(code)
-        #if not syntax_ok:
-        #    print(f"   ❌ Syntax check failed: {syntax_error}")
-        #    if attempt < MAX_RETRIES:
-        #        error_section = SYNTAX_ERROR_SECTION.format(error=syntax_error)
-        #        continue
-        #    else:
-        #        print(f"   ⛔ Max retries reached on syntax. Returning last attempt.")
-        #        return code
+        syntax_ok, syntax_error = check_syntax(code)
+        if not syntax_ok:
+            print(f"   ❌ Syntax check failed: {syntax_error}")
+            if attempt < MAX_RETRIES:
+                error_section = SYNTAX_ERROR_SECTION.format(error=syntax_error)
+                attempt += 1
+                continue
+            else:
+                print(f"   ⛔ Max retries reached on syntax. Returning last attempt.")
+                return code
 
         print("   ✅ Syntax check passed")
 
         # ── Semantic check ─────────────────────────────────────────────────
-        #semantic_ok, semantic_error = check_semantic(code, pkg_context)
-        #if not semantic_ok:
-        #    print(f"   ❌ Semantic check failed: {semantic_error}")
-        #    if attempt < MAX_RETRIES:
-        #        error_section = SEMANTIC_ERROR_SECTION.format(error=semantic_error)
-        #        continue
-        #    else:
-        #        print(f"   ⛔ Max retries reached on semantic. Returning last attempt.")
-        #        return code
+        semantic_ok, semantic_error = check_semantic(code, pkg_context)
+        if not semantic_ok:
+            print(f"   ❌ Semantic check failed: {semantic_error}")
+            if attempt < MAX_RETRIES:
+                error_section = SEMANTIC_ERROR_SECTION.format(error=semantic_error)
+                attempt += 1
+                continue
+            else:
+                print(f"   ⛔ Max retries reached on semantic. Returning last attempt.")
+                return code
 
         print("   ✅ Semantic check passed")
         break   # both checks passed
@@ -254,9 +336,9 @@ def run_pipeline(user_query: str,
     #exec_ok, exec_result = execute_workflow(code)
     #print(f"   {'✅' if exec_ok else '❌'} {exec_result}")
 #
-    ## ── Step 5: Save to example store on success ───────────────────────────
-    #if exec_ok:
-    #    save_to_example_store(code, user_query, embeddings)
+    ## ── Step 5: Save generated BraneScript to folder ─────────────────────────
+    if code.strip():
+        save_branescript_to_folder(code, user_query)
 
     return code
 
@@ -290,7 +372,7 @@ if __name__ == "__main__":
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     user_query = (
-        "I want to run a private cardiovascular analysis on a random patient you want. Define the parameters of the random patient yourself. Generate a report after that and validate the data"
+        "I want to run a private cardiovascular analysis on a patient of age 42, sex male, height 175 and weight 70. After that, generate a report summarising the results."
         "Use package \"Healthcare\". Make sure to use the correct BraneScript "
     )
 

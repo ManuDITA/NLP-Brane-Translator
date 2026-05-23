@@ -22,14 +22,13 @@ from pathlib import Path
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
-SELECTED_DOCS_PATH = BASE_DIR / "selectedDocs"
-MANUAL_PATH        = BASE_DIR / "submodules/manual"
-SPEC_PATH          = BASE_DIR / "submodules/specification"
-PACKAGES_PATH      = BASE_DIR / "submodules/packages"
-DATASETS_PATH      = BASE_DIR / "submodules/datasets"
+SELECTED_DOCS_PATH      = BASE_DIR / "selectedDocs"
+LANGUAGE_SPEC_PATH      = BASE_DIR / "submodules/languageSpec"
+LANGUAGE_SPEC_EXAMPLES  = LANGUAGE_SPEC_PATH / "branescript"
+PACKAGES_PATH           = BASE_DIR / "submodules/packages"
 
 LANG_DB_PATH       = BASE_DIR / "brane_lang_db"
-PKG_DB_PATH        = BASE_DIR / "brane_pkg_db" 
+PKG_DB_PATH        = BASE_DIR / "brane_pkg_db"
 
 EMBEDDING_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -71,6 +70,128 @@ def load_md_files(paths: list[str]) -> list[Document]:
     return docs
 
 
+def load_text_files(paths: list[str], extensions: tuple[str, ...]) -> list[Document]:
+    docs = []
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"  ⚠️  Path not found, skipping: {path}")
+            continue
+        loaded_files = 0
+        for root, _, files in os.walk(path):
+            for file in files:
+                if file.lower().endswith(extensions):
+                    filepath = os.path.join(root, file)
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            text = f.read()
+                    except Exception as e:
+                        print(f"    ⚠️  Could not read {filepath}: {e}")
+                        continue
+                    docs.append(Document(page_content=text,
+                                         metadata={"source": filepath}))
+                    loaded_files += 1
+        print(f"  📁 {path}: {loaded_files} files")
+    return docs
+
+
+def load_language_spec_docs(language_spec_path: Path) -> list[Document]:
+    docs = []
+    if not language_spec_path.exists():
+        print(f"  ⚠️  Language spec path not found, skipping: {language_spec_path}")
+        return docs
+
+    # Load Rust-based syntax and semantics definitions
+    rs_docs = load_text_files([language_spec_path], (".rs",))
+    docs.extend(rs_docs)
+
+    # Load BraneScript examples from the dedicated examples folder
+    example_docs = load_text_files([LANGUAGE_SPEC_EXAMPLES], (".bs",))
+    docs.extend(example_docs)
+
+    print(f"  📁 Loaded {len(docs)} languageSpec documents")
+    return docs
+
+
+def chunk_language_spec_docs(docs: list[Document]) -> list[Document]:
+    rs_docs = [d for d in docs if d.metadata.get("source", "").lower().endswith(".rs")]
+    bs_docs = [d for d in docs if d.metadata.get("source", "").lower().endswith(".bs")]
+
+    # Keep BraneScript examples whole and chunk Rust spec source only.
+    bs_chunks = bs_docs
+    rs_chunks = chunk_and_filter(rs_docs, chunk_size=1200, chunk_overlap=200, apply_filter=False)
+    return rs_chunks + bs_chunks
+
+
+def load_package_docs(packages_path: Path) -> list[Document]:
+    docs = []
+    if not packages_path.exists():
+        print(f"  ⚠️  Packages path not found, skipping: {packages_path}")
+        return docs
+
+    for package_dir in sorted(packages_path.iterdir()):
+        if not package_dir.is_dir():
+            continue
+        package_name = package_dir.name
+        print(f"  🔧 Loading package: {package_name}")
+
+        # Load the main package reference documents first
+        for filename in ("QUICK_REFERENCE.md", "quick_reference.md", "CONFIGURATION.md", "configuration.md"):
+            path = package_dir / filename
+            if path.exists():
+                try:
+                    text = path.read_text(encoding="utf-8")
+                    docs.append(Document(
+                        page_content=text,
+                        metadata={
+                            "source": str(path),
+                            "package": package_name,
+                            "doc_type": filename.lower().replace(".md", ""),
+                        }
+                    ))
+                    print(f"    ✅ Loaded {filename}")
+                except Exception as e:
+                    print(f"    ⚠️  Could not read {path}: {e}")
+
+        # Also ingest container / configuration YAML files if present
+        for yaml_ext in ("*.yml", "*.yaml"):
+            for path in sorted(package_dir.glob(yaml_ext)):
+                if path.name.lower() in ("container.yml", "container.yaml", "configuration.yml", "config.yml"):
+                    try:
+                        text = path.read_text(encoding="utf-8")
+                        docs.append(Document(
+                            page_content=text,
+                            metadata={
+                                "source": str(path),
+                                "package": package_name,
+                                "doc_type": "package_yaml",
+                            }
+                        ))
+                        print(f"    ✅ Loaded {path.name}")
+                    except Exception as e:
+                        print(f"    ⚠️  Could not read {path}: {e}")
+
+        # If no quick reference or configuration docs exist, optionally include README.md as fallback
+        if not any(d.metadata.get("package") == package_name for d in docs):
+            readme_path = package_dir / "README.md"
+            if readme_path.exists():
+                try:
+                    text = readme_path.read_text(encoding="utf-8")
+                    docs.append(Document(
+                        page_content=text,
+                        metadata={
+                            "source": str(readme_path),
+                            "package": package_name,
+                            "doc_type": "readme",
+                        }
+                    ))
+                    print(f"    ✅ Loaded README.md as fallback")
+                except Exception as e:
+                    print(f"    ⚠️  Could not read {readme_path}: {e}")
+
+    print(f"  📁 Loaded {len(docs)} package documents")
+    return docs
+
+
 def chunk_and_filter(docs: list[Document],
                      chunk_size: int = 400,
                      chunk_overlap: int = 50,
@@ -104,11 +225,14 @@ def chunk_packages_by_section(docs: list[Document]) -> list[Document]:
     for doc in docs:
         text = doc.page_content
         source = doc.metadata.get("source", "")
+        filename = os.path.basename(source).lower()
         
         # Heuristic: detect document type from filename/content
-        is_config = "configuration" in source.lower() or "config" in text[:200].lower()
-        is_example = "example" in source.lower() or text.count("bscript") > 2
-        is_reference = "reference" in source.lower() or "quick" in source.lower()
+        is_config = "configuration" in filename or "config" in text[:200].lower()
+        is_example = "example" in filename or text.count("bscript") > 2
+        is_reference = "quick_reference" in filename or "quick reference" in text[:200].lower()
+        is_readme = filename == "readme.md" or filename == "readme"
+        is_yaml = filename.endswith(('.yml', '.yaml'))
         
         # Strategy 1: Keep container/action definitions whole
         if "container.yml" in source or "container:" in text[:100]:
@@ -141,30 +265,39 @@ def chunk_packages_by_section(docs: list[Document]) -> list[Document]:
                         ).split_documents([Document(page_content=code_section,
                                                    metadata=doc.metadata)])
                         chunks.extend(sub_chunks)
+        elif is_yaml:
+            if len(text) < 2000:
+                chunks.append(doc)
+            else:
+                sub_chunks = MarkdownTextSplitter(
+                    chunk_size=1200, chunk_overlap=200
+                ).split_documents([doc])
+                chunks.extend(sub_chunks)
         # Strategy 3: Configuration guides need context (larger chunks)
         elif is_config:
             sub_chunks = MarkdownTextSplitter(
-                chunk_size=800, chunk_overlap=150
+                chunk_size=900, chunk_overlap=180
             ).split_documents([doc])
             chunks.extend(sub_chunks)
-        # Strategy 4: Reference docs (like QUICK_REFERENCE) - preserve sections
         elif is_reference:
-            # Keep "## Sections" together with their content
             sections = text.split("\n## ")
             for section in sections:
                 if section.strip():
                     formatted = "## " + section if not section.startswith("#") else section
-                    if len(formatted) < 1500:  # manageable section
+                    if len(formatted) < 1400:
                         chunks.append(Document(page_content=formatted,
                                              metadata=doc.metadata))
                     else:
-                        # Large section, chunk with high overlap for coherence
                         sub_chunks = MarkdownTextSplitter(
-                            chunk_size=1000, chunk_overlap=200
+                            chunk_size=1100, chunk_overlap=220
                         ).split_documents([Document(page_content=formatted,
                                                    metadata=doc.metadata)])
                         chunks.extend(sub_chunks)
-        # Strategy 5: Default - larger chunks for general docs
+        elif is_readme:
+            sub_chunks = MarkdownTextSplitter(
+                chunk_size=800, chunk_overlap=150
+            ).split_documents([doc])
+            chunks.extend(sub_chunks)
         else:
             sub_chunks = MarkdownTextSplitter(
                 chunk_size=900, chunk_overlap=180
@@ -189,28 +322,32 @@ def build_db(chunks: list[Document], path: str,
 def build_knowledge_base():
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-    # --- 1. Language spec DB (manual + specification) ---
+    # --- 1. Language spec DB (selectedDocs first, supplemented by manual + specification) ---
     print("\n📚 Building language specification DB...")
-    lang_docs = load_md_files([SELECTED_DOCS_PATH])
-    print(f"  ✅ Loaded {len(lang_docs)} files total")
-    lang_chunks = chunk_and_filter(lang_docs, chunk_size=400,
-                                   chunk_overlap=50, apply_filter=True)
+    selected_docs = load_md_files([SELECTED_DOCS_PATH])
+    language_spec_docs = load_language_spec_docs(LANGUAGE_SPEC_PATH)
+    print(
+        f"  ✅ Loaded {len(selected_docs)} selectedDocs, "
+        f"{len(language_spec_docs)} languageSpec files"
+    )
+
+    selected_chunks = chunk_and_filter(selected_docs, chunk_size=400,
+                                       chunk_overlap=50, apply_filter=False)
+    language_spec_chunks = chunk_language_spec_docs(language_spec_docs)
+    lang_chunks = selected_chunks + language_spec_chunks
     build_db(lang_chunks, LANG_DB_PATH, embeddings)
 
-    # --- 2. Package / dataset DB (context-relevant) ---
-    print("\n📦 Building package/dataset DB...")
-    pkg_docs = load_md_files([PACKAGES_PATH, DATASETS_PATH])
+    # --- 2. Package DB (package quick reference + configuration only) ---
+    print("\n📦 Building package DB...")
+    pkg_docs = load_package_docs(PACKAGES_PATH)
     if pkg_docs:
-        print(f"  ✅ Loaded {len(pkg_docs)} files total")
-        # Use smart chunking: preserves code examples, action definitions, and sections
-        # Chunk sizes: metadata whole, examples 1000-1200, reference 1000, config 800, default 900
         pkg_chunks = chunk_packages_by_section(pkg_docs)
+        print(f"  ✅ Loaded {len(pkg_docs)} package docs total")
         print(f"  ✨ Smart chunking applied: {len(pkg_chunks)} semantic chunks")
         build_db(pkg_chunks, PKG_DB_PATH, embeddings)
     else:
-        print("  ℹ️  No package/dataset docs found — pkg DB skipped.")
-        print("      Populate ../submodules/packages and ../submodules/datasets")
-        print("      with .md files describing your packages and datasets,")
+        print("  ℹ️  No package docs found — package DB skipped.")
+        print("      Populate ../submodules/packages with package docs, quick references, and configuration files")
         print("      then re-run this script.")
 
     print("\n🎉 Done. DBs ready.")
