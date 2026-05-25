@@ -1,0 +1,7 @@
+{"intent": "Check if a number is positive or negative and print the result", "branescript": "let n := 42;\nif (n > 0) {\n    println(\"positive\");\n} else {\n    println(\"non-positive\");\n}"}
+{"intent": "Count from 0 to 4 using a while loop", "branescript": "let i := 0;\nwhile (i < 5) {\n    println(i);\n    i := i + 1;\n}"}
+{"intent": "Count from 0 to 9 using a for loop", "branescript": "for (let i := 0; i < 10; i := i + 1) {\n    println(i);\n}"}
+{"intent": "Print numbers from 1 to 5 and double each one inside the loop", "branescript": "for (let i := 1; i <= 5; i := i + 1) {\n    let doubled := i * 2;\n    println(doubled);\n}"}
+{"intent": "Use nested if-else: print low, medium, or high based on a score value", "branescript": "let score := 65;\nif (score < 40) {\n    println(\"low\");\n} else {\n    if (score < 70) {\n        println(\"medium\");\n    } else {\n        println(\"high\");\n    }\n}"}
+{"intent": "Loop until a condition is false and break out early", "branescript": "let i := 0;\nwhile (i < 100) {\n    if (i == 5) {\n        break;\n    }\n    println(i);\n    i := i + 1;\n}"}
+{"intent": "Skip odd numbers in a for loop using continue", "branescript": "for (let i := 0; i < 10; i := i + 1) {\n    if (i % 2 == 1) {\n        continue;\n    }\n    println(i);\n}"}

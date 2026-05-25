@@ -1,0 +1,7 @@
+{"intent": "Print hello world", "branescript": "println(\"Hello, world!\");"}
+{"intent": "Declare a variable named age with value 30 and print it", "branescript": "let age := 30;\nprintln(age);"}
+{"intent": "Declare two string variables and concatenate them", "branescript": "let first := \"Hello\";\nlet second := \"World\";\nlet greeting := first + \", \" + second + \"!\";\nprintln(greeting);"}
+{"intent": "Declare a boolean variable and print it", "branescript": "let is_active := true;\nprintln(is_active);"}
+{"intent": "Do basic arithmetic: add, subtract, multiply, divide two numbers", "branescript": "let a := 10;\nlet b := 3;\nlet sum := a + b;\nlet diff := a - b;\nlet product := a * b;\nlet quotient := a / b;\nprintln(sum);\nprintln(diff);\nprintln(product);\nprintln(quotient);"}
+{"intent": "Update a variable's value after declaring it", "branescript": "let counter := 0;\nprintln(counter);\ncounter := counter + 5;\nprintln(counter);"}
+{"intent": "Declare a real-valued variable representing a temperature", "branescript": "let temperature := 36.6;\nprintln(temperature);"}

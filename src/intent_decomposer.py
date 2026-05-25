@@ -7,10 +7,11 @@ Two jobs:
      capped at a token budget to avoid overflowing llama3 context window.
 """
 
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_chroma import Chroma
+import re
 
 MAX_LANG_CONTEXT_CHARS = 1500 * 4    # ~6000 chars ≈ 1500 tokens
 
@@ -20,18 +21,32 @@ MAX_LANG_CONTEXT_CHARS = 1500 * 4    # ~6000 chars ≈ 1500 tokens
 DECOMPOSE_TEMPLATE = """You are a BraneScript expert. Break the user's intent
 into a short numbered list of concrete BraneScript sub-tasks.
 
-Each sub-task maps to ONE primitive:
+Each sub-task maps to ONE primitive operation:
 - Defining a function (func keyword, parameters, return type)
-- Importing / calling a package
-- Reading or referencing a dataset
-- Defining a workflow (top-level orchestration)
-- Variable assignment or type usage (let, :=, unit)
-- Control flow (if/else, loops)
+- Importing a package (import keyword)
+- Calling a package function or external function
+- Defining a workflow (top-level statements)
+- Variable assignment and declaration (let, :=)
+- If/else conditional branches
+- For-loops and while-loops
+- Parallel execution blocks with merge strategies
+- Return statements (returning values or early exit)
+- Arrays (creation, indexing, operations)
+- Classes (class definition, properties, methods)
+- Object instantiation (new keyword)
+- Routing execution to a named node, site, or location using #[on("name")] attribute
+  (trigger this whenever the user says: "on node X", "on site X", "at location X", "run on X", "execute on X")
+- Projections and property access (dot notation, e.g., obj.property)
+- Expression statements (calling functions for side-effects)
+- Block statements for scoping
+- Break and continue for loop control
 
 Rules:
 - Output ONLY a numbered list, one sub-task per line.
 - Each line: 5-15 words, phrased as a BraneScript manual search query.
-- No code. No explanations. Max 10 sub-tasks.
+- No code. No explanations. Max 12 sub-tasks.
+- If the user mentions a node, site, or location name, always include a sub-task:
+  "Route execution to node <name> using on attribute #[on]"
 
 USER INTENT:
 {intent}
@@ -52,13 +67,18 @@ class IntentDecomposer:
         lang_context, subtasks = decomposer.run("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: Ollama, lang_db: Chroma, k_per_subtask: int = 3):
+    def __init__(self, llm: Ollama, lang_db: Chroma, k_per_subtask: int = 3,
+                 no_think: bool = False):
         self.llm = llm
         self.lang_db = lang_db
         self.k = k_per_subtask
 
+        # Prepend /no_think for Qwen3 models to suppress the reasoning block
+        prefix = "/no_think\n" if no_think else ""
+        template = prefix + DECOMPOSE_TEMPLATE
+
         self.decompose_chain = (
-            PromptTemplate.from_template(DECOMPOSE_TEMPLATE)
+            PromptTemplate.from_template(template)
             | llm
             | StrOutputParser()
         )
@@ -69,27 +89,26 @@ class IntentDecomposer:
     # ------------------------------------------------------------------
 
     def _parse_subtasks(self, raw: str) -> list[str]:
+        # Strip Qwen3 <think>...</think> blocks before parsing
+        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+
         subtasks = []
         for line in raw.strip().splitlines():
             line = line.strip()
             if not line:
                 continue
-            for prefix in ["1.", "2.", "3.", "4.", "5.", "6.",
-                           "1)", "2)", "3)", "4)", "5)", "6)",
+            for prefix in ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.",
+                           "1)", "2)", "3)", "4)", "5)", "6)", "7)", "8)", "9)", "10)", "11)", "12)",
                            "-", "*"]:
                 if line.startswith(prefix):
                     line = line[len(prefix):].strip()
                     break
             if line:
                 subtasks.append(line)
-            
-            subtasks = [s for s in subtasks if len(s) < 80 and not s.endswith(":")]
-        return subtasks[:6]
 
-    def _rewrite(self, subtask: str) -> str:
-        """Rewrite one sub-task into a BraneScript-vocabulary search query."""
-        q = self.rewrite_chain.invoke({"subtask": subtask}).strip()
-        return q if len(q) > 5 else subtask    # fallback to original if garbage
+        # Filter runs ONCE after all lines are collected, not inside the loop
+        subtasks = [s for s in subtasks if len(s) < 80 and not s.endswith(":")]
+        return subtasks[:12]
 
     def _retrieve(self, query: str) -> list:
         return self.lang_db.similarity_search(query, k=self.k)
