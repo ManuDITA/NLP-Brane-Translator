@@ -6,4 +6,5 @@ brane_lang_db/
 brane_pkg_db/
 DYNAMOS/
 generated_branescripts/
-test1.bs
+runs/*
+slurm_out/*
