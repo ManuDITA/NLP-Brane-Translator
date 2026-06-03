@@ -92,6 +92,19 @@ def detect_python_code(text: str) -> bool:
     return False
 
 
+def detect_json_string_assignment(text: str) -> bool:
+    """
+    Return True if the code passes structured data as an escaped JSON string, e.g.:
+        let patient := "{\"age\": 45, \"blood_pressure\": 100}";
+
+    This is the 'JSON-as-string' antipattern: the model serialises structured data
+    into a JSON blob inside a BraneScript string literal, using backslash-escaped
+    quotes (\").  Valid BraneScript never needs \" inside string literals — proper
+    structured data should be represented with `class` + `new ClassName { ... }`.
+    """
+    return bool(re.search(r'\\"', text))
+
+
 def looks_like_branescript(text: str) -> bool:
     """
     Return True only if the text looks like valid BraneScript.

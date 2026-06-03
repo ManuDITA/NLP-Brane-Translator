@@ -26,7 +26,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
-from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, load_hf_token
+from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, detect_json_string_assignment, load_hf_token
 
 # Load HuggingFace token early so embeddings download authenticated
 load_hf_token()
@@ -181,6 +181,7 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 9. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
 10. If context is incomplete, ask ONE clarifying question — do not generate any code.
 11. For complex structured data with multiple fields (e.g. patient records with vital signs, lab results, or other nested data), define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
+12. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
 
 USER REQUEST:
 {question}
@@ -243,6 +244,47 @@ CORRECT BraneScript example:
     println(result);
 
 Do NOT use: def, from X import Y, or ANY Python syntax.
+Output ONLY BraneScript code. No prose. No fences.
+
+"""
+
+JSON_STRING_ERROR_SECTION = """⚠️  PREVIOUS ATTEMPT PASSED STRUCTURED DATA AS A JSON STRING — THAT IS WRONG.
+
+You wrote something like:
+    let patient := "{\"age\": 45, \"blood_pressure\": 100}";  ← WRONG
+
+NEVER use backslash-escaped quotes (\\") inside string literals.
+NEVER serialize structured data as a JSON string.
+
+Instead, define a BraneScript `class` for each data type and instantiate it:
+
+CORRECT:
+    class VitalSigns {
+        blood_pressure: int;
+        heart_rate:     int;
+    }
+
+    class Patient {
+        patient_id: string;
+        age:        int;
+        gender:     string;
+        vital_signs: VitalSigns;
+    }
+
+    let vitals := new VitalSigns {
+        blood_pressure := 100,
+        heart_rate     := 75,
+    };
+
+    let patient := new Patient {
+        patient_id  := "PAT001",
+        age         := 45,
+        gender      := "M",
+        vital_signs := vitals,
+    };
+
+    let result := healthcare::analyze_heart_disease(patient);
+
 Output ONLY BraneScript code. No prose. No fences.
 
 """
@@ -466,6 +508,18 @@ def run_pipeline(user_query: str,
                     continue
             print("   ⛔ Max retries reached on code validation. Returning last attempt.")
             return code
+
+        # Catch the JSON-as-string antipattern: let x := "{\"key\": \"val\"}";
+        if detect_json_string_assignment(code):
+            print("   ❌ Code passes structured data as a JSON string with escaped quotes.")
+            print(f"   Output was:\n{code[:300]}\n")
+            if attempt < MAX_RETRIES:
+                error_section = JSON_STRING_ERROR_SECTION
+                attempt += 1
+                continue
+            else:
+                print("   ⛔ Max retries reached on JSON-string check. Returning last attempt.")
+                return code
 
         syntax_ok, syntax_error = check_syntax(code)
         if not syntax_ok:
