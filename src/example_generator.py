@@ -26,7 +26,7 @@ from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript
+from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_json_string_assignment
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -97,6 +97,8 @@ BraneScript rules:
 - Functions: `func name(param: type) -> type {{ ... }}`
 - Builtin output: `println(value);`
 - Boolean literals: `true`, `false` (lowercase)
+- For structured data (e.g. patient records), define a `class` and use `new ClassName {{ field := value }}`.
+  NEVER pass structured data as a JSON string with escaped quotes like `let x := "{{\\"key\\": \\"val\\"}}"`.
 - No Python, no Java, no markdown fences, no prose.
 
 INTENT: {intent}
@@ -148,9 +150,11 @@ def generate_examples(llm: Ollama, intents: list[str], existing: set[str],
             code = strip_thinking_tokens(raw)
             code = strip_code_fences(code)
 
-            if looks_like_branescript(code):
+            if looks_like_branescript(code) and not detect_json_string_assignment(code):
                 results.append({"intent": intent, "branescript": code})
                 print(f"      ✅ OK ({len(code)} chars)")
+            elif detect_json_string_assignment(code):
+                print(f"      ❌ Output uses JSON-string antipattern (escaped quotes) — skipped")
             else:
                 print(f"      ❌ Output does not look like BraneScript — skipped")
         except Exception as e:

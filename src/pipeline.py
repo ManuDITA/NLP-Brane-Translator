@@ -251,7 +251,7 @@ Output ONLY BraneScript code. No prose. No fences.
 JSON_STRING_ERROR_SECTION = """⚠️  PREVIOUS ATTEMPT PASSED STRUCTURED DATA AS A JSON STRING — THAT IS WRONG.
 
 You wrote something like:
-    let patient := "{\"age\": 45, \"blood_pressure\": 100}";  ← WRONG
+    let patient := "{\\"age\\": 45, \\"blood_pressure\\": 100}";  ← WRONG
 
 NEVER use backslash-escaped quotes (\\") inside string literals.
 NEVER serialize structured data as a JSON string.
