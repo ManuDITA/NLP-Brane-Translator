@@ -128,22 +128,67 @@ greet("world");
 
 ## Classes
 
+Define a class with typed fields. Field types can be primitives (`int`, `real`, `bool`, `string`) or other class types.
+
 ```bscript
-class Patient {
-    id: string;
-    age: int;
-    gender: string;
+class Jedi {
+    name: string;
+    is_master: bool;
+    lightsaber_colour: string;
 }
 
-let p := new Patient {
-    id     := "PAT001",
-    age    := 55,
-    gender := "M",
+let obi_wan := new Jedi {
+    name              := "Obi-Wan Kenobi",
+    is_master         := true,
+    lightsaber_colour := "blue",
 };
-println(p.id);
+println(obi_wan.name);
 ```
 
-Classes can have methods (using `self`):
+### Nested / complex class types
+
+For complex structured data, define a separate class for each nested type. **Never use a JSON string to represent structured data** — define a class instead.
+
+```bscript
+class VitalSigns {
+    blood_pressure: int;
+    heart_rate: int;
+}
+
+class LabResults {
+    total_cholesterol: int;
+}
+
+class Patient {
+    patient_id: string;
+    age: int;
+    gender: string;
+    vital_signs: VitalSigns;
+    lab_results: LabResults;
+}
+
+let vitals := new VitalSigns {
+    blood_pressure := 150,
+    heart_rate     := 80,
+};
+
+let labs := new LabResults {
+    total_cholesterol := 220,
+};
+
+let patient := new Patient {
+    patient_id  := "PAT001",
+    age         := 55,
+    gender      := "M",
+    vital_signs := vitals,
+    lab_results := labs,
+};
+
+println(patient.patient_id);
+println(patient.vital_signs.blood_pressure);
+```
+
+Classes can also have methods (using `self`):
 
 ```bscript
 class Counter {
@@ -264,7 +309,39 @@ Use `return;` (no value) for early exit from a `unit` function.
 ```bscript
 import healthcare;
 
-let patient := "{\"patient_id\": \"PAT001\", \"age\": 55, \"gender\": \"M\", \"vital_signs\": {\"blood_pressure\": 150, \"heart_rate\": 80}, \"lab_results\": {\"total_cholesterol\": 220}, \"medical_history\": [\"hypertension\"]}";
+class VitalSigns {
+    blood_pressure: int;
+    heart_rate: int;
+}
+
+class LabResults {
+    total_cholesterol: int;
+}
+
+class Patient {
+    patient_id: string;
+    age: int;
+    gender: string;
+    vital_signs: VitalSigns;
+    lab_results: LabResults;
+}
+
+let vitals := new VitalSigns {
+    blood_pressure := 150,
+    heart_rate     := 80,
+};
+
+let labs := new LabResults {
+    total_cholesterol := 220,
+};
+
+let patient := new Patient {
+    patient_id  := "PAT001",
+    age         := 55,
+    gender      := "M",
+    vital_signs := vitals,
+    lab_results := labs,
+};
 
 let risk := healthcare::analyze_heart_disease(patient);
 println(risk);
