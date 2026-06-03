@@ -180,7 +180,7 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 8. Define every variable with `let` before using it.
 9. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
 10. If context is incomplete, ask ONE clarifying question — do not generate any code.
-11. For complex structured data with multiple fields (e.g. patient records with vital signs, lab results, or other nested data), define a BraneScript `class` for each data type, instantiate with `new <ClassName> { field := value, ... }`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
+11. For complex structured data with multiple fields (e.g. patient records with vital signs, lab results, or other nested data), define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
 
 USER REQUEST:
 {question}
