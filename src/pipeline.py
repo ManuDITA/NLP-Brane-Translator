@@ -26,6 +26,10 @@ from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
+from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, load_hf_token
+
+# Load HuggingFace token early so embeddings download authenticated
+load_hf_token()
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -37,11 +41,44 @@ from langchain_huggingface import HuggingFacePipeline
 BRANESCRIPT_FEW_SHOT = """
 ## BRANESCRIPT SYNTAX REFERENCE (few-shot examples)
 
-Example 1 – import a package and call a function:
+Example 1 – define classes for complex data, import a package, and call a function:
 ```
 import healthcare;
 
-let patient := "{\\"patient_id\\": \\"PAT001\\", \\"age\\": 55, \\"gender\\": \\"M\\", \\"vital_signs\\": {\\"blood_pressure\\": 150, \\"heart_rate\\": 80}, \\"lab_results\\": {\\"total_cholesterol\\": 220}, \\"medical_history\\": [\\"hypertension\\"]}";
+class VitalSigns {
+    blood_pressure: int;
+    heart_rate: int;
+}
+
+class LabResults {
+    total_cholesterol: int;
+}
+
+class Patient {
+    patient_id: string;
+    age: int;
+    gender: string;
+    vital_signs: VitalSigns;
+    lab_results: LabResults;
+}
+
+let vitals := new VitalSigns {
+    blood_pressure := 150,
+    heart_rate     := 80,
+};
+
+let labs := new LabResults {
+    total_cholesterol := 220,
+};
+
+let patient := new Patient {
+    patient_id  := "PAT001",
+    age         := 55,
+    gender      := "M",
+    vital_signs := vitals,
+    lab_results := labs,
+};
+
 let result := healthcare::analyze_heart_disease(patient);
 println(result);
 ```
@@ -70,7 +107,39 @@ Example 4 – routing execution to a named node/site with #[on("name")]:
 ```
 import healthcare;
 
-let patient := "{\\"patient_id\\": \\"PAT001\\", \\"age\\": 45, \\"gender\\": \\"M\\", \\"vital_signs\\": {\\"blood_pressure\\": 100, \\"heart_rate\\": 75}, \\"lab_results\\": {\\"total_cholesterol\\": 200}, \\"medical_history\\": []}";
+class VitalSigns {
+    blood_pressure: int;
+    heart_rate: int;
+}
+
+class LabResults {
+    total_cholesterol: int;
+}
+
+class Patient {
+    patient_id: string;
+    age: int;
+    gender: string;
+    vital_signs: VitalSigns;
+    lab_results: LabResults;
+}
+
+let vitals := new VitalSigns {
+    blood_pressure := 100,
+    heart_rate     := 75,
+};
+
+let labs := new LabResults {
+    total_cholesterol := 200,
+};
+
+let patient := new Patient {
+    patient_id  := "PAT001",
+    age         := 45,
+    gender      := "M",
+    vital_signs := vitals,
+    lab_results := labs,
+};
 
 #[on("marco")]
 let result := healthcare::analyze_heart_disease(patient);
@@ -145,43 +214,43 @@ You MUST output BraneScript, NOT Python.
 
 CORRECT BraneScript example:
     import healthcare;
-    let patient := "{..json..}";
+
+    class VitalSigns {
+        blood_pressure: int;
+        heart_rate: int;
+    }
+
+    class Patient {
+        patient_id: string;
+        age: int;
+        gender: string;
+        vital_signs: VitalSigns;
+    }
+
+    let vitals := new VitalSigns {
+        blood_pressure := 100,
+        heart_rate     := 75,
+    };
+
+    let patient := new Patient {
+        patient_id  := "PAT001",
+        age         := 45,
+        gender      := "M",
+        vital_signs := vitals,
+    };
+
     let result := healthcare::analyze_heart_disease(patient);
     println(result);
 
-Do NOT use: def, class, import os, import sys, self., or ANY Python syntax.
+Do NOT use: def, from X import Y, or ANY Python syntax.
 Output ONLY BraneScript code. No prose. No fences.
 
 """
 
 # ---------------------------------------------------------------------------
-# Output cleanup helpers
+# Output cleanup helpers — imported from utils.py
+# strip_thinking_tokens, strip_code_fences, detect_python_code, looks_like_branescript
 # ---------------------------------------------------------------------------
-
-def strip_thinking_tokens(text: str) -> str:
-    """Remove Qwen3/DeepSeek-style <think>...</think> reasoning blocks."""
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-
-
-def strip_code_fences(text: str) -> str:
-    """
-    If the model wrapped its output in a markdown code fence, extract the
-    code inside.  Works for ```bscript, ```branescript, ```bs, or plain ```.
-    """
-    # Try labelled fences first (bscript / branescript / bs)
-    match = re.search(
-        r'```(?:bscript|branescript|bs)\s*\n(.*?)```',
-        text, re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
-
-    # Fall back to any fenced code block
-    match = re.search(r'```(?:\w*)\s*\n(.*?)```', text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-
-    return text.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -265,20 +334,7 @@ def is_clarification_request(text: str) -> bool:
     return False
 
 
-def looks_like_branescript(text: str) -> bool:
-    code = text.strip()
-    if not code:
-        return False
-
-    if "let " in code and ":=" in code:
-        return True
-    if re.search(r"import\s+[A-Za-z]", code):
-        return True
-    if "::" in code:
-        return True
-    if code.startswith("package") or code.startswith("workflow"):
-        return True
-    return False
+# looks_like_branescript imported from utils.py
 
 
 def ask_for_clarification(question: str) -> str:
@@ -394,15 +450,22 @@ def run_pipeline(user_query: str,
             continue
 
         if not looks_like_branescript(code):
-            print("   ❌ Output does not look like BraneScript code.")
-            print(f"   Output was:\n{code}\n")
-            if attempt < MAX_RETRIES:
-                error_section = NON_CODE_ERROR_SECTION
-                attempt += 1
-                continue
+            if detect_python_code(code):
+                print("   ❌ Model generated Python code instead of BraneScript.")
+                print(f"   Output was:\n{code[:300]}\n")
+                if attempt < MAX_RETRIES:
+                    error_section = PYTHON_CODE_ERROR_SECTION
+                    attempt += 1
+                    continue
             else:
-                print("   ⛔ Max retries reached on code validation. Returning last attempt.")
-                return code
+                print("   ❌ Output does not look like BraneScript code.")
+                print(f"   Output was:\n{code[:300]}\n")
+                if attempt < MAX_RETRIES:
+                    error_section = NON_CODE_ERROR_SECTION
+                    attempt += 1
+                    continue
+            print("   ⛔ Max retries reached on code validation. Returning last attempt.")
+            return code
 
         syntax_ok, syntax_error = check_syntax(code)
         if not syntax_ok:

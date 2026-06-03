@@ -19,6 +19,12 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from utils import load_hf_token
+
+load_hf_token()
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------

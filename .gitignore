@@ -8,3 +8,5 @@ DYNAMOS/
 generated_branescripts/
 runs/*
 slurm_out/*
+test1.bs
+.env

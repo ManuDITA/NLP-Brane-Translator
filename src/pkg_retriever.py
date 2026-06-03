@@ -12,6 +12,9 @@ import os
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
+# Maximum unique chunks returned to the prompt — keeps context window bounded.
+MAX_PKG_CHUNKS = 8
+
 class PkgRetriever:
     """
     Retrieves package and dataset documentation from the context-relevant DB.
@@ -29,8 +32,8 @@ class PkgRetriever:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _retrieve(self, query: str) -> list[Document]:
-        return self.pkg_db.similarity_search(query, k=self.k)
+    def _retrieve(self, query: str, k: int | None = None) -> list[Document]:
+        return self.pkg_db.similarity_search(query, k=k or self.k)
 
     def _deduplicate(self, docs: list[Document]) -> list[Document]:
         seen, unique = set(), []
@@ -49,13 +52,23 @@ class PkgRetriever:
         """
         Retrieve package/dataset context based on the user's intent.
 
-        Uses the full user query to find the most relevant package content.
-        Returns the package context as a single block of text.
+        Queries with both the full user intent (broad signal) and each
+        subtask (precise signal), deduplicates, and caps at MAX_PKG_CHUNKS.
         """
         print("\n📦 Package/dataset retrieval:")
-        print(f"   • intent: {user_query}")
 
-        docs = self._deduplicate(self._retrieve(user_query))
+        all_docs: list[Document] = []
+
+        # Broad query — full user intent gives the best semantic match
+        print(f"   • intent: {user_query}")
+        all_docs.extend(self._retrieve(user_query, k=self.k))
+
+        # Precise queries — subtasks target specific function/package references
+        # Use k=2 per subtask to avoid flooding the context window
+        for st in subtasks:
+            all_docs.extend(self._retrieve(st, k=2))
+
+        docs = self._deduplicate(all_docs)[:MAX_PKG_CHUNKS]
         print(f"   → {len(docs)} unique chunks returned")
 
         if not docs:

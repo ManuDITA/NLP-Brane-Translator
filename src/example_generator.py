@@ -26,6 +26,8 @@ from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -83,9 +85,9 @@ SEED_INTENTS: dict[str, list[str]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Generation prompt
+# Generation prompt — {no_think_prefix} injected at runtime for Qwen3 models
 # ---------------------------------------------------------------------------
-GENERATION_PROMPT = """You are an expert in BraneScript, the workflow language for the Brane Framework.
+GENERATION_PROMPT = """{no_think_prefix}You are an expert in BraneScript, the workflow language for the Brane Framework.
 
 Generate ONLY valid BraneScript code for the following intent.
 BraneScript rules:
@@ -102,39 +104,8 @@ INTENT: {intent}
 BRANESCRIPT CODE:"""
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — shared implementations imported from utils.py
 # ---------------------------------------------------------------------------
-
-def strip_thinking_tokens(text: str) -> str:
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-
-
-def strip_code_fences(text: str) -> str:
-    match = re.search(
-        r'```(?:bscript|branescript|bs)\s*\n(.*?)```',
-        text, re.DOTALL | re.IGNORECASE
-    )
-    if match:
-        return match.group(1).strip()
-    match = re.search(r'```(?:\w*)\s*\n(.*?)```', text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return text.strip()
-
-
-def looks_like_branescript(code: str) -> bool:
-    code = code.strip()
-    if not code:
-        return False
-    if "let " in code and ":=" in code:
-        return True
-    if re.search(r"import\s+[A-Za-z]", code):
-        return True
-    if "::" in code:
-        return True
-    if code.startswith("func ") or code.startswith("println"):
-        return True
-    return False
 
 
 def load_existing(filepath: Path) -> set[str]:
@@ -160,7 +131,8 @@ def load_existing(filepath: Path) -> set[str]:
 # Main
 # ---------------------------------------------------------------------------
 
-def generate_examples(llm: Ollama, intents: list[str], existing: set[str]) -> list[dict]:
+def generate_examples(llm: Ollama, intents: list[str], existing: set[str],
+                      no_think_prefix: str = "") -> list[dict]:
     prompt = PromptTemplate.from_template(GENERATION_PROMPT)
     chain = prompt | llm | StrOutputParser()
 
@@ -172,7 +144,7 @@ def generate_examples(llm: Ollama, intents: list[str], existing: set[str]) -> li
 
         print(f"  ⚙️  Generating: {intent[:70]}")
         try:
-            raw = chain.invoke({"intent": intent})
+            raw = chain.invoke({"intent": intent, "no_think_prefix": no_think_prefix})
             code = strip_thinking_tokens(raw)
             code = strip_code_fences(code)
 
@@ -200,6 +172,12 @@ def main():
 
     print(f"🔧 Starting example generator (model={args.model}, count={args.count})")
 
+    # Disable Qwen3 thinking mode — /no_think must be the very first token
+    is_qwen3 = "qwen3" in args.model.lower()
+    no_think_prefix = "/no_think\n" if is_qwen3 else ""
+    if is_qwen3:
+        print(f"ℹ️  Qwen3 detected — injecting /no_think to suppress reasoning blocks")
+
     llm = Ollama(
         model=args.model,
         temperature=0.5,
@@ -223,7 +201,7 @@ def main():
     print(f"📋 {len(existing)} existing generated examples")
     print(f"📝 Generating up to {len(all_intents)} new examples...")
 
-    new_examples = generate_examples(llm, all_intents, existing)
+    new_examples = generate_examples(llm, all_intents, existing, no_think_prefix=no_think_prefix)
 
     if new_examples:
         with open(GENERATED_FILE, "a", encoding="utf-8") as f:

@@ -13,6 +13,8 @@ from langchain_core.prompts import PromptTemplate
 from langchain_chroma import Chroma
 import re
 
+from utils import strip_thinking_tokens
+
 MAX_LANG_CONTEXT_CHARS = 1500 * 4    # ~6000 chars ≈ 1500 tokens
 
 # ---------------------------------------------------------------------------
@@ -90,7 +92,7 @@ class IntentDecomposer:
 
     def _parse_subtasks(self, raw: str) -> list[str]:
         # Strip Qwen3 <think>...</think> blocks before parsing
-        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+        raw = strip_thinking_tokens(raw)
 
         subtasks = []
         for line in raw.strip().splitlines():
