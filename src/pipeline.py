@@ -103,7 +103,7 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 ## ABSOLUTE RULES — READ CAREFULLY
 1. Output ONLY valid BraneScript code.
 2. BraneScript is NOT Python, Java, Rust, or any other language. Do NOT output code in any other language.
-3. Do NOT use `def`, `class`, `from X import Y`, `self.`, or any Python/Java syntax.
+3. Do NOT use `def`, `from X import Y`, `self.` (outside a class method), or any Python/Java syntax.
 4. Do NOT wrap output in markdown code fences (no ```bscript, no ```python, no ``` of any kind).
 5. Do NOT add prose, explanations, headers, or narrative — ONLY code.
 6. Use exact BraneScript assignment syntax: `let <name> := <expression>;` — NEVER use `=` alone.
@@ -111,6 +111,7 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 8. Define every variable with `let` before using it.
 9. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
 10. If context is incomplete, ask ONE clarifying question — do not generate any code.
+11. For complex structured data with multiple fields (e.g. patient records with vital signs, lab results, or other nested data), define a BraneScript `class` for each data type, instantiate with `new <ClassName> { field := value, ... }`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
 
 USER REQUEST:
 {question}
