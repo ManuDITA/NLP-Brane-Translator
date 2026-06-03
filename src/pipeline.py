@@ -81,7 +81,7 @@ let greeting := greet("world");
 println(greeting);
 ```
 
-Example 4 – nested classes and routing execution to a named node/site with #[on("name")]:
+Example 4 – nested classes, routing execution to a named node/site with #[on("name")]:
 ```
 import analytics;
 
@@ -107,6 +107,47 @@ let job := new Job {
 
 #[on("marco")]
 let result := analytics::process(job);
+println(result);
+```
+
+Example 5 – deeply nested classes (three levels), single package call, node routing:
+```
+import bioanalysis;
+
+class Measurements {
+    pressure: int;
+    rate:     int;
+}
+
+class Labs {
+    cholesterol: int;
+}
+
+class Subject {
+    id:           string;
+    age:          int;
+    measurements: Measurements;
+    labs:         Labs;
+}
+
+let m := new Measurements {
+    pressure := 150,
+    rate     := 75,
+};
+
+let l := new Labs {
+    cholesterol := 210,
+};
+
+let subject := new Subject {
+    id           := "S001",
+    age          := 58,
+    measurements := m,
+    labs         := l,
+};
+
+#[on("amy")]
+let result := bioanalysis::evaluate(subject);
 println(result);
 ```
 NOTE: whenever the user says "on node X", "on site X", "at location X", or "run on X",
@@ -146,6 +187,8 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 10. If context is incomplete, ask ONE clarifying question — do not generate any code.
 11. For complex structured data with multiple fields, define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
 12. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
+13. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
+14. BraneScript class fields can only have primitive types (`int`, `real`, `bool`, `string`) or other class types. Do NOT use `array<T>`, `list<T>`, or `List` as field types — these do not exist. If a field would be a list, either omit it or represent it as a `string`.
 
 USER REQUEST:
 {question}

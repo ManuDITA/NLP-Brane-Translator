@@ -47,6 +47,10 @@ Rules:
 - Output ONLY a numbered list, one sub-task per line.
 - Each line: 5-15 words, phrased as a BraneScript manual search query.
 - No code. No explanations. Max 12 sub-tasks.
+- Focus ONLY on BraneScript constructs needed to pass data to the package function.
+  Do NOT generate subtasks for logic that the package function handles internally
+  (e.g. do not say "compute risk score", "validate input", "handle edge cases" —
+  those are inside the package, not in the BraneScript workflow).
 - If the user mentions a node, site, or location name, always include a sub-task:
   "Route execution to node <name> using on attribute #[on]"
 
