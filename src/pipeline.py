@@ -20,12 +20,16 @@ from datetime import datetime
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_ollama import OllamaLLM as Ollama
+#from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from langchain_huggingface import HuggingFacePipeline
 
 # ---------------------------------------------------------------------------
 # BraneScript canonical few-shot example injected into every prompt
@@ -334,7 +338,7 @@ def check_semantic(code: str, pkg_context: str) -> tuple[bool, str]:
 def run_pipeline(user_query: str,
                  decomposer: IntentDecomposer,
                  pkg_retriever: PkgRetriever,
-                 llm: Ollama,
+                 llm,
                  few_shot_override: str = None,
                  no_think_prefix: str = "") -> str:
 
@@ -438,10 +442,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="NLP → BraneScript pipeline")
     parser.add_argument(
-        "--model", default="qwen3.5:4b",
-        help="Ollama model name (default: qwen2.5-coder:7b). "
-             "Use 'qwen2.5-coder:3b' for the fastest option, "
-             "'qwen3.5' for the larger model."
+        "--model", default="Qwen/Qwen3.6-27B",
+        help="Hugging Face model id, e.g. Qwen/Qwen3.6-27B, Qwen/Qwen3-4B or Qwen/Qwen3-4B-Instruct-2507."
     )
     parser.add_argument(
         "--temperature", type=float, default=0.4,
@@ -462,15 +464,33 @@ if __name__ == "__main__":
     print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    llm = Ollama(
-        model=args.model,
+    
+    print("📥 Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+
+    print("📥 Loading model onto GPU...")
+
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+
+    print("✅ Model loaded")
+
+    text_generation_pipeline = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
+        max_new_tokens=1024,
+        do_sample=True,
         temperature=args.temperature,
         top_p=0.95,
-        top_k=20,
-        min_p=0.0,
-        presence_penalty=0.0,
-        repetition_penalty=1.0,
+        return_full_text=False,
     )
+
+    llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
 
     lang_db = Chroma(persist_directory=str(LANG_DB_PATH), embedding_function=embeddings)
 
@@ -485,7 +505,8 @@ if __name__ == "__main__":
                                    no_think=is_qwen3)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
-    user_query = input("Enter the user request: ").strip()
+    #user_query = input("Enter the user request: ").strip()
+    user_query = """Analyze the heart disease risk for a patient with the following profile: 55-year-old male, blood pressure 150, heart rate 80, total cholesterol 220, medical history of hypertension. Use the healthcare::analyze_heart_disease function. Run the analysis on node marco."""
     if not user_query:
         print("No request provided. Exiting.")
         exit(0)
@@ -506,3 +527,5 @@ if __name__ == "__main__":
     print("FINAL BRANESCRIPT OUTPUT:")
     print("=" * 50)
     print(result)
+
+    print("\n👌Pipeline execution completed.")
