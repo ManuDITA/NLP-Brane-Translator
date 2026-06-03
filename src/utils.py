@@ -49,8 +49,20 @@ def load_hf_token(env_file: str | None = None) -> None:
 
 
 def strip_thinking_tokens(text: str) -> str:
-    """Remove Qwen3/DeepSeek-style <think>...</think> reasoning blocks."""
-    return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    """
+    Remove Qwen3/DeepSeek-style reasoning blocks.
+
+    Handles two cases:
+    1. Complete blocks:   <think>...</think>  → removed
+    2. Unclosed blocks:  <think>...EOF       → everything from <think> to end removed
+       (This covers the case where the model starts thinking mid-output and the
+       generation budget runs out before </think>, leaving just the preamble code.)
+    """
+    # Remove complete <think>...</think> blocks first
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # Remove any remaining unclosed <think> block (truncates to end of string)
+    text = re.sub(r'<think>.*$', '', text, flags=re.DOTALL)
+    return text.strip()
 
 
 def strip_code_fences(text: str) -> str:
@@ -95,7 +107,7 @@ def detect_python_code(text: str) -> bool:
 def detect_json_string_assignment(text: str) -> bool:
     """
     Return True if the code passes structured data as an escaped JSON string, e.g.:
-        let patient := "{\"age\": 45, \"blood_pressure\": 100}";
+        let p := "{\"iterations\": 100, \"threshold\": 50}";
 
     This is the 'JSON-as-string' antipattern: the model serialises structured data
     into a JSON blob inside a BraneScript string literal, using backslash-escaped
@@ -107,11 +119,14 @@ def detect_json_string_assignment(text: str) -> bool:
 
 def looks_like_branescript(text: str) -> bool:
     """
-    Return True only if the text looks like valid BraneScript.
+    Return True only if the text looks like useful, complete BraneScript.
 
-    Applies two layers:
+    Applies three layers:
       1. Hard disqualifiers — Python-only syntax that can never appear in BraneScript.
       2. Positive markers — at least one BraneScript-specific construct must be present.
+      3. Completeness check — a bare `import pkg;` with no actual logic is not
+         considered valid generated code (it is the residue left when a thinking
+         block consumes most of the generation budget).
     """
     code = text.strip()
     if not code:
@@ -122,19 +137,34 @@ def looks_like_branescript(text: str) -> bool:
         return False
 
     # ── Layer 2: at least one positive BraneScript marker ───────────────────
+    has_marker = False
     if "let " in code and ":=" in code:
-        return True
-    if re.search(r'import\s+[A-Za-z]\w*\s*;', code):   # import pkg; (semicolon = BraneScript)
-        return True
-    if "::" in code:                                     # pkg::function call
-        return True
-    if re.search(r'\bfunc\s+\w+\s*\(', code):           # func name(
-        return True
-    if "#[on(" in code:                                  # node routing attribute
-        return True
-    if re.search(r'\bnew\s+[A-Z]\w*\s*\{', code):       # new ClassName {
-        return True
-    if code.startswith("workflow") or code.startswith("package"):
-        return True
+        has_marker = True
+    elif re.search(r'import\s+[A-Za-z]\w*\s*;', code):
+        has_marker = True
+    elif "::" in code:
+        has_marker = True
+    elif re.search(r'\bfunc\s+\w+\s*\(', code):
+        has_marker = True
+    elif "#[on(" in code:
+        has_marker = True
+    elif re.search(r'\bnew\s+[A-Z]\w*\s*\{', code):
+        has_marker = True
+    elif code.startswith("workflow") or code.startswith("package"):
+        has_marker = True
 
-    return False
+    if not has_marker:
+        return False
+
+    # ── Layer 3: completeness — must have at least one statement beyond imports ──
+    # Strip comment lines and import lines; what remains must be non-empty.
+    meaningful = [
+        line for line in code.splitlines()
+        if line.strip()
+        and not line.strip().startswith("//")
+        and not re.match(r'\s*import\s+\w+\s*;', line)
+    ]
+    if not meaningful:
+        return False  # only import/comment lines — generation was cut short
+
+    return True

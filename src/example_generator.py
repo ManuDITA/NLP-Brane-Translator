@@ -59,7 +59,7 @@ SEED_INTENTS: dict[str, list[str]] = {
         "Define a function that returns the maximum of two integers",
         "Define a recursive function to compute the Fibonacci number at index n",
         "Define a function that counts characters in a string and returns the count",
-        "Write a helper function that builds a patient JSON string from individual fields",
+        "Define a function that builds a formatted summary string from individual fields",
     ],
     "classes_arrays": [
         "Define a class for a hospital with a name and bed count, create an instance",

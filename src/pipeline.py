@@ -36,50 +36,28 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from langchain_huggingface import HuggingFacePipeline
 
 # ---------------------------------------------------------------------------
-# BraneScript canonical few-shot example injected into every prompt
+# BraneScript canonical few-shot examples injected into every prompt.
+# These are intentionally domain-neutral — they teach syntax, not a specific
+# package.  Real package/function names come from RAG retrieval at runtime.
 # ---------------------------------------------------------------------------
 BRANESCRIPT_FEW_SHOT = """
 ## BRANESCRIPT SYNTAX REFERENCE (few-shot examples)
 
-Example 1 – define classes for complex data, import a package, and call a function:
+Example 1 – import a package, define classes for structured input, call a function:
 ```
-import healthcare;
+import compute;
 
-class VitalSigns {
-    blood_pressure: int;
-    heart_rate: int;
+class Config {
+    iterations: int;
+    threshold:  int;
 }
 
-class LabResults {
-    total_cholesterol: int;
-}
-
-class Patient {
-    patient_id: string;
-    age: int;
-    gender: string;
-    vital_signs: VitalSigns;
-    lab_results: LabResults;
-}
-
-let vitals := new VitalSigns {
-    blood_pressure := 150,
-    heart_rate     := 80,
+let cfg := new Config {
+    iterations := 100,
+    threshold  := 50,
 };
 
-let labs := new LabResults {
-    total_cholesterol := 220,
-};
-
-let patient := new Patient {
-    patient_id  := "PAT001",
-    age         := 55,
-    gender      := "M",
-    vital_signs := vitals,
-    lab_results := labs,
-};
-
-let result := healthcare::analyze_heart_disease(patient);
+let result := compute::run(cfg);
 println(result);
 ```
 
@@ -103,46 +81,32 @@ let greeting := greet("world");
 println(greeting);
 ```
 
-Example 4 – routing execution to a named node/site with #[on("name")]:
+Example 4 – nested classes and routing execution to a named node/site with #[on("name")]:
 ```
-import healthcare;
+import analytics;
 
-class VitalSigns {
-    blood_pressure: int;
-    heart_rate: int;
+class Config {
+    threshold:  int;
+    iterations: int;
 }
 
-class LabResults {
-    total_cholesterol: int;
+class Job {
+    id:     string;
+    config: Config;
 }
 
-class Patient {
-    patient_id: string;
-    age: int;
-    gender: string;
-    vital_signs: VitalSigns;
-    lab_results: LabResults;
-}
-
-let vitals := new VitalSigns {
-    blood_pressure := 100,
-    heart_rate     := 75,
+let cfg := new Config {
+    threshold  := 50,
+    iterations := 100,
 };
 
-let labs := new LabResults {
-    total_cholesterol := 200,
-};
-
-let patient := new Patient {
-    patient_id  := "PAT001",
-    age         := 45,
-    gender      := "M",
-    vital_signs := vitals,
-    lab_results := labs,
+let job := new Job {
+    id     := "job-001",
+    config := cfg,
 };
 
 #[on("marco")]
-let result := healthcare::analyze_heart_disease(patient);
+let result := analytics::process(job);
 println(result);
 ```
 NOTE: whenever the user says "on node X", "on site X", "at location X", or "run on X",
@@ -180,7 +144,7 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 8. Define every variable with `let` before using it.
 9. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
 10. If context is incomplete, ask ONE clarifying question — do not generate any code.
-11. For complex structured data with multiple fields (e.g. patient records with vital signs, lab results, or other nested data), define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
+11. For complex structured data with multiple fields, define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
 12. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
 
 USER REQUEST:
@@ -214,33 +178,19 @@ PYTHON_CODE_ERROR_SECTION = """⚠️  PREVIOUS ATTEMPT GENERATED PYTHON CODE �
 You MUST output BraneScript, NOT Python.
 
 CORRECT BraneScript example:
-    import healthcare;
+    import compute;
 
-    class VitalSigns {
-        blood_pressure: int;
-        heart_rate: int;
+    class Config {
+        iterations: int;
+        threshold:  int;
     }
 
-    class Patient {
-        patient_id: string;
-        age: int;
-        gender: string;
-        vital_signs: VitalSigns;
-    }
-
-    let vitals := new VitalSigns {
-        blood_pressure := 100,
-        heart_rate     := 75,
+    let cfg := new Config {
+        iterations := 100,
+        threshold  := 50,
     };
 
-    let patient := new Patient {
-        patient_id  := "PAT001",
-        age         := 45,
-        gender      := "M",
-        vital_signs := vitals,
-    };
-
-    let result := healthcare::analyze_heart_disease(patient);
+    let result := compute::run(cfg);
     println(result);
 
 Do NOT use: def, from X import Y, or ANY Python syntax.
@@ -251,7 +201,7 @@ Output ONLY BraneScript code. No prose. No fences.
 JSON_STRING_ERROR_SECTION = """⚠️  PREVIOUS ATTEMPT PASSED STRUCTURED DATA AS A JSON STRING — THAT IS WRONG.
 
 You wrote something like:
-    let patient := "{\\"age\\": 45, \\"blood_pressure\\": 100}";  ← WRONG
+    let p := "{\\"iterations\\": 100, \\"threshold\\": 50}";  ← WRONG
 
 NEVER use backslash-escaped quotes (\\") inside string literals.
 NEVER serialize structured data as a JSON string.
@@ -259,31 +209,17 @@ NEVER serialize structured data as a JSON string.
 Instead, define a BraneScript `class` for each data type and instantiate it:
 
 CORRECT:
-    class VitalSigns {
-        blood_pressure: int;
-        heart_rate:     int;
+    class Config {
+        iterations: int;
+        threshold:  int;
     }
 
-    class Patient {
-        patient_id: string;
-        age:        int;
-        gender:     string;
-        vital_signs: VitalSigns;
-    }
-
-    let vitals := new VitalSigns {
-        blood_pressure := 100,
-        heart_rate     := 75,
+    let cfg := new Config {
+        iterations := 100,
+        threshold  := 50,
     };
 
-    let patient := new Patient {
-        patient_id  := "PAT001",
-        age         := 45,
-        gender      := "M",
-        vital_signs := vitals,
-    };
-
-    let result := healthcare::analyze_heart_disease(patient);
+    let result := mypackage::run(cfg);
 
 Output ONLY BraneScript code. No prose. No fences.
 
@@ -597,14 +533,21 @@ if __name__ == "__main__":
 
     print("✅ Model loaded")
 
-    text_generation_pipeline = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
+    from transformers import GenerationConfig
+    gen_config = GenerationConfig(
         max_new_tokens=1024,
         do_sample=True,
         temperature=args.temperature,
         top_p=0.95,
+    )
+    # Replace the model's baked-in generation_config to avoid the
+    # "max_length=20 conflicts with max_new_tokens" warning.
+    model.generation_config = gen_config
+
+    text_generation_pipeline = pipeline(
+        "text-generation",
+        model=model,
+        tokenizer=tokenizer,
         return_full_text=False,
     )
 
@@ -624,7 +567,7 @@ if __name__ == "__main__":
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     #user_query = input("Enter the user request: ").strip()
-    user_query = """Analyze the heart disease risk for a patient with the following profile: 55-year-old male, blood pressure 150, heart rate 80, total cholesterol 220, medical history of hypertension. Use the healthcare::analyze_heart_disease function. Run the analysis on node marco."""
+    user_query = """Analyze the heart disease risk for a patient with the following profile: 55-year-old male, blood pressure 150, heart rate 80, total cholesterol 220, medical history of hypertension. Use the healthcare::analyze_heart_disease function. Run the analysis on node carlo."""
     if not user_query:
         print("No request provided. Exiting.")
         exit(0)
