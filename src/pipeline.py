@@ -526,23 +526,17 @@ if __name__ == "__main__":
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True,
     )
 
     print("✅ Model loaded")
 
-    from transformers import GenerationConfig
-    gen_config = GenerationConfig(
-        max_new_tokens=1024,
-        do_sample=True,
-        temperature=args.temperature,
-        top_p=0.95,
-    )
-    # Replace the model's baked-in generation_config to avoid the
-    # "max_length=20 conflicts with max_new_tokens" warning.
-    model.generation_config = gen_config
+    # Override the model's baked-in generation_config (has max_length=20) to
+    # avoid the "max_length=20 conflicts with max_new_tokens" warning.
+    model.generation_config.max_length = 8192
+    model.generation_config.max_new_tokens = None  # let pipeline_kwargs control this
 
     text_generation_pipeline = pipeline(
         "text-generation",
@@ -551,7 +545,17 @@ if __name__ == "__main__":
         return_full_text=False,
     )
 
-    llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
+    # Pass max_new_tokens via pipeline_kwargs so LangChain's HuggingFacePipeline
+    # respects it — without this kwarg, LangChain defaults to 256 tokens.
+    llm = HuggingFacePipeline(
+        pipeline=text_generation_pipeline,
+        pipeline_kwargs={
+            "max_new_tokens": 1024,
+            "do_sample": True,
+            "temperature": args.temperature,
+            "top_p": 0.95,
+        },
+    )
 
     lang_db = Chroma(persist_directory=str(LANG_DB_PATH), embedding_function=embeddings)
 
@@ -566,8 +570,13 @@ if __name__ == "__main__":
                                    no_think=is_qwen3)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
-    #user_query = input("Enter the user request: ").strip()
-    user_query = """Analyze the heart disease risk for a patient with the following profile: 55-year-old male, blood pressure 150, heart rate 80, total cholesterol 220, medical history of hypertension. Use the healthcare::analyze_heart_disease function. Run the analysis on node carlo."""
+    user_query = (
+        "Analyze the heart disease risk for a patient with the following profile: "
+        "65-year-old female, blood pressure 170, heart rate 80, total cholesterol 230, "
+        "medical history of hypertension. "
+        "Use the healthcare::analyze_heart_disease function. "
+        "Run the analysis on node giovanni."
+    )
     if not user_query:
         print("No request provided. Exiting.")
         exit(0)
