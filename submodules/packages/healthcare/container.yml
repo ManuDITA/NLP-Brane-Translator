@@ -1,0 +1,181 @@
+# container.yml for the Healthcare package
+name: healthcare
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-pip
+  - python3-yaml
+
+install:
+  - pip3 install pyyaml --break-system-packages
+
+files:
+  - healthcare.py
+
+entrypoint:
+  kind: task
+  exec: healthcare.py
+
+# ---------------------------------------------------------------------------
+# Custom classes exposed to BraneScript.
+# In BraneScript: let p := get_patient_summary(json); println(p.risk_level);
+# Serialization: FullValue::Instance is ["ClassName", {fields}] in serde.
+# ---------------------------------------------------------------------------
+types:
+  PatientSummary:
+    name: PatientSummary
+    properties:
+      - name: patient_id
+        type: string
+      - name: age
+        type: integer
+      - name: gender
+        type: string
+      - name: risk_level
+        type: string
+      - name: risk_score
+        type: real
+  RiskAssessment:
+    name: RiskAssessment
+    properties:
+      - name: patient_id
+        type: string
+      - name: risk_score
+        type: real
+      - name: risk_level
+        type: string
+      - name: top_factor
+        type: string
+
+actions:
+  # -----------------------------------------------------------------------
+  # String-based functions: single patient, inline JSON data.
+  # Input arrives via uppercase env var (e.g. DATASET).
+  # Output is written to stdout as: "output: <yaml-encoded-value>"
+  # -----------------------------------------------------------------------
+  'validate_patient_data':
+    description: "Validate a single patient JSON record. Returns a JSON string with is_valid and error fields."
+    command:
+      args: [validate_patient_data]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'analyze_heart_disease':
+    description: "Analyze heart disease risk for a single patient JSON record. Returns a JSON risk-assessment string."
+    command:
+      args: [analyze_heart_disease]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'generate_report':
+    description: "Generate a full health report for a single patient JSON record. Returns a JSON report string."
+    command:
+      args: [generate_report]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'compute_bmi':
+    description: "Compute BMI from weight (kg) and height (cm). Returns a JSON string with bmi and category fields."
+    command:
+      args: [compute_bmi]
+    input:
+      - name: weight_kg
+        type: real
+      - name: height_cm
+        type: real
+    output:
+      - name: output
+        type: string
+
+  'assess_diabetes_risk':
+    description: "Assess type-2 diabetes risk for a single patient JSON record. Returns a JSON risk-assessment string."
+    command:
+      args: [assess_diabetes_risk]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'triage_patient':
+    description: "Determine triage urgency level (immediate/urgent/standard) for a patient. Returns JSON with level and next_steps."
+    command:
+      args: [triage_patient]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  # -----------------------------------------------------------------------
+  # Class-returning function: returns a PatientSummary instance.
+  # BraneScript usage: let p := get_patient_summary(json); println(p.risk_level);
+  # -----------------------------------------------------------------------
+  'get_patient_summary':
+    description: "Return a PatientSummary class instance for a single patient JSON record."
+    command:
+      args: [get_patient_summary]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: PatientSummary
+
+  # -----------------------------------------------------------------------
+  # Data function: operates on a registered Brane dataset (file on disk).
+  # Brane mounts the file and passes its path via PATIENTS_FILE env var.
+  # Output is written to /result/ — Brane wraps this as IntermediateResult.
+  # -----------------------------------------------------------------------
+  'analyze_patients_file':
+    description: "Read a patients CSV dataset, analyze all records, write analysis_report.json to /result/."
+    command:
+      args: [analyze_patients_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'filter_high_risk_patients':
+    description: "Read a patients CSV dataset and write only high-risk records to /result/high_risk.csv."
+    command:
+      args: [filter_high_risk_patients]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  # -----------------------------------------------------------------------
+  # IntermediateResult chaining: reads the output of analyze_patients_file,
+  # generates formatted HTML + summary reports, writes them to /result/.
+  # -----------------------------------------------------------------------
+  'generate_reports_from_results':
+    description: "Read an analysis IntermediateResult and produce per-patient JSON + HTML summary in /result/."
+    command:
+      args: [generate_reports_from_results]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: IntermediateResult

@@ -1,0 +1,19 @@
+Review: PipelineMax Enterprise 2.5 — Do Not Buy
+
+Overall Rating: 1 out of 5 stars
+
+After six months of frustration, lost data, and wasted engineering hours, I feel obligated to warn others away from PipelineMax Enterprise. This product is a disaster. I cannot recommend it to anyone under any circumstances.
+
+The installation process alone took three days because the documentation is incorrect, outdated, and riddled with errors. Steps that the manual describes as straightforward consistently failed with cryptic error messages that neither the documentation nor the support team could explain. We eventually got a working installation only by trial and error.
+
+Once installed, the reliability was appalling. The scheduler crashes at least twice a week, terminating running workflows without any warning or cleanup. When a workflow crashes mid-execution, the system leaves partial results and corrupted state that must be manually cleaned up before the pipeline can run again. This is an absolutely unacceptable failure mode for a production system. We lost three weeks of processed data because a crash left our database in an inconsistent state.
+
+Performance is terrible. Simple pipelines that should complete in minutes routinely take hours. The execution engine appears to load every module at startup, causing startup times of twenty minutes or more for complex workflows. We profiled the system and discovered that it is spending the majority of its time doing redundant file I/O that serves no obvious purpose.
+
+The user interface is confusing and poorly designed. Controls are hidden in non-intuitive locations, keyboard shortcuts are inconsistent with platform conventions, and the error messages are so vague as to be useless. The UI clearly was not tested with real users. Several features that are prominently advertised on the product website appear to be broken or simply non-functional.
+
+Customer support is shockingly bad. Response times are measured in days, and when responses do arrive they are generic and unhelpful. I have submitted the same critical bug report four times over three months and received no acknowledgement that it has been assigned to anyone. The support forums are full of unanswered questions stretching back two years.
+
+The price is outrageous for a product of this quality. We paid a significant sum for an enterprise licence and have received nothing but problems in return. The contract renewal is coming up and we will absolutely not be renewing.
+
+Avoid this product. The market has far better alternatives available at lower cost. Our team is currently migrating to a competitor and we could not be happier about the decision.

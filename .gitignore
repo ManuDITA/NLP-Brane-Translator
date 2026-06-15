@@ -1,5 +1,8 @@
 .venv/
-submodules/*
+submodules/manual/*
+submodules/languageSpec/*
+submodules/specification/*
+
 brane_knowledge_db/
 src/__pycache__/*
 brane_lang_db/
@@ -9,3 +12,6 @@ generated_branescripts/
 runs/*
 slurm_out/*
 .env
+*__pycache__/*
+*.log
+*.out

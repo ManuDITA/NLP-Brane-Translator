@@ -1,0 +1,19 @@
+
+// Workflow: analyze_single.bs
+//
+// Analyze heart disease risk for a single patient passed as inline JSON.
+// No dataset file needed.
+//
+// Run (from the project root):
+//   brane workflow run any_use_case submodules/datasets/healthcare/workflows/analyze_single.bs
+
+import healthcare;
+
+// After 'import healthcare;', functions are in the global namespace.
+// The JSON must match the expected schema: patient_id, age, gender,
+// vital_signs {blood_pressure, heart_rate}, lab_results {total_cholesterol},
+// and optionally medical_history (pipe-separated, e.g. "hypertension|smoking").
+let dataset := "{\"patient_id\":\"PAT001\",\"age\":67,\"gender\":\"M\",\"vital_signs\":{\"blood_pressure\":165,\"heart_rate\":88},\"lab_results\":{\"total_cholesterol\":245},\"medical_history\":[\"hypertension\"]}";
+
+let result := analyze_heart_disease(dataset);
+println(result);

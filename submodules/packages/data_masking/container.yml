@@ -1,0 +1,160 @@
+# container.yml for the Data Masking package
+name: data_masking
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-yaml
+
+files:
+  - data_masking.py
+
+entrypoint:
+  kind: task
+  exec: data_masking.py
+
+# ---------------------------------------------------------------------------
+# Custom classes exposed to BraneScript.
+# In BraneScript: let r := get_masking_summary("hash", "[...]"); println(r.records_processed);
+# Serialisation: FullValue::Instance is ["ClassName", {fields}] in serde.
+# ---------------------------------------------------------------------------
+types:
+  MaskingResult:
+    name: MaskingResult
+    properties:
+      - name: records_processed
+        type: integer
+      - name: fields_masked
+        type: integer
+      - name: strategy
+        type: string
+      - name: output_format
+        type: string
+
+actions:
+  # -----------------------------------------------------------------------
+  # String-based functions: operate on inline values/records.
+  # All inputs arrive as uppercase env vars, JSON-serialised by branelet.
+  # -----------------------------------------------------------------------
+  'mask_value':
+    description: >
+      Apply a masking strategy to a single string value.
+      Strategies: redact, hash, partial, generalise_date, mask_email.
+      Returns the masked string.
+    command:
+      args: [mask_value]
+    input:
+      - name: value
+        type: string
+      - name: strategy
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'detect_pii':
+    description: >
+      Scan a text string for likely PII patterns: email addresses, phone numbers,
+      date-like strings, SSN-like patterns, and credit-card-like numbers.
+      Returns a JSON string listing detected pattern types and example matches.
+    command:
+      args: [detect_pii]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'mask_json_record':
+    description: >
+      Apply masking to specified fields in a JSON object string.
+      fields_json is a JSON array of {"field": "...", "strategy": "..."} objects.
+      Returns the masked JSON object as a string.
+    command:
+      args: [mask_json_record]
+    input:
+      - name: record
+        type: string
+      - name: fields_json
+        type: string
+    output:
+      - name: output
+        type: string
+
+  # -----------------------------------------------------------------------
+  # Class-returning function: returns a MaskingResult instance summarising
+  # a masking configuration without needing actual data to process.
+  # -----------------------------------------------------------------------
+  'get_masking_summary':
+    description: >
+      Return a MaskingResult class instance describing a masking configuration.
+      Useful for verifying fields and strategy before running on real data.
+      fields_json is a JSON array of {"field": "...", "strategy": "..."} objects.
+    command:
+      args: [get_masking_summary]
+    input:
+      - name: strategy
+        type: string
+      - name: fields_json
+        type: string
+    output:
+      - name: output
+        type: MaskingResult
+
+  # -----------------------------------------------------------------------
+  # Data functions: operate on a registered Brane dataset file.
+  # Brane mounts the file and passes its path via CSV_FILE / JSON_FILE env var.
+  # Output is written to /result/ as an IntermediateResult.
+  # fields_json: JSON array of {"column"/"field": "...", "strategy": "..."} objects.
+  # -----------------------------------------------------------------------
+  'mask_csv_file':
+    description: >
+      Read a CSV dataset, apply per-column masking strategies, and write
+      masked_data.csv + masking_report.json to /result/.
+      fields_json: JSON array of {"column": "col_name", "strategy": "..."} objects.
+      Strategies: redact, hash, partial, generalise_date, mask_email.
+    command:
+      args: [mask_csv_file]
+    input:
+      - name: csv_file
+        type: Data
+      - name: fields_json
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'mask_json_file':
+    description: >
+      Read a JSON dataset (single object or array of objects), apply per-field
+      masking strategies, and write masked_data.json + masking_report.json to /result/.
+      fields_json: JSON array of {"field": "field_name", "strategy": "..."} objects.
+    command:
+      args: [mask_json_file]
+    input:
+      - name: json_file
+        type: Data
+      - name: fields_json
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult
+
+  # -----------------------------------------------------------------------
+  # IntermediateResult chaining: reads a masking IR and produces a formatted
+  # HTML report summarising what was masked, how, and any PII detections.
+  # -----------------------------------------------------------------------
+  'generate_masking_report':
+    description: >
+      Read a masking IntermediateResult (produced by mask_csv_file or
+      mask_json_file) and write a formatted HTML audit report to /result/.
+    command:
+      args: [generate_masking_report]
+    input:
+      - name: masking_result
+        type: IntermediateResult
+    output:
+      - name: output
+        type: IntermediateResult

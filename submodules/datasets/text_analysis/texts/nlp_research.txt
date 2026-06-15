@@ -1,0 +1,49 @@
+Natural Language Processing and Distributed Workflow Orchestration
+
+Abstract
+
+Natural language processing (NLP) has transformed the way humans interact with computational systems. Modern large language models demonstrate remarkable capabilities in text comprehension, generation, translation, and summarisation. However, deploying these models at scale across distributed infrastructure introduces significant engineering challenges related to data governance, policy enforcement, and cross-organisational collaboration.
+
+The Brane framework addresses precisely these challenges by providing a distributed workflow orchestration platform where computations are expressed as typed dataflows. BraneScript, the domain-specific language embedded in Brane, allows researchers to compose complex multi-step pipelines from modular packages without requiring knowledge of the underlying infrastructure topology. Each package encapsulates a self-contained computation, exposing strongly-typed inputs and outputs that Brane validates at compile time.
+
+Translating plain-English intent into BraneScript is itself an NLP problem of considerable difficulty. The task requires understanding not only the syntactic structure of the target language but also the semantic constraints imposed by package type signatures, data lineage policies, and runtime resource availability. A successful translator must resolve ambiguities in the user's intent, map natural-language concepts onto available package functions, and generate syntactically correct code that satisfies Brane's type system.
+
+This paper presents an NLP-Brane-Translator system that combines retrieval-augmented generation with large language models to bridge the gap between user intent and executable workflows. The system maintains a knowledge base of package descriptions, function signatures, and example workflows. Given a natural-language query, it retrieves the most relevant context and conditions a language model to produce a BraneScript workflow that satisfies the query.
+
+Empirical evaluation on a benchmark of 150 workflow generation tasks demonstrates that the system achieves a compilation success rate of 87% and an execution success rate of 79%, significantly outperforming zero-shot baselines. Error analysis reveals that the most common failure modes involve incorrect type assignments for Data and IntermediateResult arguments, which require precise understanding of Brane's data provenance model.
+
+Introduction
+
+The proliferation of distributed computing frameworks has created a need for higher-level abstractions that allow domain experts to express complex workflows without deep systems programming expertise. Scientific computing, medical informatics, and financial analytics all rely on pipelines that span multiple organisations, each controlling sensitive data subject to strict governance policies.
+
+Brane was designed with these constraints in mind. Its policy deliberation engine evaluates each function call against a configurable ruleset before execution, ensuring that data flows only to authorised locations and that sensitive information is never exposed beyond its designated scope. This policy-first design makes Brane particularly suitable for healthcare and research settings where data sharing is tightly regulated.
+
+The challenge we address is enabling non-expert users to leverage Brane's capabilities through natural language interfaces. A cardiologist wishing to run a risk stratification pipeline should not need to learn BraneScript syntax, understand Docker containerisation, or manage data registration workflows. They should be able to describe their analysis goal in plain English and receive a ready-to-run workflow in return.
+
+Related Work
+
+Code generation from natural language has been studied extensively. Early work on program synthesis used rule-based approaches and formal grammars to map structured queries onto executable programs. The advent of neural sequence-to-sequence models enabled end-to-end learned translators that could handle a broader range of syntactic patterns, though they struggled with long-range dependencies and type correctness.
+
+Large pre-trained language models, particularly those fine-tuned on code corpora, have substantially raised the state of the art. Models such as Codex, CodeLlama, and StarCoder demonstrate strong performance on standard coding benchmarks. However, these benchmarks rarely evaluate code generation for domain-specific languages with non-trivial type systems, which is the setting we consider here.
+
+Retrieval-augmented generation (RAG) augments language models with external knowledge retrieved at inference time. This approach is particularly valuable for tasks that require up-to-date or domain-specific information not present in the model's training data. Our use of RAG is motivated by the observation that BraneScript package ecosystems evolve rapidly and that effective workflow generation requires accurate, current knowledge of available packages and their interfaces.
+
+Methodology
+
+Our system comprises three components: a knowledge base, a retrieval module, and a generation module. The knowledge base stores package descriptions, function signatures with type annotations, usage examples, and annotated BraneScript workflow fragments. Documents are embedded using a dense retrieval model and indexed for efficient similarity search.
+
+At query time, the user's natural language input is encoded and used to retrieve the top-k most relevant knowledge base entries. These entries, together with the original query and a system prompt describing BraneScript syntax and Brane's execution model, form the context window presented to the generation model. The model is instructed to produce a complete, compilable BraneScript workflow.
+
+Post-processing validates the generated workflow against a lightweight type checker before returning it to the user. If the workflow fails validation, an error message is appended to the context and the model is prompted to revise its output. This self-correction loop runs for a maximum of three iterations before returning the best candidate found.
+
+Results and Discussion
+
+On the 150-task benchmark, our system achieved 87% compilation success and 79% execution success. The 8-percentage-point gap between compilation and execution success is attributable primarily to runtime type mismatches in Data and IntermediateResult arguments. These mismatches are difficult to catch at compile time because Brane's type system does not currently propagate dataset provenance information to the compiler.
+
+Qualitative analysis of generated workflows reveals that the system is generally effective at selecting the correct package functions and composing them in the right order. The most common errors involve incorrect handling of the Data-to-IntermediateResult boundary and misuse of the commit_result builtin, which requires a compile-time string literal as its first argument, a constraint that surprised even experienced BraneScript users.
+
+Future work will extend the knowledge base with more diverse workflow examples, improve the type-aware generation prompt, and integrate user feedback into the retrieval model to personalise suggestions over time.
+
+Conclusion
+
+We have demonstrated that retrieval-augmented language models can effectively translate plain-English workflow intents into compilable, executable BraneScript code. The system achieves strong performance on a challenging benchmark and generalises across the healthcare, text analysis, and datetime domains represented by our package ecosystem. By lowering the barrier to distributed workflow authorship, this work contributes to the broader goal of democratising access to powerful data science infrastructure.

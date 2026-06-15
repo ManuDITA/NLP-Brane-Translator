@@ -1,0 +1,7 @@
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_2" };
+let analysis := analyze_patients_file(patients);
+
+let reports := generate_reports_from_results(analysis);
+commit_result("healthcare_reports", reports);

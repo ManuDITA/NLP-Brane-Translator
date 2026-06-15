@@ -1,8 +1,6 @@
 """
 utils.py
-
-Shared helpers used by pipeline.py, example_generator.py, and intent_decomposer.py.
-Import from here — do NOT copy-paste these functions into other modules.
+Shared helpers
 """
 
 import os

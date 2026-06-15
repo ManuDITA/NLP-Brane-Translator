@@ -1,0 +1,31 @@
+// Workflow: parallel_analysis.bs
+//
+// Pass the same registered dataset to the healthcare package on two different
+// sites in parallel, then commit both results.
+//
+// Prerequisites:
+//   brane data build submodules/datasets/healthcare/data.yml
+//   brane package build submodules/packages/healthcare/container.yml
+//
+// Run:
+//   brane workflow run any_use_case workflows/parallel_analysis.bs
+//
+// Replace "site-a" / "site-b" with the actual site names in your Brane instance.
+
+import healthcare;
+
+// A single Data reference can be passed to multiple parallel branches.
+let patients := new Data{ name := "healthcare_patients" };
+
+// After 'import healthcare;', functions are in the global namespace -- no package prefix.
+let results := parallel [all] [{
+    #[on("site-a")]
+    return analyze_patients_file(patients);
+}, {
+    #[on("site-b")]
+    return analyze_patients_file(patients);
+}];
+
+// Commit both IntermediateResults as named datasets.
+commit_result("healthcare_analysis_site_a", results[0]);
+commit_result("healthcare_analysis_site_b", results[1]);
