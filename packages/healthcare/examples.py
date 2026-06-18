@@ -5,7 +5,7 @@ Demonstrates all available functions and features
 """
 
 import json
-from submodules.packages.healthcare.healthcare import HealthcareAnalyzer
+from packages.healthcare.healthcare import HealthcareAnalyzer
 
 
 def example_single_patient_analysis():

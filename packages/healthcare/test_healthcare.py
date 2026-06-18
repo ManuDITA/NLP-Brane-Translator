@@ -6,7 +6,7 @@ Tests all major functions and edge cases
 
 import unittest
 import json
-from submodules.packages.healthcare.healthcare import HealthcareAnalyzer, RiskLevel
+from packages.healthcare.healthcare import HealthcareAnalyzer, RiskLevel
 
 
 class TestHealthcareAnalyzer(unittest.TestCase):

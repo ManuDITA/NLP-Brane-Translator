@@ -1,0 +1,6 @@
+patient_id,age,gender,blood_pressure,heart_rate,total_cholesterol,medical_history
+PAT001,67,M,165,88,245,hypertension|smoking
+PAT002,45,F,135,72,210,
+PAT003,32,M,118,65,175,
+PAT004,71,F,155,90,260,diabetes|hypertension
+PAT005,52,M,148,78,230,smoking

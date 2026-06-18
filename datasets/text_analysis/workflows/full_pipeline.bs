@@ -1,0 +1,38 @@
+// full_pipeline.bs — Text Analysis full pipeline
+//
+// Analyses the text_corpus dataset (5 varied .txt files) and produces
+// a word-frequency CSV + HTML visualisation report.
+//
+// Run:  brane workflow run a full_pipeline.bs
+// Requires: text_analysis package built and text_corpus dataset registered.
+
+import text_analysis;
+
+// --- Inline stats on a short string (smoke-test individual functions) ---
+let test_text := "Natural language processing enables computers to understand human text. It is a fascinating and rapidly growing field of artificial intelligence research.";
+
+let n_words := count_words(test_text);
+println("Word count: " + n_words);
+
+let n_sents := count_sentences(test_text);
+println("Sentence count: " + n_sents);
+
+let sentiment := compute_sentiment(test_text);
+println("Sentiment: " + sentiment);
+
+let readability := compute_readability(test_text);
+println("Readability: " + readability);
+
+let keywords := extract_keywords(test_text, 5);
+println("Top keywords: " + keywords);
+
+let stats := get_text_stats(test_text);
+println("Stats — words: " + stats.word_count + ", sentiment: " + stats.sentiment + ", readability: " + stats.readability_score);
+
+// --- File-based pipeline: analyse the full corpus ---
+let analysis := analyze_text_file(text_corpus);
+
+// --- Generate frequency report from the analysis IR ---
+let report := generate_frequency_report(analysis);
+
+commit_result("text_analysis_report", report);
