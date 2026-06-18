@@ -45,9 +45,25 @@ ln -sfn "$(basename "$LOGFILE")" runs/latest_output.txt
 echo "Logging to $LOGFILE"
 echo "Latest log symlink: runs/latest_output.txt"
 
+# ---- Remote execution tunnel setup ----------------------------------------
+# Set up port forwarding from this compute node through the Snellius login node
+# to the local machine's brane_executor.py (port 9753).
+#
+# Requires:
+#   - brane_executor.py running on the local machine
+#   - start_tunnel.sh running on the local machine (reverse SSH tunnel active)
+#   - BRANE_EXECUTOR_TOKEN exported in your Snellius ~/.bashrc
+#
+# If the tunnel cannot be established, the pipeline still runs but skips execution.
+source ~/Thesis/NLP-Brane-Translator/scripts/remote_execution/snellius/setup_compute_tunnel.sh
+
+echo "Executor URL: ${BRANE_EXECUTOR_URL:-not set — execution disabled}"
+# ---------------------------------------------------------------------------
+
 python -u src/pipeline.py \
     --model Qwen/Qwen3.6-27B \
     --temperature 0.2 \
+    --execute \
     > "$LOGFILE" 2>&1
 
 echo "Job finished at $(date)"

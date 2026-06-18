@@ -6,16 +6,25 @@ Main entry point. Implements the simplified architecture:
   User request
     → Load raw workspace files as LLM context
     → Prompt construction
-    → Ollama (BraneScript generation)
+    → LLM inference (BraneScript generation)
     → Syntax check      (on fail: retry with error, max 3 attempts)
     → Save generated BraneScript to disk
+    → [Optional] POST to local brane_executor.py via SSH tunnel → run workflow
 
 Run:
-    python pipeline.py
+    python pipeline.py [--execute]
+
+Remote execution
+    When --execute is passed, the generated BraneScript is sent to the local
+    machine's brane_executor.py over the SSH reverse tunnel. See:
+        scripts/remote_execution/README.md
 """
 
+import json
 import os
 import re
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from langchain_chroma import Chroma
@@ -147,11 +156,35 @@ let subject := new Subject {
 };
 
 #[on("amy")]
-let result := bioanalysis::evaluate(subject);
+    let result := bioanalysis::evaluate(subject);
 println(result);
 ```
 NOTE: whenever the user says "on node X", "on site X", "at location X", or "run on X",
 place `#[on("X")]` immediately before the relevant function call or block.
+
+Example 6 – referencing a registered dataset (Data), getting an IntermediateResult, and committing it:
+```
+import copy_result;
+import cat;
+
+// Reference an existing dataset by name — Data is a builtin class with one field: name
+let raw := new Data { name := "patient_records" };
+
+// Pass the Data reference to a package function.
+// Functions that output file/data results return an IntermediateResult (not a plain value).
+// You cannot create an IntermediateResult yourself — it is always returned by a package function.
+let processed := copy_result(raw);
+
+// To persist the result beyond this workflow, commit it with a new name.
+// commit_result("new-dataset-name", intermediate_result_variable)
+commit_result("patient_records_copy", processed);
+```
+RULES for Data and IntermediateResult:
+- Use `new Data {{ name := "dataset-name" }}` to reference a registered dataset.
+- `IntermediateResult` is returned by package functions — you NEVER instantiate it yourself.
+- Use `commit_result("name", result)` to save an IntermediateResult as a persistent dataset.
+- Both `Data` and `IntermediateResult` can be passed as arguments to package functions.
+- Do NOT try to access fields or content of a Data/IntermediateResult in BraneScript — they are opaque references.
 """
 
 # ---------------------------------------------------------------------------
@@ -164,6 +197,16 @@ LANG_DB_PATH = PROJECT_ROOT / "brane_lang_db"
 PKG_DB_PATH = PROJECT_ROOT / "brane_pkg_db"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_RETRIES = 3
+
+# Remote execution — read from environment (set by .env / setup_compute_tunnel.sh)
+# BRANE_EXECUTOR_URL is exported by setup_compute_tunnel.sh inside the SLURM job.
+_DEFAULT_EXECUTOR_PORT = os.environ.get("TUNNEL_PORT", "9753")
+EXECUTOR_URL = os.environ.get(
+    "BRANE_EXECUTOR_URL",
+    f"http://localhost:{_DEFAULT_EXECUTOR_PORT}",
+)
+EXECUTOR_TOKEN = os.environ.get("BRANE_EXECUTOR_TOKEN", "")
+EXECUTOR_TIMEOUT = int(os.environ.get("BRANE_EXECUTOR_TIMEOUT", "300"))
 
 # ---------------------------------------------------------------------------
 # Prompt templates
@@ -189,6 +232,9 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 12. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
 13. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
 14. BraneScript class fields can only have primitive types (`int`, `real`, `bool`, `string`) or other class types. Do NOT use `array<T>`, `list<T>`, or `List` as field types — these do not exist. If a field would be a list, either omit it or represent it as a `string`.
+15. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
+16. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. If the user wants to save or persist output data, use `commit_result("new-name", result_variable);` after calling the function.
+17. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
 
 USER REQUEST:
 {question}
@@ -365,15 +411,78 @@ def ask_for_clarification(question: str) -> str:
     return answer.strip()
 
 
-def execute_workflow(code: str) -> tuple[bool, str]:
+def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
     """
-    Hook your actual Brane execution here.
-    e.g.: result = subprocess.run(["brane", "run", "--stdin"], input=code, ...)
+    Send the BraneScript workflow to brane_executor.py on the local machine
+    via the SSH reverse tunnel and return (success, output).
 
-    Returns (success, result_or_error_message).
+    The executor must be running on the local machine AND the tunnel must be
+    active (start_tunnel.sh + setup_compute_tunnel.sh).
+
+    Falls back gracefully if the executor is not reachable.
     """
-    print("\n🚀 Execute workflow: (placeholder — hook Brane runner here)")
-    return True, "Execution placeholder: would run via `brane run`"
+    if not EXECUTOR_URL:
+        print("\n⚠️  BRANE_EXECUTOR_URL is empty — skipping execution.")
+        return False, "Executor URL not configured."
+
+    print(f"\n🚀 Sending workflow to local executor: {EXECUTOR_URL}/run")
+
+    payload = json.dumps({
+        "workflow": code,
+        "query": user_query,
+        "timeout": EXECUTOR_TIMEOUT,
+    }).encode("utf-8")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Content-Length": str(len(payload)),
+    }
+    if EXECUTOR_TOKEN:
+        headers["Authorization"] = f"Bearer {EXECUTOR_TOKEN}"
+
+    req = urllib.request.Request(
+        f"{EXECUTOR_URL}/run",
+        data=payload,
+        headers=headers,
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=EXECUTOR_TIMEOUT + 30) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        msg = f"Executor HTTP {exc.code}: {exc.reason}"
+        print(f"   ❌ {msg}")
+        return False, msg
+    except urllib.error.URLError as exc:
+        msg = (
+            f"Cannot reach executor at {EXECUTOR_URL}. "
+            f"Is brane_executor.py running and is the tunnel active? ({exc.reason})"
+        )
+        print(f"   ❌ {msg}")
+        return False, msg
+    except Exception as exc:
+        msg = f"Unexpected error calling executor: {exc}"
+        print(f"   ❌ {msg}")
+        return False, msg
+
+    success: bool = body.get("success", False)
+    stdout: str = body.get("stdout", "")
+    stderr: str = body.get("stderr", "")
+    exit_code: int = body.get("exit_code", -1)
+
+    print(f"   exit_code={exit_code}  success={success}")
+    if stdout:
+        print("\n── Workflow stdout ──────────────────────────────────")
+        print(stdout.rstrip())
+        print("─────────────────────────────────────────────────────")
+    if stderr and not success:
+        print("\n── Workflow stderr ──────────────────────────────────")
+        print(stderr.rstrip())
+        print("─────────────────────────────────────────────────────")
+
+    combined = stdout + (f"\n[stderr]\n{stderr}" if stderr else "")
+    return success, combined
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +527,8 @@ def run_pipeline(user_query: str,
                  pkg_retriever: PkgRetriever,
                  llm,
                  few_shot_override: str = None,
-                 no_think_prefix: str = "") -> str:
+                 no_think_prefix: str = "",
+                 execute: bool = False) -> str:
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
 
@@ -528,6 +638,14 @@ def run_pipeline(user_query: str,
     if code.strip():
         save_branescript_to_folder(code, user_query)
 
+    # ── Optional: execute on local machine via SSH tunnel ─────────────────
+    if execute and code.strip():
+        exec_success, exec_output = execute_workflow(code, user_query)
+        if not exec_success:
+            print(f"\n⚠️  Workflow execution failed.")
+        else:
+            print(f"\n✅ Workflow executed successfully.")
+
     return code
 
 
@@ -547,6 +665,12 @@ if __name__ == "__main__":
         help="Sampling temperature (default: 0.4). "
              "Lower = more deterministic code output."
     )
+    parser.add_argument(
+        "--execute", action="store_true", default=False,
+        help="Send the generated BraneScript to the local machine's brane_executor.py "
+             "via the SSH reverse tunnel and run it. Requires BRANE_EXECUTOR_TOKEN to be set "
+             "and the tunnel to be active. See scripts/remote_execution/README.md."
+    )
     args = parser.parse_args()
 
     # Disable Qwen3 thinking mode — /no_think must be the very first token of the prompt
@@ -558,7 +682,7 @@ if __name__ == "__main__":
         print(f" Chosen model: {args.model}")
         no_think_prefix = "/no_think\n"
 
-    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}")
+    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  execute: {args.execute}")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     
@@ -634,6 +758,7 @@ if __name__ == "__main__":
         llm=llm,
         few_shot_override=BRANESCRIPT_FEW_SHOT,
         no_think_prefix=no_think_prefix,
+        execute=args.execute,
     )
 
     print("\n" + "=" * 50)
