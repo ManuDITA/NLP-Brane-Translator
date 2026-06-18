@@ -49,20 +49,16 @@ This generates:
 
 It prints the **restricted public key** to copy to Snellius.
 
-### 2. Snellius — add the public key
+### 2. Snellius — append the public key
+
+`setup_local.sh` prints the exact command to run. It looks like this — run it **from your local machine**:
 
 ```bash
-ssh your_username@snellius.surf.nl
-nano ~/.ssh/authorized_keys
+ssh your_username@snellius.surf.nl \
+  "echo 'no-pty,no-agent-forwarding,no-X11-forwarding,permitopen=\"localhost:9753\" ssh-ed25519 AAAA...' >> ~/.ssh/authorized_keys"
 ```
 
-Paste the key line printed by `setup_local.sh`. It looks like:
-
-```
-no-pty,no-agent-forwarding,no-X11-forwarding,permitopen="localhost:9753" ssh-ed25519 AAAA... brane-tunnel-...
-```
-
-The restrictions prevent the key from being used for anything other than the port forward, even if it is ever compromised.
+This **appends** one line to your existing `~/.ssh/authorized_keys` — it does not overwrite any keys already there.
 
 ### 3. Snellius — set the Bearer token
 
