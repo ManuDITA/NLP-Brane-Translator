@@ -110,46 +110,53 @@ def ssh_run(remote_cmd: str, input_data: str = None) -> tuple:
 # ---------------------------------------------------------------------------
 # Committed output collection
 # ---------------------------------------------------------------------------
-def snapshot_data_dirs() -> set:
-    """Return the set of dataset names currently in the Brane data directory."""
-    if not BRANE_DATA_DIR.exists():
-        return set()
-    return {p.name for p in BRANE_DATA_DIR.iterdir() if p.is_dir()}
-
-
-def collect_committed_outputs(before: set) -> dict:
+def snapshot_data_dirs() -> float:
     """
-    Detect new dataset directories created since *before* snapshot and read
-    their output files.
+    Return the current wall-clock time (float seconds since epoch).
+    Used as a "before" marker to detect dataset files written after this point.
+    """
+    return time.time()
+
+
+def collect_committed_outputs(before: float) -> dict:
+    """
+    Detect dataset directories that have files newer than *before* timestamp,
+    and read their output files.
 
     Returns a dict keyed by dataset name:
         {
           "healthcare_reports3": {
-              "files": {"summary.html": "<content>", "reports/PAT001.json": "..."},
-              "created": "2026-06-19T00:38:00Z"
+              "files": {"summary.html": "<content>", "reports/PAT001.json": "..."}
           }
         }
 
-    Files larger than COMMITTED_FILE_SIZE_LIMIT are replaced with a size note.
+    Files larger than COMMITTED_FILE_SIZE_LIMIT are truncated.
     Total content is capped at COMMITTED_TOTAL_LIMIT.
     """
     if not BRANE_DATA_DIR.exists():
         return {}
 
-    after = {p.name for p in BRANE_DATA_DIR.iterdir() if p.is_dir()}
-    new_names = after - before
-    if not new_names:
+    # Find all dataset dirs that have at least one file newer than `before`
+    changed = []
+    for p in BRANE_DATA_DIR.iterdir():
+        if not p.is_dir():
+            continue
+        data_sub = p / "data"
+        if not data_sub.exists():
+            continue
+        for fpath in data_sub.rglob("*"):
+            if fpath.is_file() and fpath.stat().st_mtime > before:
+                changed.append(p.name)
+                break
+
+    if not changed:
         return {}
 
     result = {}
     total_bytes = 0
 
-    for name in sorted(new_names):
+    for name in sorted(changed):
         data_dir = BRANE_DATA_DIR / name / "data"
-        if not data_dir.exists():
-            result[name] = {"files": {}, "note": "no data/ subdirectory"}
-            continue
-
         files = {}
         for fpath in sorted(data_dir.rglob("*")):
             if not fpath.is_file():
@@ -162,8 +169,10 @@ def collect_committed_outputs(before: set) -> dict:
                 continue
 
             if size > COMMITTED_FILE_SIZE_LIMIT:
-                files[rel] = f"<file too large: {size} bytes — first {COMMITTED_FILE_SIZE_LIMIT} chars shown>\n" + \
-                    fpath.read_text(encoding="utf-8", errors="replace")[:COMMITTED_FILE_SIZE_LIMIT]
+                files[rel] = (
+                    f"<file too large: {size} bytes — first {COMMITTED_FILE_SIZE_LIMIT} chars shown>\n"
+                    + fpath.read_text(encoding="utf-8", errors="replace")[:COMMITTED_FILE_SIZE_LIMIT]
+                )
             else:
                 try:
                     files[rel] = fpath.read_text(encoding="utf-8", errors="replace")
