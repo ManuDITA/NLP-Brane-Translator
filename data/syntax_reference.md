@@ -245,14 +245,69 @@ let results := parallel [all] [{
 
 ---
 
-## Data / Datasets
+## Data / Datasets and Intermediate Results
 
-Reference a dataset registered in the Brane instance:
+Brane separates *variables* (in-memory values) from *data* (files/large datasets on disk).
+
+### `Data` — reference to a registered dataset
+
+Use the builtin `Data` class to reference a dataset by name. It has exactly one field: `name`.
 
 ```bscript
 let ds := new Data { name := "my-dataset" };
-let output := somepackage::process(ds);
+let result := somepackage::process(ds);
 ```
+
+`Data` can also be created inline:
+
+```bscript
+let result := somepackage::process(new Data { name := "my-dataset" });
+```
+
+### `IntermediateResult` — output of a package function that produces data
+
+When a package function outputs a file or dataset, it returns an `IntermediateResult`.
+You **cannot** create an `IntermediateResult` yourself — it is always the return value of a package call.
+
+```bscript
+import copy_result;
+
+let ds := new Data { name := "colours" };
+let copy := copy_result(ds);   // copy is an IntermediateResult
+```
+
+An `IntermediateResult` can be passed as input to another package function, just like `Data`.
+
+### `commit_result` — persisting an IntermediateResult as a dataset
+
+`IntermediateResult` values are scoped to the workflow. To make one persist beyond the workflow, commit it:
+
+```bscript
+commit_result("new-dataset-name", result_variable);
+```
+
+Full example — load a dataset, process it, save the output:
+
+```bscript
+import copy_result;
+import cat;
+
+let raw := new Data { name := "colours" };
+println(cat(raw, "-"));             // print original
+
+let copy := copy_result(raw);       // returns IntermediateResult
+println(cat(copy, "contents"));     // print copy
+
+commit_result("colours_copy", copy); // persist as a new dataset
+```
+
+### Key rules
+
+- `Data` → input only (reference to existing dataset)
+- `IntermediateResult` → output of a package function that produces data; cannot be created by user
+- `commit_result("name", result)` → save an `IntermediateResult` permanently
+- You cannot inspect the contents of a `Data` or `IntermediateResult` in BraneScript — they are opaque references; use a package function (e.g. `cat`) to read them
+- In `container.yml`, functions declare `type: Data` for dataset inputs and `type: IntermediateResult` for data outputs
 
 ---
 
@@ -293,14 +348,15 @@ Use `return;` (no value) for early exit from a `unit` function.
 
 ## Types
 
-| Type     | Example literal      |
-|----------|----------------------|
-| `int`    | `42`, `-7`           |
-| `real`   | `3.14`, `-0.5`       |
-| `bool`   | `true`, `false`      |
-| `string` | `"hello"`            |
-| `Data`   | `new Data { name := "ds" }` |
-| Array    | `[1, 2, 3]`          |
+| Type                 | Example / Notes                                      |
+|----------------------|------------------------------------------------------|
+| `int`                | `42`, `-7`                                           |
+| `real`               | `3.14`, `-0.5`                                       |
+| `bool`               | `true`, `false`                                      |
+| `string`             | `"hello"`                                            |
+| `Data`               | `new Data { name := "ds" }` — reference to a dataset |
+| `IntermediateResult` | returned by package functions; use `commit_result("name", result)` to persist |
+| Array                | `[1, 2, 3]`                                          |
 
 ---
 
