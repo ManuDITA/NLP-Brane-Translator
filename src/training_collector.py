@@ -102,6 +102,7 @@ class TrainingCollector:
         stdout: str = "",
         stderr: str = "",
         exit_code: Optional[int] = None,
+        committed_data: Optional[dict] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -139,6 +140,7 @@ class TrainingCollector:
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": exit_code,
+            "committed_data": committed_data or {},
             "attempt_number": attempt_number,
             "model": model,
         }
@@ -158,6 +160,7 @@ class TrainingCollector:
         intent: str,
         generated_code: str,
         stdout: str = "",
+        committed_data: Optional[dict] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -168,6 +171,7 @@ class TrainingCollector:
             verdict="pass",
             error_type=None,
             stdout=stdout,
+            committed_data=committed_data,
             attempt_number=attempt_number,
             model=model,
         )
@@ -182,6 +186,7 @@ class TrainingCollector:
         stdout: str = "",
         stderr: str = "",
         exit_code: Optional[int] = None,
+        committed_data: Optional[dict] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -195,6 +200,7 @@ class TrainingCollector:
             stdout=stdout,
             stderr=stderr,
             exit_code=exit_code,
+            committed_data=committed_data,
             attempt_number=attempt_number,
             model=model,
         )

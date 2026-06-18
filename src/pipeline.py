@@ -484,6 +484,7 @@ def execute_workflow(code: str, user_query: str = "") -> dict:
                 "error_type": error_type,
                 "stdout": stdout,
                 "stderr": stderr,
+                "committed_data": result.get("committed_data", {}),
             }
 
         _time.sleep(poll_interval)
@@ -503,6 +504,7 @@ def execute_workflow(code: str, user_query: str = "") -> dict:
         "error_type": "timeout",
         "stdout": "",
         "stderr": msg,
+        "committed_data": {},
     }
 
 
@@ -692,6 +694,7 @@ def run_pipeline(user_query: str,
             if collector:
                 collector.log_pass(intent=user_query, generated_code=code,
                                    stdout=exec_result["stdout"],
+                                   committed_data=exec_result.get("committed_data"),
                                    attempt_number=attempt, model=model_name)
         else:
             print(f"\n⚠️  Workflow execution failed.")
@@ -702,6 +705,7 @@ def run_pipeline(user_query: str,
                                    stdout=exec_result["stdout"],
                                    stderr=exec_result["stderr"],
                                    exit_code=exec_result["exit_code"],
+                                   committed_data=exec_result.get("committed_data"),
                                    attempt_number=attempt, model=model_name)
     elif not execute and code.strip() and collector:
         # No execution requested — log as pass at validation stage only

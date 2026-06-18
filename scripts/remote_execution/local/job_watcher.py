@@ -42,6 +42,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,14 @@ POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "3"))
 REMOTE = f"{SNELLIUS_USER}@{SNELLIUS_HOST}" if SNELLIUS_USER else SNELLIUS_HOST
 PENDING_DIR = f"{SNELLIUS_JOBS_DIR}/pending"
 DONE_DIR = f"{SNELLIUS_JOBS_DIR}/done"
+
+# Where Brane stores committed results on the local machine
+BRANE_DATA_DIR = Path.home() / ".local/share/brane/data"
+
+# Per-file size cap for committed output (bytes); files larger than this are summarised
+COMMITTED_FILE_SIZE_LIMIT = 20_000   # 20 KB
+# Total size cap across all committed output in one result
+COMMITTED_TOTAL_LIMIT = 200_000      # 200 KB
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +94,7 @@ def _ssh_cmd() -> list:
     return cmd
 
 
-def ssh_run(remote_cmd: str, input_data: str = None) -> tuple[int, str, str]:
+def ssh_run(remote_cmd: str, input_data: str = None) -> tuple:
     """Run a command on Snellius. Returns (exit_code, stdout, stderr)."""
     proc = subprocess.run(
         _ssh_cmd() + [remote_cmd],
@@ -96,6 +105,75 @@ def ssh_run(remote_cmd: str, input_data: str = None) -> tuple[int, str, str]:
         errors="replace",
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# Committed output collection
+# ---------------------------------------------------------------------------
+def snapshot_data_dirs() -> set:
+    """Return the set of dataset names currently in the Brane data directory."""
+    if not BRANE_DATA_DIR.exists():
+        return set()
+    return {p.name for p in BRANE_DATA_DIR.iterdir() if p.is_dir()}
+
+
+def collect_committed_outputs(before: set) -> dict:
+    """
+    Detect new dataset directories created since *before* snapshot and read
+    their output files.
+
+    Returns a dict keyed by dataset name:
+        {
+          "healthcare_reports3": {
+              "files": {"summary.html": "<content>", "reports/PAT001.json": "..."},
+              "created": "2026-06-19T00:38:00Z"
+          }
+        }
+
+    Files larger than COMMITTED_FILE_SIZE_LIMIT are replaced with a size note.
+    Total content is capped at COMMITTED_TOTAL_LIMIT.
+    """
+    if not BRANE_DATA_DIR.exists():
+        return {}
+
+    after = {p.name for p in BRANE_DATA_DIR.iterdir() if p.is_dir()}
+    new_names = after - before
+    if not new_names:
+        return {}
+
+    result = {}
+    total_bytes = 0
+
+    for name in sorted(new_names):
+        data_dir = BRANE_DATA_DIR / name / "data"
+        if not data_dir.exists():
+            result[name] = {"files": {}, "note": "no data/ subdirectory"}
+            continue
+
+        files = {}
+        for fpath in sorted(data_dir.rglob("*")):
+            if not fpath.is_file():
+                continue
+            rel = str(fpath.relative_to(data_dir))
+            size = fpath.stat().st_size
+
+            if total_bytes >= COMMITTED_TOTAL_LIMIT:
+                files[rel] = f"<omitted — total output cap ({COMMITTED_TOTAL_LIMIT // 1024}KB) reached>"
+                continue
+
+            if size > COMMITTED_FILE_SIZE_LIMIT:
+                files[rel] = f"<file too large: {size} bytes — first {COMMITTED_FILE_SIZE_LIMIT} chars shown>\n" + \
+                    fpath.read_text(encoding="utf-8", errors="replace")[:COMMITTED_FILE_SIZE_LIMIT]
+            else:
+                try:
+                    files[rel] = fpath.read_text(encoding="utf-8", errors="replace")
+                except Exception as exc:
+                    files[rel] = f"<read error: {exc}>"
+            total_bytes += min(size, COMMITTED_FILE_SIZE_LIMIT)
+
+        result[name] = {"files": files}
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +223,9 @@ def run_brane(workflow: str) -> dict:
         tmp.write(workflow)
         tmp_path = tmp.name
 
+    # Snapshot existing data dirs before execution so we can detect new ones
+    before_snapshot = snapshot_data_dirs()
+
     try:
         cmd = ["brane", "workflow", "run", "a", tmp_path]
         _log(f"Executing: {' '.join(cmd)}")
@@ -170,12 +251,18 @@ def run_brane(workflow: str) -> dict:
             error_type = "compilation"
         else:
             error_type = "runtime"
+
+        committed = collect_committed_outputs(before_snapshot)
+        if committed:
+            _log(f"  committed datasets: {list(committed.keys())}")
+
         return {
             "success": proc.returncode == 0,
             "exit_code": proc.returncode,
             "error_type": error_type,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
+            "committed_data": committed,
         }
 
     except subprocess.TimeoutExpired:
@@ -186,6 +273,7 @@ def run_brane(workflow: str) -> dict:
             "error_type": "timeout",
             "stdout": "",
             "stderr": f"Workflow timed out after {BRANE_EXECUTOR_TIMEOUT}s.",
+            "committed_data": {},
         }
     except FileNotFoundError:
         _log("ERROR: 'brane' not found in PATH")
@@ -195,6 +283,7 @@ def run_brane(workflow: str) -> dict:
             "error_type": "runtime",
             "stdout": "",
             "stderr": "'brane' not found in PATH. Is Brane installed?",
+            "committed_data": {},
         }
     finally:
         try:

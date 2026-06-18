@@ -130,6 +130,7 @@ result   = json.load(open(sys.argv[1]))
 intent   = sys.argv[2]
 bs_file  = sys.argv[3]
 code     = open(bs_file, encoding='utf-8').read()
+committed = result.get('committed_data') or {}
 
 collector = TrainingCollector()
 
@@ -138,6 +139,7 @@ if result.get('success'):
         intent=intent,
         generated_code=code,
         stdout=result.get('stdout', ''),
+        committed_data=committed,
     )
     print(f'📊 Logged pass  → {collector.log_file} ({rec_id[:8]}…)')
 else:
@@ -149,6 +151,7 @@ else:
         stdout=result.get('stdout', ''),
         stderr=result.get('stderr', ''),
         exit_code=result.get('exit_code'),
+        committed_data=committed,
     )
     print(f'📊 Logged fail  → {collector.log_file} ({rec_id[:8]}…)')
 " "${RESULT_FILE}" "${INTENT}" "${BS_FILE}" "$0"
