@@ -45,19 +45,14 @@ ln -sfn "$(basename "$LOGFILE")" runs/latest_output.txt
 echo "Logging to $LOGFILE"
 echo "Latest log symlink: runs/latest_output.txt"
 
-# ---- Remote execution tunnel setup ----------------------------------------
-# Set up port forwarding from this compute node through the Snellius login node
-# to the local machine's brane_executor.py (port 9753).
-#
-# Requires:
-#   - brane_executor.py running on the local machine
-#   - start_tunnel.sh running on the local machine (reverse SSH tunnel active)
-#   - BRANE_EXECUTOR_TOKEN exported in your Snellius ~/.bashrc
-#
-# If the tunnel cannot be established, the pipeline still runs but skips execution.
-source ~/Thesis/NLP-Brane-Translator/scripts/remote_execution/snellius/setup_compute_tunnel.sh
-
-echo "Executor URL: ${BRANE_EXECUTOR_URL:-not set — execution disabled}"
+# ---- Remote execution setup -----------------------------------------------
+# The file-based job queue lives at ~/brane_jobs/ on the Snellius filesystem.
+# job_watcher.py on your local machine polls this via SSH — no port forwarding needed.
+# Make sure job_watcher.py is running before submitting:
+#   source .env && python scripts/remote_execution/local/job_watcher.py
+export SNELLIUS_JOBS_DIR="${HOME}/brane_jobs"
+mkdir -p "${SNELLIUS_JOBS_DIR}/pending" "${SNELLIUS_JOBS_DIR}/done"
+echo "Job queue: ${SNELLIUS_JOBS_DIR}"
 # ---------------------------------------------------------------------------
 
 python -u src/pipeline.py \

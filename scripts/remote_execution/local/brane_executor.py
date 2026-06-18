@@ -35,6 +35,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -220,23 +221,28 @@ def main() -> None:
     # Bind to loopback only — the SSH tunnel delivers traffic here
     bind_addr = ("127.0.0.1", args.port)
     server = ThreadedHTTPServer(bind_addr, ExecutorHandler)
+    server.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-    # Handle Ctrl-C / SIGTERM gracefully
-    def _shutdown(signum, frame):
-        _log("Shutting down executor...")
-        server.shutdown()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    # Run serve_forever in a daemon thread so the main thread can catch signals
+    import threading
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
 
     _log(f"Brane executor listening on {bind_addr[0]}:{bind_addr[1]}")
     _log(f"Brane instance: {BRANE_INSTANCE}")
     _log(f"Auth: {'enabled (Bearer token set)' if TOKEN else 'DISABLED — no token'}")
     _log(f"Workflow timeout: {args.timeout}s")
-    _log("Waiting for connections through SSH tunnel...")
+    _log("Waiting for connections through SSH tunnel... (Ctrl-C to stop)")
 
-    server.serve_forever()
+    try:
+        while True:
+            signal.pause()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        _log("Shutting down executor...")
+        server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":

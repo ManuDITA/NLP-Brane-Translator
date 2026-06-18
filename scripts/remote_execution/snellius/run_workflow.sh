@@ -1,27 +1,28 @@
 #!/usr/bin/env bash
-# run_workflow.sh — Send a BraneScript file to the local executor via SSH tunnel.
+# run_workflow.sh — Submit a BraneScript file to the local machine via file queue.
 #
 # Usage (run this ON SNELLIUS):
 #   bash scripts/remote_execution/snellius/run_workflow.sh <file.bs>
 #
+# How it works (no port forwarding needed):
+#   1. Writes a job file to ~/brane_jobs/pending/<uuid>.json on Snellius filesystem
+#   2. job_watcher.py on local machine polls this dir via SSH, runs brane, uploads result
+#   3. This script polls ~/brane_jobs/done/<uuid>.json until the result appears
+#
 # Requirements:
-#   - BRANE_EXECUTOR_TOKEN exported in your environment
-#   - start_tunnel.sh running on your local machine
-#   - brane_executor.py running on your local machine
+#   - job_watcher.py running on your local machine:
+#       source .env && python scripts/remote_execution/local/job_watcher.py
 
 set -eo pipefail
 
-EXECUTOR_URL="${BRANE_EXECUTOR_URL:-http://localhost:${TUNNEL_PORT:-9753}}"
+JOBS_DIR="${SNELLIUS_JOBS_DIR:-${HOME}/brane_jobs}"
+PENDING_DIR="${JOBS_DIR}/pending"
+DONE_DIR="${JOBS_DIR}/done"
+TIMEOUT="${BRANE_EXECUTOR_TIMEOUT:-300}"
+POLL_INTERVAL=3
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <workflow.bs>"
-    exit 1
-fi
-
-if [[ -z "${BRANE_EXECUTOR_TOKEN:-}" ]]; then
-    echo "❌ BRANE_EXECUTOR_TOKEN is not set."
-    echo "   Run: export BRANE_EXECUTOR_TOKEN=<your_token>"
-    echo "   Or add it to ~/.bashrc on Snellius."
     exit 1
 fi
 
@@ -32,44 +33,62 @@ if [[ ! -f "${BS_FILE}" ]]; then
     exit 1
 fi
 
-# Read file and JSON-encode it for the request body
-WORKFLOW=$(python3 -c "import json,sys; print(json.dumps(open(sys.argv[1]).read()))" "${BS_FILE}")
+mkdir -p "${PENDING_DIR}" "${DONE_DIR}"
 
-echo "📤 Sending $(wc -l < "${BS_FILE}") lines from ${BS_FILE} to ${EXECUTOR_URL}/run ..."
+# Write job file via Python (handles JSON encoding cleanly)
+JOB_ID=$(python3 -c "import uuid; print(uuid.uuid4())")
 
-# -s = silent, but NOT -f so we see HTTP error bodies too
-RESPONSE=$(curl -s --max-time 320 -X POST "${EXECUTOR_URL}/run" \
-    -H "Authorization: Bearer ${BRANE_EXECUTOR_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "{\"workflow\": ${WORKFLOW}, \"query\": \"${BS_FILE}\"}" 2>&1) || true
+python3 -c "
+import json, os, sys
+job_id = sys.argv[1]
+bs_file = sys.argv[2]
+workflow = open(bs_file, encoding='utf-8').read()
+job = {
+    'id': job_id,
+    'workflow': workflow,
+    'query': bs_file,
+    'submitted_at': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+}
+pending_dir = os.environ.get('SNELLIUS_JOBS_DIR', os.path.expanduser('~/brane_jobs')) + '/pending'
+path = f'{pending_dir}/{job_id}.json'
+with open(path, 'w') as f:
+    json.dump(job, f)
+" "${JOB_ID}" "${BS_FILE}"
 
-if [[ -z "${RESPONSE}" ]]; then
-    echo ""
-    echo "❌ No response from executor at ${EXECUTOR_URL}"
-    echo "   Check on your local machine:"
-    echo "     1. Is brane_executor.py running?  (Terminal 1)"
-    echo "     2. Is start_tunnel.sh connected?  (Terminal 2)"
-    echo "     3. Run: curl -s http://localhost:9753/health  (from Snellius login node)"
-    exit 1
-fi
+echo "📤 Job ${JOB_ID:0:8}... submitted ($(wc -l < "${BS_FILE}") lines from ${BS_FILE})"
+echo "   Waiting for job_watcher.py on your local machine..."
 
-SUCCESS=$(echo "${RESPONSE}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('success','?'))")
-EXIT_CODE=$(echo "${RESPONSE}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('exit_code','?'))")
-STDOUT=$(echo "${RESPONSE}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stdout',''))")
-STDERR=$(echo "${RESPONSE}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('stderr',''))")
+# Poll for result
+WAITED=0
+while (( WAITED < TIMEOUT )); do
+    RESULT_FILE="${DONE_DIR}/${JOB_ID}.json"
+    if [[ -f "${RESULT_FILE}" ]]; then
+        python3 -c "
+import json, sys
+d = json.load(open(sys.argv[1]))
+print()
+print('── Result ──────────────────────────────────────────')
+print(f'  success   : {d.get(\"success\", \"?\")}')
+print(f'  exit_code : {d.get(\"exit_code\", \"?\")}')
+stdout = d.get('stdout', '').strip()
+stderr = d.get('stderr', '').strip()
+if stdout:
+    print()
+    print('── stdout ───────────────────────────────────────────')
+    print(stdout)
+if stderr and not d.get('success'):
+    print()
+    print('── stderr ───────────────────────────────────────────')
+    print(stderr)
+print('─────────────────────────────────────────────────────')
+" "${RESULT_FILE}"
+        rm -f "${RESULT_FILE}"
+        exit 0
+    fi
+    sleep "${POLL_INTERVAL}"
+    WAITED=$((WAITED + POLL_INTERVAL))
+done
 
-echo ""
-echo "── Result ──────────────────────────────────────────"
-echo "  success   : ${SUCCESS}"
-echo "  exit_code : ${EXIT_CODE}"
-if [[ -n "${STDOUT}" ]]; then
-    echo ""
-    echo "── stdout ───────────────────────────────────────────"
-    echo "${STDOUT}"
-fi
-if [[ -n "${STDERR}" && "${SUCCESS}" != "True" ]]; then
-    echo ""
-    echo "── stderr ───────────────────────────────────────────"
-    echo "${STDERR}"
-fi
-echo "─────────────────────────────────────────────────────"
+echo "❌ Timed out after ${TIMEOUT}s — is job_watcher.py running on your local machine?"
+rm -f "${PENDING_DIR}/${JOB_ID}.json"
+exit 1

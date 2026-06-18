@@ -23,9 +23,7 @@ Remote execution
 import json
 import os
 import re
-import urllib.error
-import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -198,14 +196,11 @@ PKG_DB_PATH = PROJECT_ROOT / "brane_pkg_db"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_RETRIES = 3
 
-# Remote execution — read from environment (set by .env / setup_compute_tunnel.sh)
-# BRANE_EXECUTOR_URL is exported by setup_compute_tunnel.sh inside the SLURM job.
-_DEFAULT_EXECUTOR_PORT = os.environ.get("TUNNEL_PORT", "9753")
-EXECUTOR_URL = os.environ.get(
-    "BRANE_EXECUTOR_URL",
-    f"http://localhost:{_DEFAULT_EXECUTOR_PORT}",
+# Remote execution — file-based job queue on Snellius filesystem.
+# job_watcher.py on the local machine polls this directory via SSH.
+SNELLIUS_JOBS_DIR = os.path.expanduser(
+    os.environ.get("SNELLIUS_JOBS_DIR", "~/brane_jobs")
 )
-EXECUTOR_TOKEN = os.environ.get("BRANE_EXECUTOR_TOKEN", "")
 EXECUTOR_TIMEOUT = int(os.environ.get("BRANE_EXECUTOR_TIMEOUT", "300"))
 
 # ---------------------------------------------------------------------------
@@ -413,76 +408,77 @@ def ask_for_clarification(question: str) -> str:
 
 def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
     """
-    Send the BraneScript workflow to brane_executor.py on the local machine
-    via the SSH reverse tunnel and return (success, output).
+    Submit the BraneScript to the file-based job queue on Snellius and
+    block until job_watcher.py on the local machine returns a result.
 
-    The executor must be running on the local machine AND the tunnel must be
-    active (start_tunnel.sh + setup_compute_tunnel.sh).
-
-    Falls back gracefully if the executor is not reachable.
+    No port forwarding needed — writes to ~/brane_jobs/pending/ on the
+    Snellius filesystem and polls ~/brane_jobs/done/ for the result.
     """
-    if not EXECUTOR_URL:
-        print("\n⚠️  BRANE_EXECUTOR_URL is empty — skipping execution.")
-        return False, "Executor URL not configured."
+    import time as _time
+    import uuid as _uuid
 
-    print(f"\n🚀 Sending workflow to local executor: {EXECUTOR_URL}/run")
+    jobs_dir = os.path.expanduser(
+        os.environ.get("SNELLIUS_JOBS_DIR", "~/brane_jobs")
+    )
+    pending_dir = os.path.join(jobs_dir, "pending")
+    done_dir = os.path.join(jobs_dir, "done")
+    os.makedirs(pending_dir, exist_ok=True)
+    os.makedirs(done_dir, exist_ok=True)
 
-    payload = json.dumps({
+    job_id = str(_uuid.uuid4())
+    job = {
+        "id": job_id,
         "workflow": code,
         "query": user_query,
-        "timeout": EXECUTOR_TIMEOUT,
-    }).encode("utf-8")
-
-    headers = {
-        "Content-Type": "application/json",
-        "Content-Length": str(len(payload)),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
-    if EXECUTOR_TOKEN:
-        headers["Authorization"] = f"Bearer {EXECUTOR_TOKEN}"
 
-    req = urllib.request.Request(
-        f"{EXECUTOR_URL}/run",
-        data=payload,
-        headers=headers,
-        method="POST",
-    )
+    job_path = os.path.join(pending_dir, f"{job_id}.json")
+    with open(job_path, "w", encoding="utf-8") as f:
+        json.dump(job, f)
 
+    print(f"\n🚀 Job submitted: {job_id[:8]}…")
+    print(f"   Waiting for job_watcher.py on your local machine to pick it up...")
+
+    result_path = os.path.join(done_dir, f"{job_id}.json")
+    poll_interval = 3
+    waited = 0
+
+    while waited < EXECUTOR_TIMEOUT:
+        if os.path.exists(result_path):
+            with open(result_path, encoding="utf-8") as f:
+                result = json.load(f)
+            try:
+                os.unlink(result_path)
+            except OSError:
+                pass
+
+            success: bool = result.get("success", False)
+            stdout: str = result.get("stdout", "")
+            stderr: str = result.get("stderr", "")
+            print(f"   exit_code={result.get('exit_code', '?')}  success={success}")
+            if stdout:
+                print("\n── Workflow stdout ──────────────────────────────────")
+                print(stdout.rstrip())
+                print("─────────────────────────────────────────────────────")
+            if stderr and not success:
+                print("\n── Workflow stderr ──────────────────────────────────")
+                print(stderr.rstrip())
+                print("─────────────────────────────────────────────────────")
+            return success, stdout + (f"\n[stderr]\n{stderr}" if stderr else "")
+
+        _time.sleep(poll_interval)
+        waited += poll_interval
+
+    # Timeout — clean up pending job
     try:
-        with urllib.request.urlopen(req, timeout=EXECUTOR_TIMEOUT + 30) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        msg = f"Executor HTTP {exc.code}: {exc.reason}"
-        print(f"   ❌ {msg}")
-        return False, msg
-    except urllib.error.URLError as exc:
-        msg = (
-            f"Cannot reach executor at {EXECUTOR_URL}. "
-            f"Is brane_executor.py running and is the tunnel active? ({exc.reason})"
-        )
-        print(f"   ❌ {msg}")
-        return False, msg
-    except Exception as exc:
-        msg = f"Unexpected error calling executor: {exc}"
-        print(f"   ❌ {msg}")
-        return False, msg
-
-    success: bool = body.get("success", False)
-    stdout: str = body.get("stdout", "")
-    stderr: str = body.get("stderr", "")
-    exit_code: int = body.get("exit_code", -1)
-
-    print(f"   exit_code={exit_code}  success={success}")
-    if stdout:
-        print("\n── Workflow stdout ──────────────────────────────────")
-        print(stdout.rstrip())
-        print("─────────────────────────────────────────────────────")
-    if stderr and not success:
-        print("\n── Workflow stderr ──────────────────────────────────")
-        print(stderr.rstrip())
-        print("─────────────────────────────────────────────────────")
-
-    combined = stdout + (f"\n[stderr]\n{stderr}" if stderr else "")
-    return success, combined
+        os.unlink(job_path)
+    except OSError:
+        pass
+    msg = f"Timed out after {EXECUTOR_TIMEOUT}s waiting for local executor."
+    print(f"\n⚠️  {msg}")
+    print("   Is job_watcher.py running on your local machine?")
+    return False, msg
 
 
 # ---------------------------------------------------------------------------
