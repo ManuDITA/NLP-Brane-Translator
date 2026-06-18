@@ -159,9 +159,21 @@ def run_brane(workflow: str) -> dict:
         )
 
         _log(f"exit_code={proc.returncode}  success={proc.returncode == 0}")
+        # Classify error type for training data collection:
+        #   0  → pass
+        #   2  → compilation error (brane rejected the BraneScript syntax)
+        #   1  → runtime error (script compiled but a task container failed)
+        #  -1  → timeout / brane not found
+        if proc.returncode == 0:
+            error_type = None
+        elif proc.returncode == 2:
+            error_type = "compilation"
+        else:
+            error_type = "runtime"
         return {
             "success": proc.returncode == 0,
             "exit_code": proc.returncode,
+            "error_type": error_type,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
         }
@@ -171,6 +183,7 @@ def run_brane(workflow: str) -> dict:
         return {
             "success": False,
             "exit_code": -1,
+            "error_type": "timeout",
             "stdout": "",
             "stderr": f"Workflow timed out after {BRANE_EXECUTOR_TIMEOUT}s.",
         }
@@ -179,6 +192,7 @@ def run_brane(workflow: str) -> dict:
         return {
             "success": False,
             "exit_code": -1,
+            "error_type": "runtime",
             "stdout": "",
             "stderr": "'brane' not found in PATH. Is Brane installed?",
         }

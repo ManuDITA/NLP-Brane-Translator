@@ -53,12 +53,20 @@ echo "Latest log symlink: runs/latest_output.txt"
 export SNELLIUS_JOBS_DIR="${HOME}/brane_jobs"
 mkdir -p "${SNELLIUS_JOBS_DIR}/pending" "${SNELLIUS_JOBS_DIR}/done"
 echo "Job queue: ${SNELLIUS_JOBS_DIR}"
+
+# ---- Training data collection ----------------------------------------------
+# All generation attempts (pass + fail) are appended to training_log.jsonl.
+# The log persists across SLURM jobs and accumulates labelled examples.
+export TRAINING_DATA_DIR="${HOME}/brane_training_data"
+mkdir -p "${TRAINING_DATA_DIR}"
+echo "Training data: ${TRAINING_DATA_DIR}/training_log.jsonl"
 # ---------------------------------------------------------------------------
 
 python -u src/pipeline.py \
     --model Qwen/Qwen3.6-27B \
     --temperature 0.2 \
     --execute \
+    --collect \
     > "$LOGFILE" 2>&1
 
 echo "Job finished at $(date)"

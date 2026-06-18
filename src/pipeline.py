@@ -33,6 +33,7 @@ from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
+from training_collector import TrainingCollector
 from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, detect_json_string_assignment, load_hf_token
 
 # Load HuggingFace token early so embeddings download authenticated
@@ -406,13 +407,20 @@ def ask_for_clarification(question: str) -> str:
     return answer.strip()
 
 
-def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
+def execute_workflow(code: str, user_query: str = "") -> dict:
     """
     Submit the BraneScript to the file-based job queue on Snellius and
     block until job_watcher.py on the local machine returns a result.
 
     No port forwarding needed — writes to ~/brane_jobs/pending/ on the
     Snellius filesystem and polls ~/brane_jobs/done/ for the result.
+
+    Returns a dict with keys:
+        success     bool
+        exit_code   int | None
+        error_type  str | None  — "compilation", "runtime", "timeout", or None
+        stdout      str
+        stderr      str
     """
     import time as _time
     import uuid as _uuid
@@ -456,7 +464,10 @@ def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
             success: bool = result.get("success", False)
             stdout: str = result.get("stdout", "")
             stderr: str = result.get("stderr", "")
-            print(f"   exit_code={result.get('exit_code', '?')}  success={success}")
+            exit_code: int = result.get("exit_code", -1)
+            error_type: str | None = result.get("error_type")
+
+            print(f"   exit_code={exit_code}  success={success}")
             if stdout:
                 print("\n── Workflow stdout ──────────────────────────────────")
                 print(stdout.rstrip())
@@ -465,7 +476,14 @@ def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
                 print("\n── Workflow stderr ──────────────────────────────────")
                 print(stderr.rstrip())
                 print("─────────────────────────────────────────────────────")
-            return success, stdout + (f"\n[stderr]\n{stderr}" if stderr else "")
+
+            return {
+                "success": success,
+                "exit_code": exit_code,
+                "error_type": error_type,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
 
         _time.sleep(poll_interval)
         waited += poll_interval
@@ -478,7 +496,13 @@ def execute_workflow(code: str, user_query: str = "") -> tuple[bool, str]:
     msg = f"Timed out after {EXECUTOR_TIMEOUT}s waiting for local executor."
     print(f"\n⚠️  {msg}")
     print("   Is job_watcher.py running on your local machine?")
-    return False, msg
+    return {
+        "success": False,
+        "exit_code": -1,
+        "error_type": "timeout",
+        "stdout": "",
+        "stderr": msg,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +548,9 @@ def run_pipeline(user_query: str,
                  llm,
                  few_shot_override: str = None,
                  no_think_prefix: str = "",
-                 execute: bool = False) -> str:
+                 execute: bool = False,
+                 collector: TrainingCollector | None = None,
+                 model_name: str = "") -> str:
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
 
@@ -580,6 +606,11 @@ def run_pipeline(user_query: str,
             if detect_python_code(code):
                 print("   ❌ Model generated Python code instead of BraneScript.")
                 print(f"   Output was:\n{code[:300]}\n")
+                if collector:
+                    collector.log_fail(intent=user_query, generated_code=code,
+                                       error_type="python_code",
+                                       error_message="Model generated Python instead of BraneScript",
+                                       attempt_number=attempt, model=model_name)
                 if attempt < MAX_RETRIES:
                     error_section = PYTHON_CODE_ERROR_SECTION
                     attempt += 1
@@ -587,6 +618,11 @@ def run_pipeline(user_query: str,
             else:
                 print("   ❌ Output does not look like BraneScript code.")
                 print(f"   Output was:\n{code[:300]}\n")
+                if collector:
+                    collector.log_fail(intent=user_query, generated_code=code,
+                                       error_type="non_code",
+                                       error_message="Output does not look like BraneScript",
+                                       attempt_number=attempt, model=model_name)
                 if attempt < MAX_RETRIES:
                     error_section = NON_CODE_ERROR_SECTION
                     attempt += 1
@@ -598,6 +634,11 @@ def run_pipeline(user_query: str,
         if detect_json_string_assignment(code):
             print("   ❌ Code passes structured data as a JSON string with escaped quotes.")
             print(f"   Output was:\n{code[:300]}\n")
+            if collector:
+                collector.log_fail(intent=user_query, generated_code=code,
+                                   error_type="json_string",
+                                   error_message="Escaped JSON string used instead of class instantiation",
+                                   attempt_number=attempt, model=model_name)
             if attempt < MAX_RETRIES:
                 error_section = JSON_STRING_ERROR_SECTION
                 attempt += 1
@@ -609,6 +650,10 @@ def run_pipeline(user_query: str,
         syntax_ok, syntax_error = check_syntax(code)
         if not syntax_ok:
             print(f"   ❌ Syntax check failed: {syntax_error}")
+            if collector:
+                collector.log_fail(intent=user_query, generated_code=code,
+                                   error_type="syntax", error_message=syntax_error,
+                                   attempt_number=attempt, model=model_name)
             if attempt < MAX_RETRIES:
                 error_section = SYNTAX_ERROR_SECTION.format(error=syntax_error)
                 attempt += 1
@@ -620,6 +665,10 @@ def run_pipeline(user_query: str,
         semantic_ok, semantic_error = check_semantic(code, pkg_context)
         if not semantic_ok:
             print(f"   ❌ Semantic check failed: {semantic_error}")
+            if collector:
+                collector.log_fail(intent=user_query, generated_code=code,
+                                   error_type="semantic", error_message=semantic_error,
+                                   attempt_number=attempt, model=model_name)
             if attempt < MAX_RETRIES:
                 error_section = NON_CODE_ERROR_SECTION + "\n" + semantic_error + "\n"
                 attempt += 1
@@ -634,13 +683,29 @@ def run_pipeline(user_query: str,
     if code.strip():
         save_branescript_to_folder(code, user_query)
 
-    # ── Optional: execute on local machine via SSH tunnel ─────────────────
+    # ── Optional: execute via file-based job queue ────────────────────────
     if execute and code.strip():
-        exec_success, exec_output = execute_workflow(code, user_query)
-        if not exec_success:
-            print(f"\n⚠️  Workflow execution failed.")
-        else:
+        exec_result = execute_workflow(code, user_query)
+        if exec_result["success"]:
             print(f"\n✅ Workflow executed successfully.")
+            if collector:
+                collector.log_pass(intent=user_query, generated_code=code,
+                                   stdout=exec_result["stdout"],
+                                   attempt_number=attempt, model=model_name)
+        else:
+            print(f"\n⚠️  Workflow execution failed.")
+            if collector:
+                collector.log_fail(intent=user_query, generated_code=code,
+                                   error_type=exec_result.get("error_type") or "runtime",
+                                   error_message=exec_result["stderr"][:500],
+                                   stdout=exec_result["stdout"],
+                                   stderr=exec_result["stderr"],
+                                   exit_code=exec_result["exit_code"],
+                                   attempt_number=attempt, model=model_name)
+    elif not execute and code.strip() and collector:
+        # No execution requested — log as pass at validation stage only
+        collector.log_pass(intent=user_query, generated_code=code,
+                           attempt_number=attempt, model=model_name)
 
     return code
 
@@ -667,6 +732,12 @@ if __name__ == "__main__":
              "(~/brane_jobs/pending/) and wait for job_watcher.py on your local machine "
              "to execute it. See scripts/remote_execution/README.md."
     )
+    parser.add_argument(
+        "--collect", action="store_true", default=False,
+        help="Enable training data collection. Every generation attempt (pass and fail) "
+             "is appended to TRAINING_DATA_DIR/training_log.jsonl (default: ~/brane_training_data). "
+             "Set the TRAINING_DATA_DIR env var to override the directory."
+    )
     args = parser.parse_args()
 
     # Disable Qwen3 thinking mode — /no_think must be the very first token of the prompt
@@ -678,7 +749,7 @@ if __name__ == "__main__":
         print(f" Chosen model: {args.model}")
         no_think_prefix = "/no_think\n"
 
-    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  execute: {args.execute}")
+    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  execute: {args.execute}  collect: {args.collect}")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     
@@ -733,6 +804,11 @@ if __name__ == "__main__":
                                    no_think=is_qwen3)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
+    collector = None
+    if args.collect:
+        collector = TrainingCollector()
+        print(f"📊 Training data collection enabled → {collector.log_file}")
+
     user_query = (
         "Analyze the heart disease risk for a patient with the following profile: "
         "65-year-old female, blood pressure 170, heart rate 80, total cholesterol 230, "
@@ -755,11 +831,18 @@ if __name__ == "__main__":
         few_shot_override=BRANESCRIPT_FEW_SHOT,
         no_think_prefix=no_think_prefix,
         execute=args.execute,
+        collector=collector,
+        model_name=args.model,
     )
 
     print("\n" + "=" * 50)
     print("FINAL BRANESCRIPT OUTPUT:")
     print("=" * 50)
     print(result)
+
+    if collector:
+        stats = collector.stats()
+        print(f"\n📊 Training data: {stats['total']} records "
+              f"({stats['passes']} pass / {stats['fails']} fail) → {stats['log_file']}")
 
     print("\n👌Pipeline execution completed.")
