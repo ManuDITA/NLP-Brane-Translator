@@ -146,7 +146,7 @@ def run_brane(workflow: str) -> dict:
         tmp_path = tmp.name
 
     try:
-        cmd = ["brane", "--instance", BRANE_INSTANCE, "workflow", "run", "a", tmp_path]
+        cmd = ["brane", "workflow", "run", "a", tmp_path]
         _log(f"Executing: {' '.join(cmd)}")
 
         proc = subprocess.run(
@@ -217,6 +217,8 @@ def process_job(remote_path: str) -> None:
     upload_result(job_id, result)
     delete_pending(remote_path)
     _log(f"Job {job_id[:8]}… complete — success={result['success']}")
+    if not result['success'] and result.get('stderr'):
+        _log(f"  stderr: {result['stderr'][:300]}")
 
 
 def main() -> None:
