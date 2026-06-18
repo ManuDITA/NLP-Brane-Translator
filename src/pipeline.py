@@ -4,20 +4,21 @@ pipeline.py
 Main entry point. Implements the simplified architecture:
 
   User request
-    → Load raw workspace files as LLM context
-    → Prompt construction
+    → Task breakdown + language spec retrieval (IntentDecomposer)
+    → Package/dataset retrieval (PkgRetriever)
     → LLM inference (BraneScript generation)
-    → Syntax check      (on fail: retry with error, max 3 attempts)
+    → Syntax/semantic check  (on fail: retry with error, max 3 attempts)
     → Save generated BraneScript to disk
-    → [Optional] POST to local brane_executor.py via SSH tunnel → run workflow
+    → [Optional] Submit to file-based job queue → run via job_watcher.py
 
 Run:
     python pipeline.py [--execute]
 
 Remote execution
-    When --execute is passed, the generated BraneScript is sent to the local
-    machine's brane_executor.py over the SSH reverse tunnel. See:
-        scripts/remote_execution/README.md
+    When --execute is passed, the generated BraneScript is written to
+    ~/brane_jobs/pending/ on the Snellius filesystem and job_watcher.py
+    on your local machine picks it up, runs it, and returns the result.
+    See: scripts/remote_execution/README.md
 """
 
 import json
@@ -27,7 +28,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-#from langchain_ollama import OllamaLLM as Ollama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
@@ -663,9 +663,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--execute", action="store_true", default=False,
-        help="Send the generated BraneScript to the local machine's brane_executor.py "
-             "via the SSH reverse tunnel and run it. Requires BRANE_EXECUTOR_TOKEN to be set "
-             "and the tunnel to be active. See scripts/remote_execution/README.md."
+        help="Submit the generated BraneScript to the file-based job queue on Snellius "
+             "(~/brane_jobs/pending/) and wait for job_watcher.py on your local machine "
+             "to execute it. See scripts/remote_execution/README.md."
     )
     args = parser.parse_args()
 

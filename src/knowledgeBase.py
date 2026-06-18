@@ -43,7 +43,7 @@ SPEC_BSCRIPT_PATH = BASE_DIR / "submodules/specification/src/appendix/languages/
 DATA_PATH = BASE_DIR / "data"
 EXAMPLES_PATH = DATA_PATH / "examples"
 
-PACKAGES_PATH = BASE_DIR / "submodules/packages"
+PACKAGES_PATH = BASE_DIR / "packages"
 
 LANG_DB_PATH = BASE_DIR / "brane_lang_db"
 PKG_DB_PATH  = BASE_DIR / "brane_pkg_db"

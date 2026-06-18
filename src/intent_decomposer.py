@@ -7,7 +7,7 @@ Two jobs:
      capped at a token budget to avoid overflowing llama3 context window.
 """
 
-from langchain_ollama import OllamaLLM as Ollama
+from langchain_core.language_models import BaseLanguageModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_chroma import Chroma
@@ -73,7 +73,7 @@ class IntentDecomposer:
         lang_context, subtasks = decomposer.run("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: Ollama, lang_db: Chroma, k_per_subtask: int = 3,
+    def __init__(self, llm: BaseLanguageModel, lang_db: Chroma, k_per_subtask: int = 3,
                  no_think: bool = False):
         self.llm = llm
         self.lang_db = lang_db
