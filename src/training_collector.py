@@ -44,6 +44,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,7 @@ class TrainingCollector:
     For parallel workers, use separate log files and merge offline.
     """
 
-    def __init__(self, log_dir: str | None = None):
+    def __init__(self, log_dir: Optional[str] = None):
         self.log_dir = Path(log_dir or DEFAULT_TRAINING_DIR)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_dir / "training_log.jsonl"
@@ -96,11 +97,11 @@ class TrainingCollector:
         intent: str,
         generated_code: str,
         verdict: str,
-        error_type: str | None,
+        error_type: Optional[str],
         error_message: str = "",
         stdout: str = "",
         stderr: str = "",
-        exit_code: int | None = None,
+        exit_code: Optional[int] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -180,7 +181,7 @@ class TrainingCollector:
         error_message: str = "",
         stdout: str = "",
         stderr: str = "",
-        exit_code: int | None = None,
+        exit_code: Optional[int] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:

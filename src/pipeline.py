@@ -25,6 +25,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from typing import Optional
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -465,7 +466,7 @@ def execute_workflow(code: str, user_query: str = "") -> dict:
             stdout: str = result.get("stdout", "")
             stderr: str = result.get("stderr", "")
             exit_code: int = result.get("exit_code", -1)
-            error_type: str | None = result.get("error_type")
+            error_type: Optional[str] = result.get("error_type")
 
             print(f"   exit_code={exit_code}  success={success}")
             if stdout:
@@ -549,7 +550,7 @@ def run_pipeline(user_query: str,
                  few_shot_override: str = None,
                  no_think_prefix: str = "",
                  execute: bool = False,
-                 collector: TrainingCollector | None = None,
+                 collector: Optional[TrainingCollector] = None,
                  model_name: str = "") -> str:
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
