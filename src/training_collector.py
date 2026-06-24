@@ -1,20 +1,42 @@
 """
 training_collector.py
 
-Collects (intent, generated_code, verdict) tuples from every pipeline run and
-appends them as JSONL records to a log file on the Snellius filesystem.
+Collects every pipeline run as a human-readable directory of files on the
+Snellius filesystem.  Each run gets its own folder under
+<TRAINING_DATA_DIR>/runs/ named by timestamp + short UUID so it is easy to
+browse chronologically.
 
-The log accumulates both positive examples (pass) and negative examples (fail)
-so the training loop has access to:
-  - Correct BraneScript for a given intent           → reward signal
-  - Incorrect code with a labelled error type        → penalty signal / DPO pairs
+Directory layout
+----------------
+~/brane_training_data/
+  index.jsonl                          ← lightweight index (one line per run)
+  runs/
+    2026-06-24_221905_a3b7c2d1/
+      intent.txt                       ← original natural-language request
+      generated.bs                     ← BraneScript produced by the model
+      verdict.txt                      ← "pass" or "fail"
+      error_type.txt                   ← e.g. "compilation"  (absent on pass)
+      error_message.txt                ← human-readable detail (absent if empty)
+      stdout.txt                       ← brane stdout        (absent if empty)
+      stderr.txt                       ← brane stderr        (absent if empty)
+      exit_code.txt                    ← numeric exit code   (absent if not run)
+      meta.json                        ← id, timestamp, attempt_number, model
+      committed/                       ← output from commit_result() in the script
+        healthcare_reports3/
+          summary.html
+          reports/
+            PAT001_report.json
+
+index.jsonl has one JSON line per run with lightweight fields (id, timestamp,
+verdict, error_type, intent excerpt, run_dir) so you can grep / query without
+reading every file.
 
 Error type taxonomy (ordered by detection stage)
 -------------------------------------------------
   non_code        Model produced no recognisable code (blank, prose, etc.)
   python_code     Model generated Python instead of BraneScript
-  json_string     Model used escaped JSON strings (\"key\": \"val\") instead of classes
-  syntax          Local heuristic syntax check failed (unbalanced braces, wrong :=, ...)
+  json_string     Model used escaped JSON strings instead of classes
+  syntax          Local heuristic syntax check failed
   semantic        Package/function name not found in retrieved context
   compilation     brane CLI rejected the script (exit_code=2)
   runtime         brane ran but a task container failed (exit_code=1)
@@ -31,7 +53,6 @@ Usage
         verdict="fail",
         error_type="compilation",
         error_message="Unexpected token ';' at line 3",
-        stdout="",
         stderr="error: unexpected token",
         exit_code=2,
         attempt_number=1,
@@ -76,16 +97,27 @@ VALID_ERROR_TYPES = {
 
 class TrainingCollector:
     """
-    Appends JSONL training records to <log_dir>/training_log.jsonl.
-
-    Thread-safe for single-process use (file opened in append mode per write).
-    For parallel workers, use separate log files and merge offline.
+    Writes one directory per run under <log_dir>/runs/ and keeps a lightweight
+    index.jsonl for fast querying.
     """
 
     def __init__(self, log_dir: Optional[str] = None):
         self.log_dir = Path(log_dir or DEFAULT_TRAINING_DIR)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_file = self.log_dir / "training_log.jsonl"
+        self.runs_dir = self.log_dir / "runs"
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
+        # log_file points at the index so external callers that print
+        # collector.log_file still show a useful path.
+        self.log_file = self.log_dir / "index.jsonl"
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _run_dir_name(self, ts: datetime, short_id: str) -> str:
+        return ts.strftime("%Y-%m-%d_%H%M%S") + "_" + short_id
+
+    def _write(self, path: Path, text: str) -> None:
+        path.write_text(text, encoding="utf-8")
 
     # ------------------------------------------------------------------
     # Core write
@@ -107,19 +139,20 @@ class TrainingCollector:
         model: str = "",
     ) -> str:
         """
-        Append one training record and return its UUID.
+        Write one run directory and append a line to index.jsonl.
+        Returns the run UUID.
 
         Parameters
         ----------
         intent          : the original user query / natural-language intent
         generated_code  : the BraneScript text produced by the model
-                          (may be empty / invalid for non_code errors)
         verdict         : "pass" or "fail"
         error_type      : one of VALID_ERROR_TYPES (None when verdict=pass)
         error_message   : human-readable error detail
-        stdout          : captured brane workflow stdout (empty if not executed)
-        stderr          : captured brane workflow stderr (empty if not executed)
+        stdout          : captured brane workflow stdout
+        stderr          : captured brane workflow stderr
         exit_code       : brane CLI exit code (None if not executed)
+        committed_data  : dict from collect_committed_outputs() — dataset files
         attempt_number  : which retry attempt this was (1-indexed)
         model           : model identifier string (e.g. "Qwen/Qwen3-27B")
         """
@@ -128,27 +161,63 @@ class TrainingCollector:
         if error_type not in VALID_ERROR_TYPES:
             raise ValueError(f"error_type must be one of {VALID_ERROR_TYPES}, got {error_type!r}")
 
-        record_id = str(uuid.uuid4())
-        record = {
-            "id": record_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "intent": intent,
-            "generated_code": generated_code,
-            "verdict": verdict,
-            "error_type": error_type,
-            "error_message": error_message,
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": exit_code,
-            "committed_data": committed_data or {},
+        run_id = str(uuid.uuid4())
+        ts = datetime.now(timezone.utc)
+        short_id = run_id[:8]
+        run_dir = self.runs_dir / self._run_dir_name(ts, short_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # ── Core readable files ──────────────────────────────────────────
+        self._write(run_dir / "intent.txt", intent)
+        self._write(run_dir / "generated.bs", generated_code)
+        self._write(run_dir / "verdict.txt", verdict)
+
+        if error_type:
+            self._write(run_dir / "error_type.txt", error_type)
+        if error_message.strip():
+            self._write(run_dir / "error_message.txt", error_message)
+        if stdout.strip():
+            self._write(run_dir / "stdout.txt", stdout)
+        if stderr.strip():
+            self._write(run_dir / "stderr.txt", stderr)
+        if exit_code is not None:
+            self._write(run_dir / "exit_code.txt", str(exit_code))
+
+        # ── Meta (id, timestamp, attempt, model) ────────────────────────
+        meta = {
+            "id": run_id,
+            "timestamp": ts.isoformat(),
             "attempt_number": attempt_number,
             "model": model,
         }
+        self._write(run_dir / "meta.json",
+                    json.dumps(meta, indent=2, ensure_ascii=False))
 
+        # ── Committed output files ───────────────────────────────────────
+        if committed_data:
+            committed_dir = run_dir / "committed"
+            for dataset_name, dataset_info in committed_data.items():
+                files = dataset_info.get("files", {}) if isinstance(dataset_info, dict) else {}
+                for rel_path, content in files.items():
+                    out_path = committed_dir / dataset_name / rel_path
+                    out_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._write(out_path, content if isinstance(content, str) else str(content))
+
+        # ── Lightweight index entry ──────────────────────────────────────
+        index_entry = {
+            "id": run_id,
+            "timestamp": ts.isoformat(),
+            "verdict": verdict,
+            "error_type": error_type,
+            "intent": intent[:120],
+            "run_dir": str(run_dir),
+            "model": model,
+            "attempt_number": attempt_number,
+        }
         with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.write(json.dumps(index_entry, ensure_ascii=False) + "\n")
 
-        return record_id
+        return run_id
 
     # ------------------------------------------------------------------
     # Convenience wrappers
@@ -210,12 +279,12 @@ class TrainingCollector:
     # ------------------------------------------------------------------
 
     def stats(self) -> dict:
-        """Return a summary dict of the current log file."""
+        """Return a summary dict by reading index.jsonl."""
         if not self.log_file.exists():
             return {"total": 0}
 
         total = passes = fails = 0
-        error_counts: dict[str, int] = {}
+        error_counts = {}
 
         with open(self.log_file, encoding="utf-8") as f:
             for line in f:
@@ -240,5 +309,6 @@ class TrainingCollector:
             "fails": fails,
             "pass_rate": round(passes / total, 3) if total else 0.0,
             "error_breakdown": error_counts,
-            "log_file": str(self.log_file),
+            "index_file": str(self.log_file),
+            "runs_dir": str(self.runs_dir),
         }
