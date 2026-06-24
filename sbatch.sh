@@ -55,11 +55,12 @@ mkdir -p "${SNELLIUS_JOBS_DIR}/pending" "${SNELLIUS_JOBS_DIR}/done"
 echo "Job queue: ${SNELLIUS_JOBS_DIR}"
 
 # ---- Training data collection ----------------------------------------------
-# All generation attempts (pass + fail) are appended to training_log.jsonl.
-# The log persists across SLURM jobs and accumulates labelled examples.
-export TRAINING_DATA_DIR="${HOME}/brane_training_data"
+# All generation attempts (pass + fail) are stored under training_data/ in the
+# project folder, so everything stays in one place.
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export TRAINING_DATA_DIR="${PROJECT_DIR}/training_data"
 mkdir -p "${TRAINING_DATA_DIR}"
-echo "Training data: ${TRAINING_DATA_DIR}/training_log.jsonl"
+echo "Training data: ${TRAINING_DATA_DIR}/index.jsonl"
 # ---------------------------------------------------------------------------
 
 python -u src/pipeline.py \

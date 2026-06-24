@@ -740,7 +740,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--collect", action="store_true", default=False,
         help="Enable training data collection. Every generation attempt (pass and fail) "
-             "is appended to TRAINING_DATA_DIR/training_log.jsonl (default: ~/brane_training_data). "
+             "is appended to TRAINING_DATA_DIR/index.jsonl (default: <project>/training_data). "
              "Set the TRAINING_DATA_DIR env var to override the directory."
     )
     args = parser.parse_args()

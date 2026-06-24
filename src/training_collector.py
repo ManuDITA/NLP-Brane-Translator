@@ -8,8 +8,9 @@ browse chronologically.
 
 Directory layout
 ----------------
-~/brane_training_data/
-  index.jsonl                          ← lightweight index (one line per run)
+~/Thesis/NLP-Brane-Translator/
+  training_data/
+    index.jsonl                          ← lightweight index (one line per run)
   runs/
     2026-06-24_221905_a3b7c2d1/
       intent.txt                       ← original natural-language request
@@ -72,8 +73,10 @@ from typing import Optional
 # Constants
 # ---------------------------------------------------------------------------
 
-DEFAULT_TRAINING_DIR = os.path.expanduser(
-    os.environ.get("TRAINING_DATA_DIR", "~/brane_training_data")
+DEFAULT_TRAINING_DIR = str(
+    Path(os.environ["TRAINING_DATA_DIR"])
+    if "TRAINING_DATA_DIR" in os.environ
+    else Path(__file__).resolve().parent.parent / "training_data"
 )
 
 VALID_VERDICTS = {"pass", "fail"}

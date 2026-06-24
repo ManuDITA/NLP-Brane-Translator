@@ -8,8 +8,8 @@
 #   --intent "text"   Natural-language description of what the workflow does.
 #                     Used as the intent label in training_log.jsonl.
 #                     Defaults to the filename if omitted.
-#   --collect         Append the result to TRAINING_DATA_DIR/training_log.jsonl
-#                     (default: ~/brane_training_data). Also activates automatically
+#   --collect         Append the result to TRAINING_DATA_DIR/index.jsonl
+#                     (default: <project>/training_data). Also activates automatically
 #                     if the TRAINING_DATA_DIR env var is already set.
 #
 # How it works (no port forwarding needed):
