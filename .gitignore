@@ -10,9 +10,9 @@ brane_pkg_db/
 DYNAMOS/
 generated_branescripts/
 runs/*
-slurm_out/*
 training_data/
 .env
 *__pycache__/*
 *.log
 *.out
+logs/*
