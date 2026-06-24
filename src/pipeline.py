@@ -723,13 +723,12 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="NLP → BraneScript pipeline")
     parser.add_argument(
-        "--model", default="Qwen/Qwen3.6-27B",
-        help="Hugging Face model id, e.g. Qwen/Qwen3.6-27B, Qwen/Qwen3-4B or Qwen/Qwen3-4B-Instruct-2507."
+        "--model", default="Qwen/Qwen3.6-9B",
+        help="Hugging Face model id, e.g. Qwen/Qwen3.6-27B, Qwen/Qwen3-4B."
     )
     parser.add_argument(
         "--temperature", type=float, default=0.4,
-        help="Sampling temperature (default: 0.4). "
-             "Lower = more deterministic code output."
+        help="Sampling temperature (default: 0.4). Lower = more deterministic."
     )
     parser.add_argument(
         "--execute", action="store_true", default=False,
@@ -740,10 +739,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--collect", action="store_true", default=False,
         help="Enable training data collection. Every generation attempt (pass and fail) "
-             "is appended to TRAINING_DATA_DIR/index.jsonl (default: <project>/training_data). "
+             "is stored in TRAINING_DATA_DIR/runs/ (default: <project>/training_data). "
              "Set the TRAINING_DATA_DIR env var to override the directory."
     )
+    parser.add_argument(
+        "--query",
+        help="Single natural-language intent to process. "
+             "Mutually exclusive with --intents-file."
+    )
+    parser.add_argument(
+        "--intents-file",
+        dest="intents_file",
+        help="Path to a plain-text file with one intent per line. "
+             "Each intent is processed in sequence. "
+             "Mutually exclusive with --query."
+    )
     args = parser.parse_args()
+
+    if args.query and args.intents_file:
+        parser.error("--query and --intents-file are mutually exclusive.")
 
     # Disable Qwen3 thinking mode — /no_think must be the very first token of the prompt
     # so it is injected via no_think_prefix into the template, NOT into the few_shot block.
@@ -751,13 +765,14 @@ if __name__ == "__main__":
     no_think_prefix = ""
     if is_qwen3:
         print(f"ℹ️  Qwen3 detected — injecting /no_think to disable reasoning mode")
-        print(f" Chosen model: {args.model}")
+        print(f"   Chosen model: {args.model}")
         no_think_prefix = "/no_think\n"
 
-    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  execute: {args.execute}  collect: {args.collect}")
+    print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  "
+          f"execute: {args.execute}  collect: {args.collect}")
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    
+
     print("📥 Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
@@ -812,42 +827,55 @@ if __name__ == "__main__":
     collector = None
     if args.collect:
         collector = TrainingCollector()
-        print(f"📊 Training data collection enabled → {collector.log_file}")
+        print(f"📊 Training data collection enabled → {collector.runs_dir}")
 
-    user_query = (
-        "Analyze the heart disease risk for a patient with the following profile: "
-        "65-year-old female, blood pressure 170, heart rate 80, total cholesterol 230, "
-        "medical history of hypertension. "
-        "Use the healthcare::analyze_heart_disease function. "
-        "Run the analysis on node giovanni."
-    )
-    if not user_query:
-        print("No request provided. Exiting.")
-        exit(0)
+    # ── Resolve intent list ──────────────────────────────────────────────────
+    if args.intents_file:
+        with open(args.intents_file, encoding="utf-8") as f:
+            queries = [l.strip() for l in f if l.strip() and not l.startswith("#")]
+        print(f"📋 Loaded {len(queries)} intents from {args.intents_file}")
+    elif args.query:
+        queries = [args.query]
+    else:
+        # Fallback default intent for quick testing
+        queries = [
+            "Analyze the heart disease risk for a patient with the following profile: "
+            "65-year-old female, blood pressure 170, heart rate 80, total cholesterol 230, "
+            "medical history of hypertension. Run the analysis on node giovanni. Commit the result as a new dataset named 'patient_001_risk_analysis'."
+        ]
+        print("ℹ️  No --query or --intents-file provided. Using built-in default intent.")
 
-    print(f"\n🧠 User request: {user_query}")
-    print("⏳ Running pipeline...\n" + "─" * 50)
+    # ── Run pipeline for each intent ─────────────────────────────────────────
+    for i, user_query in enumerate(queries, 1):
+        if len(queries) > 1:
+            print(f"\n{'='*50}")
+            print(f"Intent {i}/{len(queries)}: {user_query[:80]}...")
+            print('='*50)
+        else:
+            print(f"\n🧠 User request: {user_query}")
 
-    result = run_pipeline(
-        user_query=user_query,
-        decomposer=decomposer,
-        pkg_retriever=pkg_retriever,
-        llm=llm,
-        few_shot_override=BRANESCRIPT_FEW_SHOT,
-        no_think_prefix=no_think_prefix,
-        execute=args.execute,
-        collector=collector,
-        model_name=args.model,
-    )
+        print("⏳ Running pipeline...\n" + "─" * 50)
 
-    print("\n" + "=" * 50)
-    print("FINAL BRANESCRIPT OUTPUT:")
-    print("=" * 50)
-    print(result)
+        result = run_pipeline(
+            user_query=user_query,
+            decomposer=decomposer,
+            pkg_retriever=pkg_retriever,
+            llm=llm,
+            few_shot_override=BRANESCRIPT_FEW_SHOT,
+            no_think_prefix=no_think_prefix,
+            execute=args.execute,
+            collector=collector,
+            model_name=args.model,
+        )
+
+        print("\n" + "=" * 50)
+        print("FINAL BRANESCRIPT OUTPUT:")
+        print("=" * 50)
+        print(result)
 
     if collector:
         stats = collector.stats()
         print(f"\n📊 Training data: {stats['total']} records "
-              f"({stats['passes']} pass / {stats['fails']} fail) → {stats['log_file']}")
+              f"({stats['passes']} pass / {stats['fails']} fail) → {stats['runs_dir']}")
 
-    print("\n👌Pipeline execution completed.")
+    print("\n👌 Pipeline execution completed.")

@@ -11,6 +11,7 @@ types, dataset schemas, available fields.
 import os
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from typing import List, Optional
 
 # Maximum unique chunks returned to the prompt — keeps context window bounded.
 MAX_PKG_CHUNKS = 8
@@ -32,10 +33,10 @@ class PkgRetriever:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _retrieve(self, query: str, k: int | None = None) -> list[Document]:
+    def _retrieve(self, query: str, k: Optional[int] = None) -> List[Document]:
         return self.pkg_db.similarity_search(query, k=k or self.k)
 
-    def _deduplicate(self, docs: list[Document]) -> list[Document]:
+    def _deduplicate(self, docs: List[Document]) -> List[Document]:
         seen, unique = set(), []
         for doc in docs:
             key = doc.page_content[:120]
@@ -48,7 +49,7 @@ class PkgRetriever:
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, subtasks: list[str], user_query: str) -> str:
+    def run(self, subtasks: List[str], user_query: str) -> str:
         """
         Retrieve package/dataset context based on the user's intent.
 

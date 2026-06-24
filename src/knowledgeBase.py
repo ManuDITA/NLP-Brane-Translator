@@ -44,6 +44,7 @@ DATA_PATH = BASE_DIR / "data"
 EXAMPLES_PATH = DATA_PATH / "examples"
 
 PACKAGES_PATH = BASE_DIR / "packages"
+DATASETS_PATH = BASE_DIR / "datasets"
 
 LANG_DB_PATH = BASE_DIR / "brane_lang_db"
 PKG_DB_PATH  = BASE_DIR / "brane_pkg_db"
@@ -174,7 +175,7 @@ def load_examples_as_docs(examples_path: Path) -> list[Document]:
     return docs
 
 
-def load_package_docs(packages_path: Path) -> list[Document]:
+def load_package_docs(packages_path: Path) -> list:
     docs = []
     if not packages_path.exists():
         print(f"  ⚠️  Packages path not found, skipping: {packages_path}")
@@ -241,6 +242,92 @@ def load_package_docs(packages_path: Path) -> list[Document]:
                     print(f"    ⚠️  Could not read {readme_path}: {e}")
 
     print(f"  📁 Loaded {len(docs)} package documents")
+    return docs
+
+
+def load_dataset_docs(datasets_path: Path) -> list:
+    """
+    Index registered Brane datasets so the LLM knows their names and how to
+    reference them in BraneScript.
+
+    For each dataset directory we:
+      1. Parse data.yml to extract the registered name (e.g. "heal_pa_2").
+      2. Emit a synthetic Document that states the BraneScript usage pattern.
+      3. Load README.md if present for additional context.
+    """
+    docs = []
+    if not datasets_path.exists():
+        print(f"  ⚠️  Datasets path not found, skipping: {datasets_path}")
+        return docs
+
+    for dataset_dir in sorted(datasets_path.iterdir()):
+        if not dataset_dir.is_dir():
+            continue
+
+        dataset_folder = dataset_dir.name
+        data_yml = dataset_dir / "data.yml"
+        if not data_yml.exists():
+            continue
+
+        try:
+            raw = data_yml.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"    ⚠️  Could not read {data_yml}: {e}")
+            continue
+
+        # Extract the registered name from the YAML (simple parse — avoids pyyaml dep)
+        registered_name = None
+        for line in raw.splitlines():
+            if line.strip().startswith("name:"):
+                registered_name = line.split(":", 1)[1].strip()
+                break
+
+        if not registered_name:
+            print(f"    ⚠️  Could not find 'name:' in {data_yml}, skipping")
+            continue
+
+        print(f"  📊 Dataset: {dataset_folder} → registered name: \"{registered_name}\"")
+
+        # Synthetic document — most important piece: tells the LLM the exact name
+        synthetic = (
+            f"## Registered Dataset: {registered_name}\n\n"
+            f"Folder: datasets/{dataset_folder}/\n\n"
+            f"This dataset is registered in Brane under the name `\"{registered_name}\"`.\n"
+            f"To reference it in BraneScript:\n"
+            f"```\n"
+            f"let ds := new Data{{ name := \"{registered_name}\" }};\n"
+            f"```\n"
+            f"Pass `ds` to any package function that accepts a `Data` argument.\n"
+            f"Do NOT pass the name as a plain string — always use `new Data{{ name := \"...\" }}`.\n\n"
+            f"Full data.yml:\n{raw}"
+        )
+        docs.append(Document(
+            page_content=synthetic,
+            metadata={
+                "source": str(data_yml),
+                "dataset": registered_name,
+                "doc_type": "dataset_registry",
+            }
+        ))
+
+        # README for richer context (data format, available columns, etc.)
+        readme = dataset_dir / "README.md"
+        if readme.exists():
+            try:
+                text = readme.read_text(encoding="utf-8")
+                docs.append(Document(
+                    page_content=text,
+                    metadata={
+                        "source": str(readme),
+                        "dataset": registered_name,
+                        "doc_type": "dataset_readme",
+                    }
+                ))
+                print(f"    ✅ Loaded README.md")
+            except Exception as e:
+                print(f"    ⚠️  Could not read {readme}: {e}")
+
+    print(f"  📁 Loaded {len(docs)} dataset documents")
     return docs
 
 
@@ -412,18 +499,22 @@ def build_knowledge_base():
     print(f"\n  ✅ Total lang chunks: {len(lang_chunks)}")
     build_db(lang_chunks, LANG_DB_PATH, embeddings)
 
-    # --- 2. Package DB ---
-    print("\n📦 Building package DB...")
+    # --- 2. Package + Dataset DB ---
+    print("\n📦 Building package + dataset DB...")
     pkg_docs = load_package_docs(PACKAGES_PATH)
-    if pkg_docs:
-        pkg_chunks = chunk_packages_by_section(pkg_docs)
-        print(f"  ✅ Loaded {len(pkg_docs)} package docs total")
-        print(f"  ✨ Smart chunking applied: {len(pkg_chunks)} semantic chunks")
+    dataset_docs = load_dataset_docs(DATASETS_PATH)
+    all_pkg_docs = pkg_docs + dataset_docs
+    if all_pkg_docs:
+        # Dataset registry docs are short and critical — keep them whole (no chunking)
+        registry_chunks = [d for d in dataset_docs if d.metadata.get("doc_type") == "dataset_registry"]
+        # Everything else goes through smart chunking
+        chunked_docs = [d for d in all_pkg_docs if d not in registry_chunks]
+        pkg_chunks = chunk_packages_by_section(chunked_docs) + registry_chunks
+        print(f"  ✅ {len(pkg_docs)} package docs + {len(dataset_docs)} dataset docs")
+        print(f"  ✨ Smart chunking: {len(pkg_chunks)} total chunks")
         build_db(pkg_chunks, PKG_DB_PATH, embeddings)
     else:
-        print("  ℹ️  No package docs found — package DB skipped.")
-        print("      Populate ../submodules/packages with package docs, quick references, and configuration files")
-        print("      then re-run this script.")
+        print("  ℹ️  No package or dataset docs found — pkg DB skipped.")
 
     print("\n🎉 Done. DBs ready.")
     print(f"   Lang spec : {LANG_DB_PATH}")

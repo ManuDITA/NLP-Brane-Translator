@@ -63,11 +63,24 @@ mkdir -p "${TRAINING_DATA_DIR}"
 echo "Training data: ${TRAINING_DATA_DIR}/index.jsonl"
 # ---------------------------------------------------------------------------
 
+# ---- Intents to process ----------------------------------------------------
+# Pass --intents-file to run a batch, or --query for a single intent.
+# Default: uses the built-in fallback intent inside pipeline.py.
+INTENTS_FILE="${PROJECT_DIR}/data/intents.txt"
+
+PIPELINE_EXTRA_ARGS=""
+if [[ -f "${INTENTS_FILE}" ]]; then
+    echo "Using intents file: ${INTENTS_FILE}"
+    PIPELINE_EXTRA_ARGS="--intents-file ${INTENTS_FILE}"
+fi
+# ---------------------------------------------------------------------------
+
 python -u src/pipeline.py \
     --model Qwen/Qwen3.6-27B \
     --temperature 0.2 \
     --execute \
     --collect \
+    ${PIPELINE_EXTRA_ARGS} \
     > "$LOGFILE" 2>&1
 
 echo "Job finished at $(date)"
