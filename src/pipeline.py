@@ -29,7 +29,7 @@ from typing import Optional
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
@@ -193,8 +193,8 @@ RULES for Data and IntermediateResult:
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 BRANESCRIPT_OUTPUT_DIR = (PROJECT_ROOT / "generated_branescripts").resolve()
-LANG_DB_PATH = PROJECT_ROOT / "brane_lang_db"
 PKG_DB_PATH = PROJECT_ROOT / "brane_pkg_db"
+SYNTAX_REFERENCE_PATH = PROJECT_ROOT / "data" / "syntax_reference.md"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_RETRIES = 3
 
@@ -240,7 +240,7 @@ USER REQUEST:
 SUBTASKS:
 {subtasks}
 
-LANGUAGE SPEC CONTEXT:
+LANGUAGE SPEC CONTEXT (always injected — full BraneScript syntax reference):
 {lang_context}
 
 PACKAGE / DATASET CONTEXT:
@@ -574,6 +574,7 @@ def run_pipeline(user_query: str,
                  decomposer: IntentDecomposer,
                  pkg_retriever: PkgRetriever,
                  llm,
+                 syntax_reference: str,
                  few_shot_override: str = None,
                  no_think_prefix: str = "",
                  execute: bool = False,
@@ -582,8 +583,8 @@ def run_pipeline(user_query: str,
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
 
-    # ── Step 1: Task breakdown + language spec retrieval ──────────────────
-    lang_context, subtasks = decomposer.run(user_query)
+    # ── Step 1: Task breakdown ─────────────────────────────────────────────
+    subtasks = decomposer.decompose(user_query)
     subtasks_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(subtasks))
 
     # ── Step 2: Package / dataset retrieval ───────────────────────────────
@@ -607,7 +608,7 @@ def run_pipeline(user_query: str,
         prompt_text = prompt.format(
             question=user_query,
             subtasks=subtasks_str,
-            lang_context=lang_context,
+            lang_context=syntax_reference,
             pkg_context=pkg_context,
             few_shot=few_shot,
             error_section=error_section,
@@ -618,7 +619,7 @@ def run_pipeline(user_query: str,
         raw = chain.invoke({
             "question": user_query,
             "subtasks": subtasks_str,
-            "lang_context": lang_context,
+            "lang_context": syntax_reference,
             "pkg_context": pkg_context,
             "few_shot": few_shot,
             "error_section": error_section,
@@ -840,6 +841,13 @@ if __name__ == "__main__":
 
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
+    # Load syntax reference once — always injected into every prompt
+    print(f"📖 Loading syntax reference from {SYNTAX_REFERENCE_PATH}...")
+    if not SYNTAX_REFERENCE_PATH.exists():
+        raise FileNotFoundError(f"syntax_reference.md not found at {SYNTAX_REFERENCE_PATH}")
+    syntax_reference = SYNTAX_REFERENCE_PATH.read_text(encoding="utf-8")
+    print(f"   → {len(syntax_reference)} chars loaded")
+
     print("📥 Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
@@ -880,17 +888,15 @@ if __name__ == "__main__":
         },
     )
 
-    lang_db = Chroma(persist_directory=str(LANG_DB_PATH), embedding_function=embeddings)
+    if not os.path.exists(PKG_DB_PATH):
+        raise FileNotFoundError(
+            f"Package DB not found at {PKG_DB_PATH}. "
+            "Run `python src/knowledgeBase.py` first to build the knowledge base."
+        )
+    print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
+    pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
 
-    if os.path.exists(PKG_DB_PATH):
-        print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
-        pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
-    else:
-        print(f"⚠️  Package DB not found at {PKG_DB_PATH}. Using language DB as fallback.")
-        pkg_db = lang_db
-
-    decomposer = IntentDecomposer(llm=llm, lang_db=lang_db, k_per_subtask=3,
-                                   no_think=is_qwen3)
+    decomposer = IntentDecomposer(llm=llm, no_think=is_qwen3)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     collector = None
@@ -930,6 +936,7 @@ if __name__ == "__main__":
             decomposer=decomposer,
             pkg_retriever=pkg_retriever,
             llm=llm,
+            syntax_reference=syntax_reference,
             few_shot_override=BRANESCRIPT_FEW_SHOT,
             no_think_prefix=no_think_prefix,
             execute=args.execute,

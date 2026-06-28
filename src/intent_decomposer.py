@@ -1,21 +1,16 @@
 """
-Responsibility: HIGH LEVEL TASK BREAKDOWN + LANGUAGE SPEC RETRIEVAL
+Responsibility: HIGH LEVEL TASK BREAKDOWN
 
-Two jobs:
-  1. Break the user's intent into concrete BraneScript sub-tasks (plain English).
-  2. Retrieve only the relevant language spec chunks for those sub-tasks,
-     capped at a token budget to avoid overflowing llama3 context window.
+Breaks the user's intent into concrete BraneScript sub-tasks (plain English).
+Language spec context is no longer retrieved here — syntax_reference.md is
+always injected directly into the prompt by pipeline.py.
 """
 
 from langchain_core.language_models import BaseLanguageModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
-from langchain_chroma import Chroma
-import re
 
 from utils import strip_thinking_tokens
-
-MAX_LANG_CONTEXT_CHARS = 1500 * 4    # ~6000 chars ≈ 1500 tokens
 
 # ---------------------------------------------------------------------------
 # Prompt 1: Decomposition: breaks user intent into sub-tasks in plain English, no code is generated at this stage
@@ -66,18 +61,15 @@ SUB-TASKS:"""
 
 class IntentDecomposer:
     """
-    High level task breakdown + language spec retrieval.
+    Breaks the user's intent into a list of concrete BraneScript sub-tasks.
 
     Usage:
-        decomposer = IntentDecomposer(llm, lang_db)
-        lang_context, subtasks = decomposer.run("I want to analyze heart-disease data")
+        decomposer = IntentDecomposer(llm)
+        subtasks = decomposer.decompose("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: BaseLanguageModel, lang_db: Chroma, k_per_subtask: int = 3,
-                 no_think: bool = False):
+    def __init__(self, llm: BaseLanguageModel, no_think: bool = False):
         self.llm = llm
-        self.lang_db = lang_db
-        self.k = k_per_subtask
 
         # Prepend /no_think for Qwen3 models to suppress the reasoning block
         prefix = "/no_think\n" if no_think else ""
@@ -116,29 +108,6 @@ class IntentDecomposer:
         subtasks = [s for s in subtasks if len(s) < 80 and not s.endswith(":")]
         return subtasks[:12]
 
-    def _retrieve(self, query: str) -> list:
-        return self.lang_db.similarity_search(query, k=self.k)
-
-    def _deduplicate(self, docs: list) -> list:
-        seen, unique = set(), []
-        for doc in docs:
-            key = doc.page_content[:120]
-            if key not in seen:
-                seen.add(key)
-                unique.append(doc)
-        return unique
-
-    def _apply_token_budget(self, docs: list) -> list:
-        """Keep chunks until we hit the character budget."""
-        total, kept = 0, []
-        for doc in docs:
-            size = len(doc.page_content)
-            if total + size > MAX_LANG_CONTEXT_CHARS:
-                break
-            kept.append(doc)
-            total += size
-        return kept
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -151,28 +120,3 @@ class IntentDecomposer:
         for i, s in enumerate(subtasks, 1):
             print(f"   {i}. {s}")
         return subtasks
-
-    def retrieve_lang_context(self, subtasks: list[str]) -> str:
-        """Rewrite sub-tasks into search queries, then it retrieves lang spec chunks."""
-        print("\n🔍 Language spec retrieval:")
-        all_docs = []
-        for st in subtasks:
-            
-            print(f"   • {st}")
-            all_docs.extend(self._retrieve(st))
-
-        docs = self._apply_token_budget(self._deduplicate(all_docs))
-        print(f"   → {len(docs)} unique chunks within token budget")
-        return "\n\n---\n\n".join(doc.page_content for doc in docs)
-
-    def run(self, intent: str) -> tuple[str, list[str]]:
-        """
-        Full flow: intent → sub-tasks → lang spec context.
-
-        Returns:
-            lang_context  (str)       : syntax docs for the prompt
-            subtasks      (list[str]) : sub-tasks for prompt structure + pkg retrieval
-        """
-        subtasks = self.decompose(intent)
-        lang_context = self.retrieve_lang_context(subtasks)
-        return lang_context, subtasks

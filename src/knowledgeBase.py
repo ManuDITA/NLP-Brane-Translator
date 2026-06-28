@@ -32,7 +32,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Language spec: .bs examples (Rust sources excluded — too noisy for an LLM)
 LANGUAGE_SPEC_PATH      = BASE_DIR / "submodules/languageSpec"
-LANGUAGE_SPEC_EXAMPLES  = LANGUAGE_SPEC_PATH / "branescript"
 
 # Official manual and specification docs (best natural-language+code source)
 MANUAL_BSCRIPT_PATH = BASE_DIR / "submodules/manual/src/branescript"
@@ -120,7 +119,8 @@ def load_language_spec_docs(language_spec_path: Path) -> list[Document]:
         print(f"  ⚠️  Language spec path not found, skipping: {language_spec_path}")
         return docs
 
-    example_docs = load_text_files([LANGUAGE_SPEC_EXAMPLES], (".bs",))
+    examples_path = language_spec_path / "branescript"
+    example_docs = load_text_files([str(examples_path)], (".bs",))
     docs.extend(example_docs)
 
     print(f"  📁 Loaded {len(docs)} .bs example files from languageSpec")
@@ -465,9 +465,13 @@ def build_knowledge_base():
     print("\n📚 Building language specification DB...")
 
     # 1a. Curated syntax reference (single file, kept whole)
-    syntax_ref_path = DATA_PATH / "syntax_reference.md"
-    syntax_ref_docs = load_md_files([str(DATA_PATH)])
-    syntax_ref_docs = [d for d in syntax_ref_docs if "syntax_reference" in d.metadata.get("source", "")]
+    syntax_ref_file = DATA_PATH / "syntax_reference.md"
+    syntax_ref_docs = []
+    if syntax_ref_file.exists():
+        syntax_ref_docs = [Document(
+            page_content=syntax_ref_file.read_text(encoding="utf-8"),
+            metadata={"source": str(syntax_ref_file)},
+        )]
     print(f"  📄 Syntax reference: {len(syntax_ref_docs)} file(s)")
 
     # 1b. Official manual pages for BraneScript
