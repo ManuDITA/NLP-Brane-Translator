@@ -312,6 +312,34 @@ Output ONLY BraneScript code. No prose. No fences.
 
 """
 
+COMPILATION_ERROR_SECTION = """⚠️  THE PREVIOUSLY GENERATED BRANESCRIPT FAILED TO COMPILE:
+{stderr}
+The Brane runtime rejected the script above. Read the error message carefully.
+Common causes:
+- Calling a function that does not exist in the imported package — check the PACKAGE CONTEXT for exact function names.
+- Wrong argument types or missing required arguments.
+- Syntax the pre-check missed (wrong operator, wrong keyword, missing semicolon).
+
+Fix the BraneScript so it compiles. Output ONLY corrected BraneScript — no prose, no fences.
+
+"""
+
+RUNTIME_ERROR_SECTION = """⚠️  THE PREVIOUSLY GENERATED BRANESCRIPT COMPILED BUT FAILED AT RUNTIME:
+stdout:
+{stdout}
+
+stderr:
+{stderr}
+
+The workflow started but a task container exited with an error. Common causes:
+- Passing wrong values (out-of-range, wrong type, missing required field) to a package function.
+- Using a dataset name that does not exist — check the PACKAGE / DATASET CONTEXT for the exact registered name.
+- Logic error causing an unhandled exception inside the package.
+
+Fix the BraneScript to correct the error. Output ONLY corrected BraneScript — no prose, no fences.
+
+"""
+
 # ---------------------------------------------------------------------------
 # Output cleanup helpers — imported from utils.py
 # strip_thinking_tokens, strip_code_fences, detect_python_code, looks_like_branescript
@@ -678,13 +706,12 @@ def run_pipeline(user_query: str,
                 return code
 
         print("   ✅ Validation passed")
-        break
 
-    if code.strip():
-        save_branescript_to_folder(code, user_query)
+        # ── No execution requested — we are done ──────────────────────────
+        if not execute:
+            break
 
-    # ── Optional: execute via file-based job queue ────────────────────────
-    if execute and code.strip():
+        # ── Execute and retry on failure ──────────────────────────────────
         exec_result = execute_workflow(code, user_query)
         if exec_result["success"]:
             print(f"\n✅ Workflow executed successfully.")
@@ -694,20 +721,50 @@ def run_pipeline(user_query: str,
                                    committed_data=exec_result.get("committed_data"),
                                    execution_result=exec_result,
                                    attempt_number=attempt, model=model_name)
+            break
+
+        # Execution failed — log attempt and prepare retry
+        error_type = exec_result.get("error_type") or "runtime"
+        stderr = exec_result.get("stderr", "")
+        stdout = exec_result.get("stdout", "")
+        exit_code = exec_result.get("exit_code", -1)
+
+        print(f"\n⚠️  Workflow execution failed [{error_type}] (attempt {attempt}/{MAX_RETRIES}).")
+        if stderr:
+            print(f"   stderr: {stderr[:300]}")
+
+        if collector:
+            collector.log_fail(intent=user_query, generated_code=code,
+                               error_type=error_type,
+                               error_message=stderr[:500],
+                               stdout=stdout,
+                               stderr=stderr,
+                               exit_code=exit_code,
+                               committed_data=exec_result.get("committed_data"),
+                               execution_result=exec_result,
+                               attempt_number=attempt, model=model_name)
+
+        if attempt < MAX_RETRIES:
+            if error_type == "compilation":
+                error_section = COMPILATION_ERROR_SECTION.format(
+                    stderr=(stderr[:800] if stderr.strip() else "(no stderr output)")
+                )
+            else:
+                error_section = RUNTIME_ERROR_SECTION.format(
+                    stdout=(stdout[:400] if stdout.strip() else "(no stdout output)"),
+                    stderr=(stderr[:400] if stderr.strip() else "(no stderr output)"),
+                )
+            attempt += 1
+            continue
         else:
-            print(f"\n⚠️  Workflow execution failed.")
-            if collector:
-                collector.log_fail(intent=user_query, generated_code=code,
-                                   error_type=exec_result.get("error_type") or "runtime",
-                                   error_message=exec_result["stderr"][:500],
-                                   stdout=exec_result["stdout"],
-                                   stderr=exec_result["stderr"],
-                                   exit_code=exec_result["exit_code"],
-                                   committed_data=exec_result.get("committed_data"),
-                                   execution_result=exec_result,
-                                   attempt_number=attempt, model=model_name)
-    elif not execute and code.strip() and collector:
-        # No execution requested — log as pass at validation stage only
+            print("   ⛔ Max retries reached on execution. Returning last attempt.")
+            break
+
+    if code.strip():
+        save_branescript_to_folder(code, user_query)
+
+    # No-execute path: log a validation-only pass
+    if not execute and code.strip() and collector:
         collector.log_pass(intent=user_query, generated_code=code,
                            attempt_number=attempt, model=model_name)
 
