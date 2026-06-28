@@ -2,31 +2,42 @@
 example_generator.py
 
 Generates additional (intent, BraneScript) example pairs using the locally
-hosted LLM and appends them to data/examples/generated.jsonl.
+hosted HuggingFace LLM and appends them to data/examples/generated.jsonl.
 
 The script asks the model to produce BraneScript for a set of seed intents,
 then saves valid outputs as new training examples.
 
-Run:
-    python src/example_generator.py [--count N] [--category CATEGORY]
+Run (on Snellius, with the venv active):
+    python src/example_generator.py [--count N] [--category CATEGORY] [--model MODEL_ID]
 
 Options:
     --count     Number of examples to generate (default: 20)
     --category  Target category: basic | control_flow | functions |
                 classes_arrays | healthcare | advanced | all (default: all)
+    --model     HuggingFace model ID (default: Qwen/Qwen3-4B)
+    --temperature  Sampling temperature (default: 0.5)
 """
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
+from typing import List
 
-from langchain_ollama import OllamaLLM as Ollama
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline as hf_pipeline
+from langchain_huggingface import HuggingFacePipeline
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.language_models import BaseLanguageModel
 
-from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_json_string_assignment
+from utils import (
+    strip_thinking_tokens,
+    strip_code_fences,
+    looks_like_branescript,
+    detect_json_string_assignment,
+    load_hf_token,
+)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -37,9 +48,8 @@ GENERATED_FILE = EXAMPLES_DIR / "generated.jsonl"
 
 # ---------------------------------------------------------------------------
 # Seed intents by category
-# These are used as inspiration; the generator creates variations of them.
 # ---------------------------------------------------------------------------
-SEED_INTENTS: dict[str, list[str]] = {
+SEED_INTENTS = {
     "basic": [
         "Declare a variable for a patient's name and print it",
         "Add two numbers and print the result",
@@ -85,7 +95,7 @@ SEED_INTENTS: dict[str, list[str]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Generation prompt — {no_think_prefix} injected at runtime for Qwen3 models
+# Generation prompt — {no_think_prefix} injected for Qwen3 models
 # ---------------------------------------------------------------------------
 GENERATION_PROMPT = """{no_think_prefix}You are an expert in BraneScript, the workflow language for the Brane Framework.
 
@@ -105,12 +115,12 @@ INTENT: {intent}
 
 BRANESCRIPT CODE:"""
 
+
 # ---------------------------------------------------------------------------
-# Helpers — shared implementations imported from utils.py
+# Helpers
 # ---------------------------------------------------------------------------
 
-
-def load_existing(filepath: Path) -> set[str]:
+def load_existing(filepath: Path) -> set:
     """Return set of already-generated intents to avoid duplicates."""
     existing = set()
     if not filepath.exists():
@@ -129,12 +139,41 @@ def load_existing(filepath: Path) -> set[str]:
     return existing
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+def load_model(model_id: str, temperature: float) -> BaseLanguageModel:
+    """Load a HuggingFace model and wrap it as a LangChain LLM."""
+    load_hf_token()
+    print(f"📥 Loading tokenizer: {model_id}")
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 
-def generate_examples(llm: Ollama, intents: list[str], existing: set[str],
-                      no_think_prefix: str = "") -> list[dict]:
+    print(f"📥 Loading model onto GPU (bfloat16)...")
+    hf_model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    hf_model.generation_config.max_length = 4096
+    hf_model.generation_config.max_new_tokens = None
+
+    gen_pipeline = hf_pipeline(
+        "text-generation",
+        model=hf_model,
+        tokenizer=tokenizer,
+        return_full_text=False,
+    )
+    return HuggingFacePipeline(
+        pipeline=gen_pipeline,
+        pipeline_kwargs={
+            "max_new_tokens": 512,
+            "do_sample": True,
+            "temperature": temperature,
+            "top_p": 0.9,
+        },
+    )
+
+
+def generate_examples(llm: BaseLanguageModel, intents: List[str],
+                      existing: set, no_think_prefix: str = "") -> list:
     prompt = PromptTemplate.from_template(GENERATION_PROMPT)
     chain = prompt | llm | StrOutputParser()
 
@@ -154,7 +193,7 @@ def generate_examples(llm: Ollama, intents: list[str], existing: set[str],
                 results.append({"intent": intent, "branescript": code})
                 print(f"      ✅ OK ({len(code)} chars)")
             elif detect_json_string_assignment(code):
-                print(f"      ❌ Output uses JSON-string antipattern (escaped quotes) — skipped")
+                print(f"      ❌ JSON-string antipattern — skipped")
             else:
                 print(f"      ❌ Output does not look like BraneScript — skipped")
         except Exception as e:
@@ -163,41 +202,41 @@ def generate_examples(llm: Ollama, intents: list[str], existing: set[str],
     return results
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=20,
-                        help="Number of examples to generate")
+                        help="Number of examples to generate (default: 20)")
     parser.add_argument("--category", default="all",
                         choices=list(SEED_INTENTS.keys()) + ["all"],
-                        help="Category of intents to use")
-    parser.add_argument("--model", default="qwen3.5",
-                        help="Ollama model name to use for generation")
+                        help="Category of intents to use (default: all)")
+    parser.add_argument("--model", default="Qwen/Qwen3-4B",
+                        help="HuggingFace model ID (default: Qwen/Qwen3-4B)")
+    parser.add_argument("--temperature", type=float, default=0.5,
+                        help="Sampling temperature (default: 0.5)")
     args = parser.parse_args()
 
-    print(f"🔧 Starting example generator (model={args.model}, count={args.count})")
+    print(f"🔧 Starting example generator")
+    print(f"   model={args.model}  count={args.count}  category={args.category}")
 
-    # Disable Qwen3 thinking mode — /no_think must be the very first token
     is_qwen3 = "qwen3" in args.model.lower()
     no_think_prefix = "/no_think\n" if is_qwen3 else ""
     if is_qwen3:
-        print(f"ℹ️  Qwen3 detected — injecting /no_think to suppress reasoning blocks")
+        print(f"ℹ️  Qwen3 detected — injecting /no_think to suppress reasoning")
 
-    llm = Ollama(
-        model=args.model,
-        temperature=0.5,
-        top_p=0.9,
-        top_k=20,
-    )
+    llm = load_model(args.model, args.temperature)
+    print("✅ Model loaded")
 
-    # Collect intents to generate
     if args.category == "all":
         all_intents = []
-        for category_intents in SEED_INTENTS.values():
-            all_intents.extend(category_intents)
+        for cat_intents in SEED_INTENTS.values():
+            all_intents.extend(cat_intents)
     else:
         all_intents = SEED_INTENTS[args.category]
 
-    # Trim to requested count
     all_intents = all_intents[:args.count]
 
     EXAMPLES_DIR.mkdir(parents=True, exist_ok=True)
@@ -205,7 +244,8 @@ def main():
     print(f"📋 {len(existing)} existing generated examples")
     print(f"📝 Generating up to {len(all_intents)} new examples...")
 
-    new_examples = generate_examples(llm, all_intents, existing, no_think_prefix=no_think_prefix)
+    new_examples = generate_examples(llm, all_intents, existing,
+                                     no_think_prefix=no_think_prefix)
 
     if new_examples:
         with open(GENERATED_FILE, "a", encoding="utf-8") as f:
