@@ -209,10 +209,7 @@ EXECUTOR_TIMEOUT = int(os.environ.get("BRANE_EXECUTOR_TIMEOUT", "300"))
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-# Main generation prompt
-# {no_think_prefix} must be the very first token — Qwen3 only acts on /no_think
-# if it appears before any other text.
-GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framework and BraneScript.
+GENERATION_TEMPLATE = """You are an expert in the Brane Framework and BraneScript.
 {few_shot}
 ## ABSOLUTE RULES — READ CAREFULLY
 1. Output ONLY valid BraneScript code.
@@ -576,7 +573,6 @@ def run_pipeline(user_query: str,
                  llm,
                  syntax_reference: str,
                  few_shot_override: str = None,
-                 no_think_prefix: str = "",
                  execute: bool = False,
                  collector: Optional[TrainingCollector] = None,
                  model_name: str = "") -> str:
@@ -612,7 +608,6 @@ def run_pipeline(user_query: str,
             pkg_context=pkg_context,
             few_shot=few_shot,
             error_section=error_section,
-            no_think_prefix=no_think_prefix,
         )
         print(f"   📏 Prompt length: {len(prompt_text)} chars")
 
@@ -623,7 +618,6 @@ def run_pipeline(user_query: str,
             "pkg_context": pkg_context,
             "few_shot": few_shot,
             "error_section": error_section,
-            "no_think_prefix": no_think_prefix,
         })
 
         # Always strip thinking tokens and code fences — harmless on clean output
@@ -827,15 +821,6 @@ if __name__ == "__main__":
     if args.query and args.intents_file:
         parser.error("--query and --intents-file are mutually exclusive.")
 
-    # Disable Qwen3 thinking mode — /no_think must be the very first token of the prompt
-    # so it is injected via no_think_prefix into the template, NOT into the few_shot block.
-    is_qwen3 = "qwen3" in args.model.lower()
-    no_think_prefix = ""
-    if is_qwen3:
-        print(f"ℹ️  Qwen3 detected — injecting /no_think to disable reasoning mode")
-        print(f"   Chosen model: {args.model}")
-        no_think_prefix = "/no_think\n"
-
     print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  "
           f"execute: {args.execute}  collect: {args.collect}")
 
@@ -850,6 +835,7 @@ if __name__ == "__main__":
 
     print("📥 Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    tokenizer.clean_up_tokenization_spaces = False
 
     print("📥 Loading model onto GPU...")
 
@@ -862,19 +848,12 @@ if __name__ == "__main__":
 
     print("✅ Model loaded")
 
-    # Raise max_length so a long prompt + 1024 new tokens never exceeds it.
-    model.generation_config.max_length = 32768
-
-    # Set max_new_tokens directly on the pipeline so it is always honoured,
-    # regardless of how LangChain forwards pipeline_kwargs.
-    model.generation_config.max_new_tokens = 1024
-
     text_generation_pipeline = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
         return_full_text=False,
-        max_new_tokens=1024,
+        max_new_tokens=4096,
     )
 
     # pipeline_kwargs are forwarded by HuggingFacePipeline on each call and
@@ -896,7 +875,7 @@ if __name__ == "__main__":
     print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
     pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
 
-    decomposer = IntentDecomposer(llm=llm, no_think=is_qwen3)
+    decomposer = IntentDecomposer(llm=llm)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     collector = None
@@ -938,7 +917,6 @@ if __name__ == "__main__":
             llm=llm,
             syntax_reference=syntax_reference,
             few_shot_override=BRANESCRIPT_FEW_SHOT,
-            no_think_prefix=no_think_prefix,
             execute=args.execute,
             collector=collector,
             model_name=args.model,

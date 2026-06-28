@@ -1,18 +1,18 @@
 """
 knowledgeBase.py
 
-Builds TWO separate ChromaDB databases:
-  1. brane_lang_db   — language spec + documentation (manual, specification)
-  2. brane_pkg_db    — packages and datasets (context-relevant)
+Builds the package/dataset ChromaDB used at inference time:
+  brane_pkg_db — packages and datasets (function signatures, schemas, Data usage)
 
-Run this once, or whenever your docs change:
-    python knowledgeBase.py
+BraneScript syntax context is injected directly from data/syntax_reference.md
+at inference time, so no language-spec DB is needed here.
+
+Run this once, or whenever your packages or datasets change:
+    python src/knowledgeBase.py
 """
 
 import os
-import json
 import shutil
-from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import MarkdownTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
@@ -30,151 +30,17 @@ load_hf_token()
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Language spec: .bs examples (Rust sources excluded — too noisy for an LLM)
-LANGUAGE_SPEC_PATH      = BASE_DIR / "submodules/languageSpec"
-
-# Official manual and specification docs (best natural-language+code source)
-MANUAL_BSCRIPT_PATH = BASE_DIR / "submodules/manual/src/branescript"
-MANUAL_SCIENTIST_BSCRIPT_PATH = BASE_DIR / "submodules/manual/src/scientists/bscript"
-SPEC_BSCRIPT_PATH = BASE_DIR / "submodules/specification/src/appendix/languages/bscript"
-
-# Curated data: syntax reference + (intent, BraneScript) example pairs
-DATA_PATH = BASE_DIR / "data"
-EXAMPLES_PATH = DATA_PATH / "examples"
-
 PACKAGES_PATH = BASE_DIR / "packages"
 DATASETS_PATH = BASE_DIR / "datasets"
 
-LANG_DB_PATH = BASE_DIR / "brane_lang_db"
 PKG_DB_PATH  = BASE_DIR / "brane_pkg_db"
 
 EMBEDDING_MODEL  = "sentence-transformers/all-MiniLM-L6-v2"
-
-# ---------------------------------------------------------------------------
-# Syntax signal filter
-# Only keep chunks that contain actual BraneScript syntax or meaningful prose.
-# This drops changelogs, license files, pure nav pages, etc.
-# ---------------------------------------------------------------------------
-SYNTAX_SIGNALS = [
-    "func ", "let ", ":=", "import", "workflow", "->", "package",
-    "//", "return", "if ", "else", "while", "for ", "class ", "new ",
-    "println", "commit_result", "data ", "unit",
-]
-
-def is_useful_chunk(chunk: Document) -> bool:
-    text = chunk.page_content
-    if len(text) < 80:          # too short to be meaningful
-        return False
-    if len(text.splitlines()) == 1 and len(text) < 120:
-        return False            # single-line headings, TOC entries, etc.
-    return any(sig in text for sig in SYNTAX_SIGNALS) or len(text) > 250
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def load_md_files(paths: list[str]) -> list[Document]:
-    docs = []
-    for path in paths:
-        if not os.path.exists(path):
-            print(f"  ⚠️  Path not found, skipping: {path}")
-            continue
-        loader = DirectoryLoader(path, glob="**/*.md", loader_cls=TextLoader,
-                                 loader_kwargs={"encoding": "utf-8"},
-                                 silent_errors=True)
-        loaded = loader.load()
-        print(f"  📁 {path}: {len(loaded)} files")
-        docs.extend(loaded)
-    return docs
-
-
-def load_text_files(paths: list[str], extensions: tuple[str, ...]) -> list[Document]:
-    docs = []
-    for path in paths:
-        if not os.path.exists(path):
-            print(f"  ⚠️  Path not found, skipping: {path}")
-            continue
-        loaded_files = 0
-        for root, _, files in os.walk(path):
-            for file in files:
-                if file.lower().endswith(extensions):
-                    filepath = os.path.join(root, file)
-                    try:
-                        with open(filepath, "r", encoding="utf-8") as f:
-                            text = f.read()
-                    except Exception as e:
-                        print(f"    ⚠️  Could not read {filepath}: {e}")
-                        continue
-                    docs.append(Document(page_content=text,
-                                         metadata={"source": filepath}))
-                    loaded_files += 1
-        print(f"  📁 {path}: {loaded_files} files")
-    return docs
-
-
-def load_language_spec_docs(language_spec_path: Path) -> list[Document]:
-    """Load only .bs BraneScript example files; skip Rust compiler sources."""
-    docs = []
-    if not language_spec_path.exists():
-        print(f"  ⚠️  Language spec path not found, skipping: {language_spec_path}")
-        return docs
-
-    examples_path = language_spec_path / "branescript"
-    example_docs = load_text_files([str(examples_path)], (".bs",))
-    docs.extend(example_docs)
-
-    print(f"  📁 Loaded {len(docs)} .bs example files from languageSpec")
-    return docs
-
-
-def chunk_language_spec_docs(docs: list[Document]) -> list[Document]:
-    bs_docs = [d for d in docs if d.metadata.get("source", "").lower().endswith(".bs")]
-    # Keep BraneScript example files whole (they are short and self-contained)
-    return bs_docs
-
-
-def load_examples_as_docs(examples_path: Path) -> list[Document]:
-    """
-    Load curated (intent, BraneScript) example pairs from JSONL files.
-    Each pair is stored as a Document with the intent as context and the
-    BraneScript as the page content, so the LLM sees the code + its meaning.
-    """
-    docs = []
-    if not examples_path.exists():
-        print(f"  ⚠️  Examples path not found, skipping: {examples_path}")
-        return docs
-
-    for jsonl_file in sorted(examples_path.glob("*.jsonl")):
-        count = 0
-        with open(jsonl_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    intent = entry.get("intent", "")
-                    branescript = entry.get("branescript", "")
-                    if not intent or not branescript:
-                        continue
-                    text = f"// Intent: {intent}\n{branescript}"
-                    docs.append(Document(
-                        page_content=text,
-                        metadata={
-                            "source": str(jsonl_file),
-                            "category": jsonl_file.stem,
-                            "doc_type": "example",
-                        }
-                    ))
-                    count += 1
-                except json.JSONDecodeError:
-                    continue
-        print(f"  📄 {jsonl_file.name}: {count} examples loaded")
-
-    print(f"  📁 Loaded {len(docs)} curated example documents total")
-    return docs
-
-
 def load_package_docs(packages_path: Path) -> list:
     docs = []
     if not packages_path.exists():
@@ -331,22 +197,6 @@ def load_dataset_docs(datasets_path: Path) -> list:
     return docs
 
 
-def chunk_and_filter(docs: list[Document],
-                     chunk_size: int = 400,
-                     chunk_overlap: int = 50,
-                     apply_filter: bool = True) -> list[Document]:
-    splitter = MarkdownTextSplitter(chunk_size=chunk_size,
-                                    chunk_overlap=chunk_overlap)
-    chunks = splitter.split_documents(docs)
-    if apply_filter:
-        before = len(chunks)
-        chunks = [c for c in chunks if is_useful_chunk(c)]
-        print(f"  ✂️  {before} chunks → {len(chunks)} after filtering")
-    else:
-        print(f"  ✂️  {len(chunks)} chunks")
-    return chunks
-
-
 def chunk_packages_by_section(docs: list[Document]) -> list[Document]:
     """
     Smart chunking strategy for package documentation.
@@ -461,49 +311,6 @@ def build_db(chunks: list[Document], path: str,
 def build_knowledge_base():
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-    # --- 1. Language spec DB ---
-    print("\n📚 Building language specification DB...")
-
-    # 1a. Curated syntax reference (single file, kept whole)
-    syntax_ref_file = DATA_PATH / "syntax_reference.md"
-    syntax_ref_docs = []
-    if syntax_ref_file.exists():
-        syntax_ref_docs = [Document(
-            page_content=syntax_ref_file.read_text(encoding="utf-8"),
-            metadata={"source": str(syntax_ref_file)},
-        )]
-    print(f"  📄 Syntax reference: {len(syntax_ref_docs)} file(s)")
-
-    # 1b. Official manual pages for BraneScript
-    manual_paths = [
-        str(MANUAL_BSCRIPT_PATH),
-        str(MANUAL_SCIENTIST_BSCRIPT_PATH),
-    ]
-    manual_docs = load_md_files(manual_paths)
-    print(f"  📄 Manual docs loaded: {len(manual_docs)}")
-
-    # 1c. Specification appendix for BraneScript
-    spec_docs = load_md_files([str(SPEC_BSCRIPT_PATH)])
-    print(f"  📄 Spec docs loaded: {len(spec_docs)}")
-
-    # 1d. .bs example files from languageSpec (kept whole)
-    language_spec_docs = load_language_spec_docs(LANGUAGE_SPEC_PATH)
-
-    # 1e. Curated (intent, BraneScript) example pairs
-    example_docs = load_examples_as_docs(EXAMPLES_PATH)
-
-    # Chunk prose docs; keep code/example docs whole
-    syntax_chunks = chunk_and_filter(syntax_ref_docs, chunk_size=600, chunk_overlap=100, apply_filter=False)
-    manual_chunks = chunk_and_filter(manual_docs, chunk_size=800, chunk_overlap=150, apply_filter=True)
-    spec_chunks   = chunk_and_filter(spec_docs, chunk_size=800, chunk_overlap=150, apply_filter=True)
-    bs_chunks     = chunk_language_spec_docs(language_spec_docs)  # kept whole
-    # example pairs kept whole (each is short)
-
-    lang_chunks = syntax_chunks + manual_chunks + spec_chunks + bs_chunks + example_docs
-    print(f"\n  ✅ Total lang chunks: {len(lang_chunks)}")
-    build_db(lang_chunks, LANG_DB_PATH, embeddings)
-
-    # --- 2. Package + Dataset DB ---
     print("\n📦 Building package + dataset DB...")
     pkg_docs = load_package_docs(PACKAGES_PATH)
     dataset_docs = load_dataset_docs(DATASETS_PATH)
@@ -520,9 +327,7 @@ def build_knowledge_base():
     else:
         print("  ℹ️  No package or dataset docs found — pkg DB skipped.")
 
-    print("\n🎉 Done. DBs ready.")
-    print(f"   Lang spec : {LANG_DB_PATH}")
-    print(f"   Pkg/data  : {PKG_DB_PATH}")
+    print(f"\n🎉 Done. DB ready at: {PKG_DB_PATH}")
 
 
 if __name__ == "__main__":

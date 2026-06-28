@@ -68,15 +68,11 @@ class IntentDecomposer:
         subtasks = decomposer.decompose("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: BaseLanguageModel, no_think: bool = False):
+    def __init__(self, llm: BaseLanguageModel):
         self.llm = llm
 
-        # Prepend /no_think for Qwen3 models to suppress the reasoning block
-        prefix = "/no_think\n" if no_think else ""
-        template = prefix + DECOMPOSE_TEMPLATE
-
         self.decompose_chain = (
-            PromptTemplate.from_template(template)
+            PromptTemplate.from_template(DECOMPOSE_TEMPLATE)
             | llm
             | StrOutputParser()
         )
