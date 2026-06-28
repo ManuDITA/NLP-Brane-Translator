@@ -19,8 +19,7 @@ fi
 
 INTENT="$*"
 
-# Always run from the direct
-ory where `sbatch` was submitted, not from Slurm spool.
+# Always run from the directory where `sbatch` was submitted, not from Slurm spool.
 PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
 cd "${PROJECT_DIR}"
 umask 077

@@ -30,12 +30,12 @@ name := "Bob";
 import <package_name>;
 ```
 
-After importing, call functions via `<package>::<function>(args)`.
+After importing, call functions directly as `<function>(args)`.
 
 ```bscript
 import healthcare;
 
-let result := healthcare::analyze_heart_disease(patient_json);
+let result := analyze_heart_disease(patient_json);
 println(result);
 ```
 
@@ -255,13 +255,13 @@ Use the builtin `Data` class to reference a dataset by name. It has exactly one 
 
 ```bscript
 let ds := new Data { name := "my-dataset" };
-let result := somepackage::process(ds);
+let result := process(ds);
 ```
 
 `Data` can also be created inline:
 
 ```bscript
-let result := somepackage::process(new Data { name := "my-dataset" });
+let result := process(new Data { name := "my-dataset" });
 ```
 
 ### `IntermediateResult` — output of a package function that produces data
@@ -317,7 +317,7 @@ Tag a call or block to route it to a specific site:
 
 ```bscript
 #[on("Amy")]
-let result := somepackage::compute(input);
+let result := compute(input);
 ```
 
 Apply to a whole block:
@@ -325,8 +325,8 @@ Apply to a whole block:
 ```bscript
 #[on("site-a")]
 {
-    let r1 := pkg::step1(data);
-    let r2 := pkg::step2(r1);
+    let r1 := step1(data);
+    let r2 := step2(r1);
 }
 ```
 
@@ -399,10 +399,10 @@ let patient := new Patient {
     lab_results := labs,
 };
 
-let risk := healthcare::analyze_heart_disease(patient);
+let risk := analyze_heart_disease(patient);
 println(risk);
 
-let report := healthcare::generate_report(patient);
+let report := generate_report(patient);
 println(report);
 ```
 
@@ -414,7 +414,7 @@ println(report);
 import compute;
 
 func process_item(item: string) -> string {
-    let result := compute::run(item);
+    let result := run(item);
     return result;
 }
 

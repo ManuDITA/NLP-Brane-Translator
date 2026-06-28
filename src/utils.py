@@ -140,8 +140,6 @@ def looks_like_branescript(text: str) -> bool:
         has_marker = True
     elif re.search(r'import\s+[A-Za-z]\w*\s*;', code):
         has_marker = True
-    elif "::" in code:
-        has_marker = True
     elif re.search(r'\bfunc\s+\w+\s*\(', code):
         has_marker = True
     elif "#[on(" in code:

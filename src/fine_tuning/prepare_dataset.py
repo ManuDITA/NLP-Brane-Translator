@@ -43,7 +43,7 @@ SYSTEM_PROMPT = (
     "Do NOT output Python, Java, or any other language. "
     "Do NOT wrap the output in markdown code fences. "
     "Use `let <name> := <expr>;` for variable assignment. "
-    "Call package functions as `<package>::<function>(args)`. "
+    "After importing a package, call functions directly as `function_name(args)` (never `<package>::<function>(args)`). "
     "Output raw BraneScript code only."
 )
 

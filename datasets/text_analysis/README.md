@@ -85,7 +85,7 @@ commit_result("text_analysis_results", analysis);
 3. **Access in BraneScript:**
    ```branescript
    let corpus := new Data { name := "text_corpus" };
-   let results := text_analysis::count_words(corpus);
+   let results := count_words(corpus);
    ```
 
 ## File format

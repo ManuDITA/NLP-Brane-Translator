@@ -103,7 +103,7 @@ Generate ONLY valid BraneScript code for the following intent.
 BraneScript rules:
 - Variables: `let <name> := <value>;`
 - Import: `import <package>;`
-- Package calls: `<package>::<function>(args)`
+- Package calls: `function_name(args)` after importing the package
 - Functions: `func name(param: type) -> type {{ ... }}`
 - Builtin output: `println(value);`
 - Boolean literals: `true`, `false` (lowercase)

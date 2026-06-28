@@ -66,7 +66,7 @@ let cfg := new Config {
     threshold  := 50,
 };
 
-let result := compute::run(cfg);
+let result := run(cfg);
 println(result);
 ```
 
@@ -115,7 +115,7 @@ let job := new Job {
 };
 
 #[on("marco")]
-let result := analytics::process(job);
+let result := process(job);
 println(result);
 ```
 
@@ -156,7 +156,7 @@ let subject := new Subject {
 };
 
 #[on("amy")]
-    let result := bioanalysis::evaluate(subject);
+    let result := evaluate(subject);
 println(result);
 ```
 NOTE: whenever the user says "on node X", "on site X", "at location X", or "run on X",
@@ -222,16 +222,17 @@ GENERATION_TEMPLATE = """{no_think_prefix}You are an expert in the Brane Framewo
 5. Do NOT add prose, explanations, headers, or narrative — ONLY code.
 6. Use exact BraneScript assignment syntax: `let <name> := <expression>;` — NEVER use `=` alone.
 7. Do NOT invent packages or functions not present in the PACKAGE / DATASET CONTEXT below.
-8. Define every variable with `let` before using it.
-9. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
-10. If context is incomplete, ask ONE clarifying question — do not generate any code.
-11. For complex structured data with multiple fields, define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
-12. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
-13. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
-14. BraneScript class fields can only have primitive types (`int`, `real`, `bool`, `string`) or other class types. Do NOT use `array<T>`, `list<T>`, or `List` as field types — these do not exist. If a field would be a list, either omit it or represent it as a `string`.
-15. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
-16. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. If the user wants to save or persist output data, use `commit_result("new-name", result_variable);` after calling the function.
-17. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
+8. After importing a package, call its functions directly as `function_name(args)`. NEVER use `<package>::<function>(args)`.
+9. Define every variable with `let` before using it.
+10. If the user mentions a node, site, or location name (e.g. "on node marco", "on site Amy"), place `#[on("name")]` immediately before the relevant function call or block.
+11. If context is incomplete, ask ONE clarifying question — do not generate any code.
+12. For complex structured data with multiple fields, define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
+13. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
+14. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
+15. BraneScript class fields can only have primitive types (`int`, `real`, `bool`, `string`) or other class types. Do NOT use `array<T>`, `list<T>`, or `List` as field types — these do not exist. If a field would be a list, either omit it or represent it as a `string`.
+16. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
+17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. If the user wants to save or persist output data, use `commit_result("new-name", result_variable);` after calling the function.
+18. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
 
 USER REQUEST:
 {question}
@@ -276,7 +277,7 @@ CORRECT BraneScript example:
         threshold  := 50,
     };
 
-    let result := compute::run(cfg);
+    let result := run(cfg);
     println(result);
 
 Do NOT use: def, from X import Y, or ANY Python syntax.
@@ -305,7 +306,7 @@ CORRECT:
         threshold  := 50,
     };
 
-    let result := mypackage::run(cfg);
+    let result := run(cfg);
 
 Output ONLY BraneScript code. No prose. No fences.
 
@@ -523,11 +524,7 @@ def check_semantic(code: str, pkg_context: str) -> tuple[bool, str]:
     import_names = re.findall(
         r'import\s+([A-Za-z][A-Za-z0-9_\-]*)', code, re.IGNORECASE
     )
-    pkg_calls = re.findall(
-        r'([A-Za-z][A-Za-z0-9_\-]+)\s*::', code
-    )
-
-    referenced = set(import_names + pkg_calls)
+    referenced = set(import_names)
 
     for name in referenced:
         if name.lower() in ("std", "io", "math"):
