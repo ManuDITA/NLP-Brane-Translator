@@ -83,7 +83,7 @@ if (x > 10) {
 
 Example 3 – function definition and call:
 ```
-func greet(name: string) -> string {
+func greet(name) {
     return "Hello, " + name;
 }
 let greeting := greet("world");
@@ -183,6 +183,7 @@ RULES for Data and IntermediateResult:
 - Use `new Data {{ name := "dataset-name" }}` to reference a registered dataset.
 - `IntermediateResult` is returned by package functions — you NEVER instantiate it yourself.
 - Use `commit_result("name", result)` to save an IntermediateResult as a persistent dataset.
+- `commit_result` also returns a value that can be assigned and passed to further package functions.
 - Both `Data` and `IntermediateResult` can be passed as arguments to package functions.
 - Do NOT try to access fields or content of a Data/IntermediateResult in BraneScript — they are opaque references.
 """
@@ -226,7 +227,7 @@ GENERATION_TEMPLATE = """You are an expert in the Brane Framework and BraneScrip
 12. For complex structured data with multiple fields, define a BraneScript `class` for each data type, instantiate with `new <ClassName> {{ field := value, ... }}`, and pass the instance to the function. Do NOT represent structured data as a raw JSON string with escaped quotes.
 13. NEVER use backslash-escaped quotes (like `\"`) anywhere in your output. If you need to pass structured data, define a class and use `new ClassName {{ ... }}`. Outputting `let x := "{{\\"key\\": \\"val\\"}}"` is always wrong.
 14. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
-15. BraneScript class fields can only have primitive types (`int`, `real`, `bool`, `string`) or other class types. Do NOT use `array<T>`, `list<T>`, or `List` as field types — these do not exist. If a field would be a list, either omit it or represent it as a `string`.
+15. Arrays (`[1, 2, 3]`) are valid as standalone variables and can be indexed with `arr[i]`. However, class field types can ONLY be primitives (`int`, `real`, `bool`, `string`) or other class types — do NOT use `array<T>`, `list<T>`, or `List` as a class field type. If a field would be a list, omit it or represent it as a `string`.
 16. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
 17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. If the user wants to save or persist output data, use `commit_result("new-name", result_variable);` after calling the function.
 18. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
@@ -778,6 +779,79 @@ def run_pipeline(user_query: str,
 
 
 # ---------------------------------------------------------------------------
+# Pipeline component setup (shared by pipeline.py and evaluate.py)
+# ---------------------------------------------------------------------------
+def build_pipeline_components(model_id: str, temperature: float) -> dict:
+    """
+    Load all pipeline components and return them as a dict.
+
+    Returns
+    -------
+    {
+        "llm":              HuggingFacePipeline,
+        "decomposer":       IntentDecomposer,
+        "pkg_retriever":    PkgRetriever,
+        "syntax_reference": str,
+    }
+    """
+    print(f"📖 Loading syntax reference from {SYNTAX_REFERENCE_PATH}...")
+    if not SYNTAX_REFERENCE_PATH.exists():
+        raise FileNotFoundError(f"syntax_reference.md not found at {SYNTAX_REFERENCE_PATH}")
+    syntax_reference = SYNTAX_REFERENCE_PATH.read_text(encoding="utf-8")
+    print(f"   → {len(syntax_reference)} chars loaded")
+
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+
+    print("📥 Loading tokenizer...")
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    tokenizer.clean_up_tokenization_spaces = False
+
+    print("📥 Loading model onto GPU...")
+    model_obj = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        dtype=torch.bfloat16,
+        device_map="auto",
+        trust_remote_code=True,
+        attn_implementation="sdpa",
+    )
+    print("✅ Model loaded")
+
+    text_generation_pipeline = pipeline(
+        "text-generation",
+        model=model_obj,
+        tokenizer=tokenizer,
+        return_full_text=False,
+        max_new_tokens=4096,
+    )
+    llm = HuggingFacePipeline(
+        pipeline=text_generation_pipeline,
+        pipeline_kwargs={
+            "do_sample": True,
+            "temperature": temperature,
+            "top_p": 0.95,
+        },
+    )
+
+    if not PKG_DB_PATH.exists():
+        raise FileNotFoundError(
+            f"Package DB not found at {PKG_DB_PATH}. "
+            "Run `python src/knowledgeBase.py` first to build the knowledge base."
+        )
+    print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
+    pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
+
+    decomposer = IntentDecomposer(llm=llm)
+    pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
+
+    return {
+        "llm": llm,
+        "decomposer": decomposer,
+        "pkg_retriever": pkg_retriever,
+        "syntax_reference": syntax_reference,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -824,60 +898,11 @@ if __name__ == "__main__":
     print(f"🔧 Initialising — model: {args.model}  temperature: {args.temperature}  "
           f"execute: {args.execute}  collect: {args.collect}")
 
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
-    # Load syntax reference once — always injected into every prompt
-    print(f"📖 Loading syntax reference from {SYNTAX_REFERENCE_PATH}...")
-    if not SYNTAX_REFERENCE_PATH.exists():
-        raise FileNotFoundError(f"syntax_reference.md not found at {SYNTAX_REFERENCE_PATH}")
-    syntax_reference = SYNTAX_REFERENCE_PATH.read_text(encoding="utf-8")
-    print(f"   → {len(syntax_reference)} chars loaded")
-
-    print("📥 Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    tokenizer.clean_up_tokenization_spaces = False
-
-    print("📥 Loading model onto GPU...")
-
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True,
-        attn_implementation="sdpa",
-    )
-
-    print("✅ Model loaded")
-
-    text_generation_pipeline = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        return_full_text=False,
-        max_new_tokens=4096,
-    )
-
-    # pipeline_kwargs are forwarded by HuggingFacePipeline on each call and
-    # override the pipeline-level defaults for temperature / sampling.
-    llm = HuggingFacePipeline(
-        pipeline=text_generation_pipeline,
-        pipeline_kwargs={
-            "do_sample": True,
-            "temperature": args.temperature,
-            "top_p": 0.95,
-        },
-    )
-
-    if not os.path.exists(PKG_DB_PATH):
-        raise FileNotFoundError(
-            f"Package DB not found at {PKG_DB_PATH}. "
-            "Run `python src/knowledgeBase.py` first to build the knowledge base."
-        )
-    print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
-    pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
-
-    decomposer = IntentDecomposer(llm=llm)
-    pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
+    components = build_pipeline_components(args.model, args.temperature)
+    llm            = components["llm"]
+    decomposer     = components["decomposer"]
+    pkg_retriever  = components["pkg_retriever"]
+    syntax_reference = components["syntax_reference"]
 
     collector = None
     if args.collect:

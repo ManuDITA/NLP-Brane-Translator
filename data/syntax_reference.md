@@ -98,7 +98,7 @@ for (let i := 0; i < 10; i := i + 1) {
 ## Functions
 
 ```bscript
-func <name>(<param>: <type>, ...) -> <return_type> {
+func <name>(<param>, ...) {
     // body
     return <value>;
 }
@@ -107,7 +107,7 @@ func <name>(<param>: <type>, ...) -> <return_type> {
 Example:
 
 ```bscript
-func add(a: int, b: int) -> int {
+func add(a, b) {
     return a + b;
 }
 
@@ -115,10 +115,10 @@ let sum := add(3, 4);
 println(sum);
 ```
 
-Functions with no return value use `-> unit` or omit the return type:
+Functions with no return value omit the `return` statement:
 
 ```bscript
-func greet(name: string) {
+func greet(name) {
     println("Hello, " + name);
 }
 greet("world");
@@ -337,12 +337,12 @@ Apply to a whole block:
 Return a value from a function or workflow:
 
 ```bscript
-func double(n: int) -> int {
+func double(n) {
     return n * 2;
 }
 ```
 
-Use `return;` (no value) for early exit from a `unit` function.
+Use `return;` (no value) for early exit from a function.
 
 ---
 
@@ -413,7 +413,7 @@ println(report);
 ```bscript
 import compute;
 
-func process_item(item: string) -> string {
+func process_item(item) {
     let result := run(item);
     return result;
 }
