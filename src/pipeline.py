@@ -695,6 +695,7 @@ def run_pipeline(user_query: str,
                 collector.log_pass(intent=user_query, generated_code=code,
                                    stdout=exec_result["stdout"],
                                    committed_data=exec_result.get("committed_data"),
+                                   execution_result=exec_result,
                                    attempt_number=attempt, model=model_name)
         else:
             print(f"\n⚠️  Workflow execution failed.")
@@ -706,6 +707,7 @@ def run_pipeline(user_query: str,
                                    stderr=exec_result["stderr"],
                                    exit_code=exec_result["exit_code"],
                                    committed_data=exec_result.get("committed_data"),
+                                   execution_result=exec_result,
                                    attempt_number=attempt, model=model_name)
     elif not execute and code.strip() and collector:
         # No execution requested — log as pass at validation stage only

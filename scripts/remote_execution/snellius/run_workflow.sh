@@ -6,7 +6,7 @@
 #
 # Options:
 #   --intent "text"   Natural-language description of what the workflow does.
-#                     Used as the intent label in training_log.jsonl.
+#                     Used as the intent label in training_data/index.jsonl.
 #                     Defaults to the filename if omitted.
 #   --collect         Append the result to TRAINING_DATA_DIR/index.jsonl
 #                     (default: <project>/training_data). Also activates automatically
@@ -16,7 +16,8 @@
 #   1. Writes a job file to ~/brane_jobs/pending/<uuid>.json on Snellius filesystem
 #   2. job_watcher.py on local machine polls this dir via SSH, runs brane, uploads result
 #   3. This script polls ~/brane_jobs/done/<uuid>.json until the result appears
-#   4. (Optional) Appends a labelled record to training_log.jsonl
+#   4. (Optional) Writes a run folder with intent/code/stdout/stderr/committed files
+#      and appends a lightweight index record to TRAINING_DATA_DIR/index.jsonl
 #
 # Requirements:
 #   - job_watcher.py running on your local machine:
@@ -140,6 +141,7 @@ if result.get('success'):
         generated_code=code,
         stdout=result.get('stdout', ''),
         committed_data=committed,
+        execution_result=result,
     )
     print(f'📊 Logged pass  → {collector.log_file} ({rec_id[:8]}…)')
 else:
@@ -152,6 +154,7 @@ else:
         stderr=result.get('stderr', ''),
         exit_code=result.get('exit_code'),
         committed_data=committed,
+        execution_result=result,
     )
     print(f'📊 Logged fail  → {collector.log_file} ({rec_id[:8]}…)')
 " "${RESULT_FILE}" "${INTENT}" "${BS_FILE}" "$0"

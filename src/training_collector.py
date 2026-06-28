@@ -22,6 +22,7 @@ Directory layout
       stderr.txt                       ← brane stderr        (absent if empty)
       exit_code.txt                    ← numeric exit code   (absent if not run)
       meta.json                        ← id, timestamp, attempt_number, model
+      execution_result.json            ← full executor payload (if executed)
       committed/                       ← output from commit_result() in the script
         healthcare_reports3/
           summary.html
@@ -66,7 +67,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +139,7 @@ class TrainingCollector:
         stderr: str = "",
         exit_code: Optional[int] = None,
         committed_data: Optional[dict] = None,
+        execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -156,6 +158,7 @@ class TrainingCollector:
         stderr          : captured brane workflow stderr
         exit_code       : brane CLI exit code (None if not executed)
         committed_data  : dict from collect_committed_outputs() — dataset files
+        execution_result: full result payload returned by execute_workflow/run_workflow
         attempt_number  : which retry attempt this was (1-indexed)
         model           : model identifier string (e.g. "Qwen/Qwen3-27B")
         """
@@ -195,6 +198,11 @@ class TrainingCollector:
         }
         self._write(run_dir / "meta.json",
                     json.dumps(meta, indent=2, ensure_ascii=False))
+        if execution_result is not None:
+            self._write(
+                run_dir / "execution_result.json",
+                json.dumps(execution_result, indent=2, ensure_ascii=False),
+            )
 
         # ── Committed output files ───────────────────────────────────────
         if committed_data:
@@ -233,6 +241,7 @@ class TrainingCollector:
         generated_code: str,
         stdout: str = "",
         committed_data: Optional[dict] = None,
+        execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -244,6 +253,7 @@ class TrainingCollector:
             error_type=None,
             stdout=stdout,
             committed_data=committed_data,
+            execution_result=execution_result,
             attempt_number=attempt_number,
             model=model,
         )
@@ -259,6 +269,7 @@ class TrainingCollector:
         stderr: str = "",
         exit_code: Optional[int] = None,
         committed_data: Optional[dict] = None,
+        execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
     ) -> str:
@@ -273,6 +284,7 @@ class TrainingCollector:
             stderr=stderr,
             exit_code=exit_code,
             committed_data=committed_data,
+            execution_result=execution_result,
             attempt_number=attempt_number,
             model=model,
         )
