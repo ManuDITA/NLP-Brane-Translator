@@ -29,7 +29,7 @@ from typing import Optional
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
@@ -594,7 +594,7 @@ def run_pipeline(user_query: str,
     else:
         print("   - (No package/dataset context returned)")
 
-    prompt = ChatPromptTemplate.from_template(GENERATION_TEMPLATE)
+    prompt = PromptTemplate.from_template(GENERATION_TEMPLATE)
     chain = prompt | llm | StrOutputParser()
 
     error_section = ""
@@ -603,6 +603,17 @@ def run_pipeline(user_query: str,
 
     while attempt <= MAX_RETRIES:
         print(f"\n⚙️  Generation attempt {attempt}/{MAX_RETRIES}...")
+
+        prompt_text = prompt.format(
+            question=user_query,
+            subtasks=subtasks_str,
+            lang_context=lang_context,
+            pkg_context=pkg_context,
+            few_shot=few_shot,
+            error_section=error_section,
+            no_think_prefix=no_think_prefix,
+        )
+        print(f"   📏 Prompt length: {len(prompt_text)} chars")
 
         raw = chain.invoke({
             "question": user_query,
@@ -843,24 +854,26 @@ if __name__ == "__main__":
 
     print("✅ Model loaded")
 
-    # Override the model's baked-in generation_config (has max_length=20) to
-    # avoid the "max_length=20 conflicts with max_new_tokens" warning.
-    model.generation_config.max_length = 8192
-    model.generation_config.max_new_tokens = None  # let pipeline_kwargs control this
+    # Raise max_length so a long prompt + 1024 new tokens never exceeds it.
+    model.generation_config.max_length = 32768
+
+    # Set max_new_tokens directly on the pipeline so it is always honoured,
+    # regardless of how LangChain forwards pipeline_kwargs.
+    model.generation_config.max_new_tokens = 1024
 
     text_generation_pipeline = pipeline(
         "text-generation",
         model=model,
         tokenizer=tokenizer,
         return_full_text=False,
+        max_new_tokens=1024,
     )
 
-    # Pass max_new_tokens via pipeline_kwargs so LangChain's HuggingFacePipeline
-    # respects it — without this kwarg, LangChain defaults to 256 tokens.
+    # pipeline_kwargs are forwarded by HuggingFacePipeline on each call and
+    # override the pipeline-level defaults for temperature / sampling.
     llm = HuggingFacePipeline(
         pipeline=text_generation_pipeline,
         pipeline_kwargs={
-            "max_new_tokens": 1024,
             "do_sample": True,
             "temperature": args.temperature,
             "top_p": 0.95,
