@@ -844,6 +844,7 @@ if __name__ == "__main__":
         dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True,
+        attn_implementation="sdpa",
     )
 
     print("✅ Model loaded")
