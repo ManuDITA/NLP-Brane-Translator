@@ -19,8 +19,21 @@ fi
 
 INTENT="$*"
 
+# Always run from the direct
+ory where `sbatch` was submitted, not from Slurm spool.
+PROJECT_DIR="${SLURM_SUBMIT_DIR:-$PWD}"
+cd "${PROJECT_DIR}"
+umask 077
+
+if [[ ! -w "${PROJECT_DIR}" ]]; then
+    echo "❌ Project directory is not writable: ${PROJECT_DIR}"
+    echo "   Submit from a directory you own (e.g. your home/project path)."
+    exit 1
+fi
+
 echo "Job started on $(hostname) at $(date)"
 echo "Intent: ${INTENT}"
+echo "Project dir: ${PROJECT_DIR}"
 
 # ---- modules ----
 module purge
@@ -35,8 +48,8 @@ export PATH=$HOME/tools/mmseqs/bin:$PATH
 source ~/Thesis/NLP-Brane-Translator/.venv/bin/activate
 
 # ---- folders ----
-mkdir -p runs
-mkdir -p logs/slurm_out
+mkdir -p "${PROJECT_DIR}/runs"
+mkdir -p "${PROJECT_DIR}/logs/slurm_out"
 
 # ---- useful HF/cache settings ----
 export HF_HOME=$HOME/.cache/huggingface
@@ -45,9 +58,9 @@ export HF_HUB_CACHE=$HF_HOME/hub
 export TOKENIZERS_PARALLELISM=false
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-LOGFILE="runs/output_single_${TIMESTAMP}.txt"
+LOGFILE="${PROJECT_DIR}/runs/output_single_${TIMESTAMP}.txt"
 
-ln -sfn "$(basename "$LOGFILE")" runs/latest_output.txt
+ln -sfn "$(basename "$LOGFILE")" "${PROJECT_DIR}/runs/latest_output.txt"
 
 echo "Logging to $LOGFILE"
 echo "Latest log symlink: runs/latest_output.txt"
@@ -60,12 +73,11 @@ mkdir -p "${SNELLIUS_JOBS_DIR}/pending" "${SNELLIUS_JOBS_DIR}/done"
 echo "Job queue: ${SNELLIUS_JOBS_DIR}"
 
 # ---- Training data collection ----------------------------------------------
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export TRAINING_DATA_DIR="${PROJECT_DIR}/training_data"
 mkdir -p "${TRAINING_DATA_DIR}"
 echo "Training data: ${TRAINING_DATA_DIR}/index.jsonl"
 
-python -u src/pipeline.py \
+python -u "${PROJECT_DIR}/src/pipeline.py" \
     --model Qwen/Qwen3.6-27B \
     --temperature 0.2 \
     --execute \
