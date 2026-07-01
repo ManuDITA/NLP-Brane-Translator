@@ -6,16 +6,12 @@ Language spec context is no longer retrieved here — syntax_reference.md is
 always injected directly into the prompt by pipeline.py.
 """
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import PromptTemplate
-
 from utils import strip_thinking_tokens
 
 # ---------------------------------------------------------------------------
 # Prompt 1: Decomposition: breaks user intent into sub-tasks in plain English, no code is generated at this stage
 # ---------------------------------------------------------------------------
-DECOMPOSE_TEMPLATE = """You are a BraneScript expert. Break the user's intent
+DECOMPOSE_SYSTEM = """You are a BraneScript expert. Break the user's intent
 into a short numbered list of concrete BraneScript sub-tasks.
 
 Each sub-task maps to ONE primitive operation:
@@ -44,15 +40,14 @@ Rules:
 - No code. No explanations. Max 12 sub-tasks.
 - Focus ONLY on BraneScript constructs needed to pass data to the package function.
   Do NOT generate subtasks for logic that the package function handles internally
-  (e.g. do not say "compute risk score", "validate input", "handle edge cases" —
+  (e.g. do not say "compute risk score", "validate input", "handle edge cases" --
   those are inside the package, not in the BraneScript workflow).
 - If the user mentions a node, site, or location name, always include a sub-task:
   "Route execution to node <name> using on attribute #[on]"
 
-USER INTENT:
-{intent}
-
 SUB-TASKS:"""
+
+DECOMPOSE_USER = "USER INTENT:\n{intent}"
 
 # ---------------------------------------------------------------------------
 # Prompt 2: Query rewriter: translates English sub-tasks into BraneScript-vocabulary search terms.
@@ -64,19 +59,13 @@ class IntentDecomposer:
     Breaks the user's intent into a list of concrete BraneScript sub-tasks.
 
     Usage:
-        decomposer = IntentDecomposer(llm)
+        decomposer = IntentDecomposer(text_gen_pipeline=pipe, tokenizer=tok)
         subtasks = decomposer.decompose("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: BaseLanguageModel):
-        self.llm = llm
-
-        self.decompose_chain = (
-            PromptTemplate.from_template(DECOMPOSE_TEMPLATE)
-            | llm
-            | StrOutputParser()
-        )
-
+    def __init__(self, text_gen_pipeline, tokenizer):
+        self.text_gen_pipeline = text_gen_pipeline
+        self.tokenizer = tokenizer
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -110,7 +99,24 @@ class IntentDecomposer:
 
     def decompose(self, intent: str) -> list[str]:
         """Break the intent into a list of plain-English sub-tasks."""
-        raw = self.decompose_chain.invoke({"intent": intent})
+        messages = [
+            {"role": "system", "content": DECOMPOSE_SYSTEM},
+            {"role": "user",   "content": DECOMPOSE_USER.format(intent=intent)},
+        ]
+        try:
+            prompt_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            prompt_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        raw = self.text_gen_pipeline(prompt_text)[0]["generated_text"]
         subtasks = self._parse_subtasks(raw)
         print(f"\n📋 Task breakdown ({len(subtasks)} sub-tasks):")
         for i, s in enumerate(subtasks, 1):

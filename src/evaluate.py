@@ -381,10 +381,11 @@ def generate_mode(
 
     print(f"\n🔧 Loading pipeline components (model: {model_id})...")
     components = build_pipeline_components(model_id, temperature)
-    llm             = components["llm"]
-    decomposer      = components["decomposer"]
-    pkg_retriever   = components["pkg_retriever"]
-    syntax_reference = components["syntax_reference"]
+    text_gen_pipeline = components["text_gen_pipeline"]
+    tokenizer         = components["tokenizer"]
+    decomposer        = components["decomposer"]
+    pkg_retriever     = components["pkg_retriever"]
+    syntax_reference  = components["syntax_reference"]
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
@@ -409,7 +410,8 @@ def generate_mode(
             user_query=intent,
             decomposer=decomposer,
             pkg_retriever=pkg_retriever,
-            llm=llm,
+            text_gen_pipeline=text_gen_pipeline,
+            tokenizer=tokenizer,
             syntax_reference=syntax_reference,
             few_shot_override=BRANESCRIPT_FEW_SHOT,
             execute=False,   # we handle execution separately below

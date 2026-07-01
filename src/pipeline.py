@@ -29,8 +29,6 @@ from typing import Optional
 from pathlib import Path
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
@@ -42,7 +40,6 @@ load_hf_token()
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-from langchain_huggingface import HuggingFacePipeline
 
 # ---------------------------------------------------------------------------
 # BraneScript canonical few-shot examples injected into every prompt.
@@ -210,7 +207,13 @@ EXECUTOR_TIMEOUT = int(os.environ.get("BRANE_EXECUTOR_TIMEOUT", "300"))
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-GENERATION_TEMPLATE = """You are an expert in the Brane Framework and BraneScript.
+# ---------------------------------------------------------------------------
+# Prompt templates
+# ---------------------------------------------------------------------------
+
+# System message: constant rules + few-shot examples + syntax reference
+# (syntax_reference injected at runtime via .format())
+GENERATION_SYSTEM_TEMPLATE = """You are an expert in the Brane Framework and BraneScript.
 {few_shot}
 ## ABSOLUTE RULES — READ CAREFULLY
 1. Output ONLY valid BraneScript code.
@@ -232,19 +235,20 @@ GENERATION_TEMPLATE = """You are an expert in the Brane Framework and BraneScrip
 17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. If the user wants to save or persist output data, use `commit_result("new-name", result_variable);` after calling the function.
 18. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
 
-USER REQUEST:
+LANGUAGE SPEC CONTEXT (full BraneScript syntax reference):
+{lang_context}"""
+
+# User message: the actual request + dynamic context for this call
+GENERATION_USER_TEMPLATE = """USER REQUEST:
 {question}
 
 SUBTASKS:
 {subtasks}
 
-LANGUAGE SPEC CONTEXT (always injected — full BraneScript syntax reference):
-{lang_context}
-
 PACKAGE / DATASET CONTEXT:
 {pkg_context}
 
-{error_section}BRANESCRIPT CODE (output raw BraneScript only, no fences, no prose):"""
+{error_section}Output raw BraneScript code only, no fences, no prose:"""
 
 # Error sections injected on retry
 SYNTAX_ERROR_SECTION = """⚠️  PREVIOUS ATTEMPT HAD A SYNTAX ERROR:
@@ -342,6 +346,42 @@ Fix the BraneScript to correct the error. Output ONLY corrected BraneScript — 
 # Output cleanup helpers — imported from utils.py
 # strip_thinking_tokens, strip_code_fences, detect_python_code, looks_like_branescript
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# LLM call helper — chat template with thinking disabled
+# ---------------------------------------------------------------------------
+def _call_llm(
+    text_gen_pipeline,
+    tokenizer,
+    system_msg: str,
+    user_msg: str,
+) -> str:
+    """
+    Format a system+user chat message using the tokenizer's chat template,
+    with thinking disabled (enable_thinking=False for Qwen3).  Falls back
+    gracefully if the tokenizer does not support that parameter.
+    """
+    messages = [
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": user_msg},
+    ]
+    try:
+        prompt_text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+    except TypeError:
+        # Older transformers build — no enable_thinking support
+        prompt_text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+    result = text_gen_pipeline(prompt_text)
+    return result[0]["generated_text"]
 
 
 # ---------------------------------------------------------------------------
@@ -569,9 +609,10 @@ def check_semantic(code: str, pkg_context: str) -> tuple[bool, str]:
 # Main pipeline
 # ---------------------------------------------------------------------------
 def run_pipeline(user_query: str,
-                 decomposer: IntentDecomposer,
+                 decomposer,
                  pkg_retriever: PkgRetriever,
-                 llm,
+                 text_gen_pipeline,
+                 tokenizer,
                  syntax_reference: str,
                  few_shot_override: str = None,
                  execute: bool = False,
@@ -579,6 +620,12 @@ def run_pipeline(user_query: str,
                  model_name: str = "") -> str:
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
+
+    # Pre-build the system message — constant for all attempts of this query
+    system_msg = GENERATION_SYSTEM_TEMPLATE.format(
+        few_shot=few_shot,
+        lang_context=syntax_reference,
+    )
 
     # ── Step 1: Task breakdown ─────────────────────────────────────────────
     subtasks = decomposer.decompose(user_query)
@@ -592,9 +639,6 @@ def run_pipeline(user_query: str,
     else:
         print("   - (No package/dataset context returned)")
 
-    prompt = PromptTemplate.from_template(GENERATION_TEMPLATE)
-    chain = prompt | llm | StrOutputParser()
-
     error_section = ""
     code = ""
     attempt = 1
@@ -602,26 +646,17 @@ def run_pipeline(user_query: str,
     while attempt <= MAX_RETRIES:
         print(f"\n⚙️  Generation attempt {attempt}/{MAX_RETRIES}...")
 
-        prompt_text = prompt.format(
+        user_msg = GENERATION_USER_TEMPLATE.format(
             question=user_query,
             subtasks=subtasks_str,
-            lang_context=syntax_reference,
             pkg_context=pkg_context,
-            few_shot=few_shot,
             error_section=error_section,
         )
-        print(f"   📏 Prompt length: {len(prompt_text)} chars")
+        print(f"   📏 Prompt length: {len(system_msg) + len(user_msg)} chars")
 
-        raw = chain.invoke({
-            "question": user_query,
-            "subtasks": subtasks_str,
-            "lang_context": syntax_reference,
-            "pkg_context": pkg_context,
-            "few_shot": few_shot,
-            "error_section": error_section,
-        })
+        raw = _call_llm(text_gen_pipeline, tokenizer, system_msg, user_msg)
 
-        # Always strip thinking tokens and code fences — harmless on clean output
+        # strip_thinking_tokens is still called as a safety net (harmless when thinking is off)
         print(f"   🔎 Raw LLM output ({len(raw)} chars): {repr(raw[:200])}")
         code = strip_thinking_tokens(raw)
         code = strip_code_fences(code)
@@ -788,10 +823,11 @@ def build_pipeline_components(model_id: str, temperature: float) -> dict:
     Returns
     -------
     {
-        "llm":              HuggingFacePipeline,
-        "decomposer":       IntentDecomposer,
-        "pkg_retriever":    PkgRetriever,
-        "syntax_reference": str,
+        "text_gen_pipeline": raw HuggingFace text-generation pipeline,
+        "tokenizer":         AutoTokenizer (needed for apply_chat_template),
+        "decomposer":        IntentDecomposer,
+        "pkg_retriever":     PkgRetriever,
+        "syntax_reference":  str,
     }
     """
     print(f"📖 Loading syntax reference from {SYNTAX_REFERENCE_PATH}...")
@@ -816,20 +852,15 @@ def build_pipeline_components(model_id: str, temperature: float) -> dict:
     )
     print("✅ Model loaded")
 
-    text_generation_pipeline = pipeline(
+    text_gen_pipeline = pipeline(
         "text-generation",
         model=model_obj,
         tokenizer=tokenizer,
         return_full_text=False,
-        max_new_tokens=4096,
-    )
-    llm = HuggingFacePipeline(
-        pipeline=text_generation_pipeline,
-        pipeline_kwargs={
-            "do_sample": True,
-            "temperature": temperature,
-            "top_p": 0.95,
-        },
+        max_new_tokens=1024,       # safe now that thinking is disabled
+        do_sample=True,
+        temperature=temperature,
+        top_p=0.95,
     )
 
     if not PKG_DB_PATH.exists():
@@ -840,14 +871,15 @@ def build_pipeline_components(model_id: str, temperature: float) -> dict:
     print(f"✅ Found package DB at {PKG_DB_PATH}. Loading...")
     pkg_db = Chroma(persist_directory=str(PKG_DB_PATH), embedding_function=embeddings)
 
-    decomposer = IntentDecomposer(llm=llm)
+    decomposer = IntentDecomposer(text_gen_pipeline=text_gen_pipeline, tokenizer=tokenizer)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
     return {
-        "llm": llm,
-        "decomposer": decomposer,
-        "pkg_retriever": pkg_retriever,
-        "syntax_reference": syntax_reference,
+        "text_gen_pipeline": text_gen_pipeline,
+        "tokenizer":         tokenizer,
+        "decomposer":        decomposer,
+        "pkg_retriever":     pkg_retriever,
+        "syntax_reference":  syntax_reference,
     }
 
 
@@ -899,9 +931,10 @@ if __name__ == "__main__":
           f"execute: {args.execute}  collect: {args.collect}")
 
     components = build_pipeline_components(args.model, args.temperature)
-    llm            = components["llm"]
-    decomposer     = components["decomposer"]
-    pkg_retriever  = components["pkg_retriever"]
+    text_gen_pipeline = components["text_gen_pipeline"]
+    tokenizer        = components["tokenizer"]
+    decomposer       = components["decomposer"]
+    pkg_retriever    = components["pkg_retriever"]
     syntax_reference = components["syntax_reference"]
 
     collector = None
@@ -940,7 +973,8 @@ if __name__ == "__main__":
             user_query=user_query,
             decomposer=decomposer,
             pkg_retriever=pkg_retriever,
-            llm=llm,
+            text_gen_pipeline=text_gen_pipeline,
+            tokenizer=tokenizer,
             syntax_reference=syntax_reference,
             few_shot_override=BRANESCRIPT_FEW_SHOT,
             execute=args.execute,
