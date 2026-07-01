@@ -150,6 +150,7 @@ class TrainingCollector:
         execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
+        timing: Optional[Dict[str, float]] = None,
     ) -> str:
         """
         Write one run directory and append a line to index.jsonl.
@@ -230,6 +231,8 @@ class TrainingCollector:
             "committed_data": committed_data or {},
             # Raw executor payload (present only when Brane was invoked)
             "execution":      execution_result,
+            # Wall-clock timings in seconds (None when not measured)
+            "timing":         timing,
         }
         self._write(
             run_dir / "execution_result.json",
@@ -276,6 +279,7 @@ class TrainingCollector:
         execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
+        timing: Optional[Dict[str, float]] = None,
     ) -> str:
         """Log a fully successful run."""
         return self.log_attempt(
@@ -288,6 +292,7 @@ class TrainingCollector:
             execution_result=execution_result,
             attempt_number=attempt_number,
             model=model,
+            timing=timing,
         )
 
     def log_fail(
@@ -304,6 +309,7 @@ class TrainingCollector:
         execution_result: Optional[Dict[str, Any]] = None,
         attempt_number: int = 1,
         model: str = "",
+        timing: Optional[Dict[str, float]] = None,
     ) -> str:
         """Log a failed attempt."""
         return self.log_attempt(
@@ -319,6 +325,7 @@ class TrainingCollector:
             execution_result=execution_result,
             attempt_number=attempt_number,
             model=model,
+            timing=timing,
         )
 
     # ------------------------------------------------------------------

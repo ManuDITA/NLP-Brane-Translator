@@ -24,6 +24,7 @@ Remote execution
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 from pathlib import Path
@@ -621,6 +622,8 @@ def run_pipeline(user_query: str,
 
     few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
 
+    t_start = time.time()
+
     # Pre-build the system message — constant for all attempts of this query
     system_msg = GENERATION_SYSTEM_TEMPLATE.format(
         few_shot=few_shot,
@@ -628,11 +631,16 @@ def run_pipeline(user_query: str,
     )
 
     # ── Step 1: Task breakdown ─────────────────────────────────────────────
+    t0 = time.time()
     subtasks = decomposer.decompose(user_query)
     subtasks_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(subtasks))
+    t_decompose = time.time() - t0
 
     # ── Step 2: Package / dataset retrieval ───────────────────────────────
+    t0 = time.time()
+    t0 = time.time()
     pkg_context = pkg_retriever.run(subtasks, user_query)
+    t_retrieval = time.time() - t0
     print("\n📦 Retrieved package/dataset context:")
     if pkg_context.strip():
         print(pkg_context[:1000] + ("..." if len(pkg_context) > 1000 else ""))
@@ -642,6 +650,19 @@ def run_pipeline(user_query: str,
     error_section = ""
     code = ""
     attempt = 1
+    t_generation_total = 0.0
+    t_execution_total = 0.0
+
+    def _timing_snapshot() -> dict:
+        """Return timing accumulated so far (partial during retries)."""
+        return {
+            "decompose_s":  round(t_decompose, 2),
+            "retrieval_s":  round(t_retrieval, 2),
+            "generation_s": round(t_generation_total, 2),
+            "execution_s":  round(t_execution_total, 2),
+            "total_s":      round(time.time() - t_start, 2),
+            "attempts":     attempt,
+        }
 
     while attempt <= MAX_RETRIES:
         print(f"\n⚙️  Generation attempt {attempt}/{MAX_RETRIES}...")
@@ -654,7 +675,9 @@ def run_pipeline(user_query: str,
         )
         print(f"   📏 Prompt length: {len(system_msg) + len(user_msg)} chars")
 
+        t0 = time.time()
         raw = _call_llm(text_gen_pipeline, tokenizer, system_msg, user_msg)
+        t_generation_total += time.time() - t0
 
         # strip_thinking_tokens is still called as a safety net (harmless when thinking is off)
         print(f"   🔎 Raw LLM output ({len(raw)} chars): {repr(raw[:200])}")
@@ -680,7 +703,8 @@ def run_pipeline(user_query: str,
                     collector.log_fail(intent=user_query, generated_code=code,
                                        error_type="python_code",
                                        error_message="Model generated Python instead of BraneScript",
-                                       attempt_number=attempt, model=model_name)
+                                       attempt_number=attempt, model=model_name,
+                                       timing=_timing_snapshot())
                 if attempt < MAX_RETRIES:
                     error_section = PYTHON_CODE_ERROR_SECTION
                     attempt += 1
@@ -692,7 +716,8 @@ def run_pipeline(user_query: str,
                     collector.log_fail(intent=user_query, generated_code=code,
                                        error_type="non_code",
                                        error_message="Output does not look like BraneScript",
-                                       attempt_number=attempt, model=model_name)
+                                       attempt_number=attempt, model=model_name,
+                                       timing=_timing_snapshot())
                 if attempt < MAX_RETRIES:
                     error_section = NON_CODE_ERROR_SECTION
                     attempt += 1
@@ -708,7 +733,8 @@ def run_pipeline(user_query: str,
                 collector.log_fail(intent=user_query, generated_code=code,
                                    error_type="json_string",
                                    error_message="Escaped JSON string used instead of class instantiation",
-                                   attempt_number=attempt, model=model_name)
+                                   attempt_number=attempt, model=model_name,
+                                   timing=_timing_snapshot())
             if attempt < MAX_RETRIES:
                 error_section = JSON_STRING_ERROR_SECTION
                 attempt += 1
@@ -723,7 +749,8 @@ def run_pipeline(user_query: str,
             if collector:
                 collector.log_fail(intent=user_query, generated_code=code,
                                    error_type="syntax", error_message=syntax_error,
-                                   attempt_number=attempt, model=model_name)
+                                   attempt_number=attempt, model=model_name,
+                                   timing=_timing_snapshot())
             if attempt < MAX_RETRIES:
                 error_section = SYNTAX_ERROR_SECTION.format(error=syntax_error)
                 attempt += 1
@@ -738,7 +765,8 @@ def run_pipeline(user_query: str,
             if collector:
                 collector.log_fail(intent=user_query, generated_code=code,
                                    error_type="semantic", error_message=semantic_error,
-                                   attempt_number=attempt, model=model_name)
+                                   attempt_number=attempt, model=model_name,
+                                   timing=_timing_snapshot())
             if attempt < MAX_RETRIES:
                 error_section = NON_CODE_ERROR_SECTION + "\n" + semantic_error + "\n"
                 attempt += 1
@@ -754,7 +782,9 @@ def run_pipeline(user_query: str,
             break
 
         # ── Execute and retry on failure ──────────────────────────────────
+        t0 = time.time()
         exec_result = execute_workflow(code, user_query)
+        t_execution_total += time.time() - t0
         if exec_result["success"]:
             print(f"\n✅ Workflow executed successfully.")
             if collector:
@@ -762,7 +792,8 @@ def run_pipeline(user_query: str,
                                    stdout=exec_result["stdout"],
                                    committed_data=exec_result.get("committed_data"),
                                    execution_result=exec_result,
-                                   attempt_number=attempt, model=model_name)
+                                   attempt_number=attempt, model=model_name,
+                                   timing=_timing_snapshot())
             break
 
         # Execution failed — log attempt and prepare retry
@@ -784,7 +815,8 @@ def run_pipeline(user_query: str,
                                exit_code=exit_code,
                                committed_data=exec_result.get("committed_data"),
                                execution_result=exec_result,
-                               attempt_number=attempt, model=model_name)
+                               attempt_number=attempt, model=model_name,
+                               timing=_timing_snapshot())
 
         if attempt < MAX_RETRIES:
             if error_type == "compilation":
@@ -805,10 +837,30 @@ def run_pipeline(user_query: str,
     if code.strip():
         save_branescript_to_folder(code, user_query)
 
+    t_total = time.time() - t_start
+    timing = {
+        "decompose_s":   round(t_decompose, 2),
+        "retrieval_s":   round(t_retrieval, 2),
+        "generation_s":  round(t_generation_total, 2),
+        "execution_s":   round(t_execution_total, 2),
+        "total_s":       round(t_total, 2),
+        "attempts":      attempt,
+    }
+
     # No-execute path: log a validation-only pass
     if not execute and code.strip() and collector:
         collector.log_pass(intent=user_query, generated_code=code,
-                           attempt_number=attempt, model=model_name)
+                           attempt_number=attempt, model=model_name,
+                           timing=timing)
+
+    print(f"\n⏱️  Timing summary:")
+    print(f"   decompose   : {t_decompose:6.1f}s")
+    print(f"   retrieval   : {t_retrieval:6.1f}s")
+    print(f"   generation  : {t_generation_total:6.1f}s  ({attempt} attempt(s))")
+    if execute:
+        print(f"   execution   : {t_execution_total:6.1f}s")
+    print(f"   ─────────────────────")
+    print(f"   total       : {t_total:6.1f}s")
 
     return code
 
@@ -969,6 +1021,7 @@ if __name__ == "__main__":
 
         print("⏳ Running pipeline...\n" + "─" * 50)
 
+        t_intent_start = time.time()
         result = run_pipeline(
             user_query=user_query,
             decomposer=decomposer,
@@ -981,11 +1034,14 @@ if __name__ == "__main__":
             collector=collector,
             model_name=args.model,
         )
+        t_intent = time.time() - t_intent_start
 
         print("\n" + "=" * 50)
         print("FINAL BRANESCRIPT OUTPUT:")
         print("=" * 50)
         print(result)
+        if len(queries) > 1:
+            print(f"\n⏱️  Intent {i}/{len(queries)} wall time: {t_intent:.1f}s")
 
     if collector:
         stats = collector.stats()
