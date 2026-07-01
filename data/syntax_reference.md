@@ -22,6 +22,13 @@ x := x + 1;
 name := "Bob";
 ```
 
+Delayed initialisation with `null`:
+
+```bscript
+let result := null;
+result := some_function();
+```
+
 ---
 
 ## Imports
@@ -223,24 +230,37 @@ for (let i := 0; i < 3; i := i + 1) {
 
 ## Parallel Execution
 
-Run multiple branches at once and merge results:
+Fire-and-forget (no return value):
 
 ```bscript
-parallel [all] [{
-    return branch_one();
+parallel [{
+    println("branch one");
 }, {
-    return branch_two();
+    println("branch two");
 }];
 ```
 
-With merge strategies `all` (wait for all) or `first` (take first result):
+Collect results with a merge strategy:
 
 ```bscript
+// [all] — returns an array of all branch return values
 let results := parallel [all] [{
     return analyze(data1);
 }, {
     return analyze(data2);
 }];
+println(results[0]);
+println(results[1]);
+
+// [sum] — returns the numeric sum of all branch return values
+let total := parallel [sum] [{
+    return 1;
+}, {
+    return 2;
+}, {
+    return 3;
+}];
+println(total);
 ```
 
 ---
@@ -284,6 +304,13 @@ An `IntermediateResult` can be passed as input to another package function, just
 
 ```bscript
 commit_result("new-dataset-name", result_variable);
+```
+
+`commit_result` also returns the committed result as a reusable reference, so it can be chained:
+
+```bscript
+let saved := commit_result("checkpoint", intermediate);
+let further := process(saved);   // saved acts like a Data reference
 ```
 
 Full example — load a dataset, process it, save the output:
@@ -334,7 +361,7 @@ Apply to a whole block:
 
 ## Return
 
-Return a value from a function or workflow:
+Return a value from a function:
 
 ```bscript
 func double(n) {
@@ -343,6 +370,13 @@ func double(n) {
 ```
 
 Use `return;` (no value) for early exit from a function.
+
+Workflows can also `return` a value at the top level to pass a result out of the workflow block:
+
+```bscript
+let result := compute(data);
+return commit_result("output", result);
+```
 
 ---
 

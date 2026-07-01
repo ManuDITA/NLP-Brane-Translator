@@ -103,7 +103,7 @@ BraneScript rules:
 - Variables: `let <name> := <value>;`
 - Import: `import <package>;`
 - Package calls: `function_name(args)` after importing the package
-- Functions: `func name(param: type) -> type {{ ... }}`
+- Functions: `func name(param, ...) {{ ... }}` (no type annotations on parameters)
 - Builtin output: `println(value);`
 - Boolean literals: `true`, `false` (lowercase)
 - For structured data (e.g. patient records), define a `class` and use `new ClassName {{ field := value }}`.

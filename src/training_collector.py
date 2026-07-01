@@ -10,24 +10,32 @@ Directory layout
 ----------------
 ~/Thesis/NLP-Brane-Translator/
   training_data/
-    index.jsonl                          ← lightweight index (one line per run)
+    index.jsonl                          <- lightweight index (one line per run)
   runs/
     2026-06-24_221905_a3b7c2d1/
-      intent.txt                       ← original natural-language request
-      generated.bs                     ← BraneScript produced by the model
-      verdict.txt                      ← "pass" or "fail"
-      error_type.txt                   ← e.g. "compilation"  (absent on pass)
-      error_message.txt                ← human-readable detail (absent if empty)
-      stdout.txt                       ← brane stdout        (absent if empty)
-      stderr.txt                       ← brane stderr        (absent if empty)
-      exit_code.txt                    ← numeric exit code   (absent if not run)
-      meta.json                        ← id, timestamp, attempt_number, model
-      execution_result.json            ← full executor payload (if executed)
-      committed/                       ← output from commit_result() in the script
+      execution_result.json            <- COMPLETE record - every field in one file
+      intent.txt                       <- original natural-language request
+      generated.bs                     <- BraneScript produced by the model
+      verdict.txt                      <- "pass" or "fail"
+      error_type.txt                   <- e.g. "compilation"  (absent on pass)
+      error_message.txt                <- human-readable detail (absent if empty)
+      stdout.txt                       <- brane stdout        (absent if empty)
+      stderr.txt                       <- brane stderr        (absent if empty)
+      exit_code.txt                    <- numeric exit code   (absent if not run)
+      meta.json                        <- id, timestamp, attempt_number, model
+      committed/                       <- output from commit_result() in the script
         healthcare_reports3/
           summary.html
           reports/
             PAT001_report.json
+
+execution_result.json is always written and contains every field:
+  id, timestamp, model, attempt_number,
+  intent, generated_code,
+  verdict, error_type, error_message,
+  stdout, stderr, exit_code,
+  committed_data,
+  execution  - raw executor payload when Brane was invoked, else null
 
 index.jsonl has one JSON line per run with lightweight fields (id, timestamp,
 verdict, error_type, intent excerpt, run_dir) so you can grep / query without
@@ -157,7 +165,7 @@ class TrainingCollector:
         stdout          : captured brane workflow stdout
         stderr          : captured brane workflow stderr
         exit_code       : brane CLI exit code (None if not executed)
-        committed_data  : dict from collect_committed_outputs() — dataset files
+        committed_data  : dict from collect_committed_outputs() - dataset files
         execution_result: full result payload returned by execute_workflow/run_workflow
         attempt_number  : which retry attempt this was (1-indexed)
         model           : model identifier string (e.g. "Qwen/Qwen3-27B")
@@ -198,11 +206,35 @@ class TrainingCollector:
         }
         self._write(run_dir / "meta.json",
                     json.dumps(meta, indent=2, ensure_ascii=False))
-        if execution_result is not None:
-            self._write(
-                run_dir / "execution_result.json",
-                json.dumps(execution_result, indent=2, ensure_ascii=False),
-            )
+
+        # ── Comprehensive record - single source of truth ────────────────
+        # Contains every field so callers never need to parse multiple files.
+        record = {
+            # Identity
+            "id":             run_id,
+            "timestamp":      ts.isoformat(),
+            "model":          model,
+            "attempt_number": attempt_number,
+            # Input / output
+            "intent":         intent,
+            "generated_code": generated_code,
+            # Verdict
+            "verdict":        verdict,
+            "error_type":     error_type,
+            "error_message":  error_message,
+            # Execution output
+            "stdout":         stdout,
+            "stderr":         stderr,
+            "exit_code":      exit_code,
+            # Committed datasets (keys -> dataset info dicts)
+            "committed_data": committed_data or {},
+            # Raw executor payload (present only when Brane was invoked)
+            "execution":      execution_result,
+        }
+        self._write(
+            run_dir / "execution_result.json",
+            json.dumps(record, indent=2, ensure_ascii=False),
+        )
 
         # ── Committed output files ───────────────────────────────────────
         if committed_data:

@@ -11,6 +11,7 @@ DYNAMOS/
 generated_branescripts/
 runs/*
 training_data/
+evaluation_results/
 .env
 *__pycache__/*
 *.log
