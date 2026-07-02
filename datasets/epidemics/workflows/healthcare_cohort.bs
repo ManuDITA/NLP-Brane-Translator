@@ -1,0 +1,8 @@
+import healthcare;
+import epidemics;
+
+let patients := new Data{ name := "heal_pa_2" };
+
+let analysis := analyze_patients_file(patients);
+let cohort   := analyze_health_cohort(analysis);
+println(cohort);

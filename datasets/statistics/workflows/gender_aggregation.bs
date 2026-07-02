@@ -1,0 +1,5 @@
+import statistics;
+
+let patients := new Data{ name := "heal_pa_2" };
+let avg_by_gender := aggregate_by_group(patients, "gender", "blood_pressure", "mean");
+println(avg_by_gender);

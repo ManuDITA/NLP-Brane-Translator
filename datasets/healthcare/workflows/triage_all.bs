@@ -1,0 +1,5 @@
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_2" };
+let triage := batch_triage_from_file(patients);
+commit_result("triage_results", triage);

@@ -1,0 +1,5 @@
+import statistics;
+
+let patients := new Data{ name := "heal_pa_2" };
+let corr := compute_correlation(patients, "age", "blood_pressure");
+println(corr);

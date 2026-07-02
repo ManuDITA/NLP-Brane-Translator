@@ -1,0 +1,135 @@
+# container.yml for the Statistics package
+name: statistics
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+
+files:
+  - statistics.py
+
+entrypoint:
+  kind: task
+  exec: statistics.py
+
+actions:
+  'compute_summary_stats':
+    description: "Compute descriptive statistics (mean, median, std_dev, min, max, q25, q75) for a numeric column in a CSV dataset."
+    command:
+      args: [compute_summary_stats]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'count_by_category':
+    description: "Count rows per unique value in a categorical column of a CSV dataset. Returns sorted frequency table as JSON string."
+    command:
+      args: [count_by_category]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'compute_correlation':
+    description: "Compute Pearson correlation coefficient between two numeric columns in a CSV dataset. Returns JSON with r value and interpretation."
+    command:
+      args: [compute_correlation]
+    input:
+      - name: data_file
+        type: Data
+      - name: col_a
+        type: string
+      - name: col_b
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'detect_outliers':
+    description: "Detect outliers in a numeric column using IQR or z-score method. Returns JSON string with outlier rows and thresholds."
+    command:
+      args: [detect_outliers]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+      - name: method
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'filter_by_threshold':
+    description: "Filter CSV rows where a numeric column satisfies a threshold condition (gt/gte/lt/lte/eq/neq). Writes filtered.csv to /result/."
+    command:
+      args: [filter_by_threshold]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+      - name: operator
+        type: string
+      - name: threshold
+        type: real
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'sort_and_rank':
+    description: "Sort a CSV dataset by a numeric column (ascending or descending) and add a rank column. Writes sorted.csv to /result/."
+    command:
+      args: [sort_and_rank]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+      - name: descending
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'aggregate_by_group':
+    description: "Group a CSV dataset by a categorical column and aggregate a numeric column (mean/sum/count/min/max). Returns JSON string."
+    command:
+      args: [aggregate_by_group]
+    input:
+      - name: data_file
+        type: Data
+      - name: group_col
+        type: string
+      - name: value_col
+        type: string
+      - name: func
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'normalize_column':
+    description: "Normalize a numeric column in a CSV dataset using min-max or z-score normalization. Writes normalized.csv (with added <column>_normalized column) to /result/."
+    command:
+      args: [normalize_column]
+    input:
+      - name: data_file
+        type: Data
+      - name: column
+        type: string
+      - name: method
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult

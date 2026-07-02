@@ -233,6 +233,44 @@ Filters the CSV dataset to retain only patients with CVD `risk_level == "high"`.
 
 ---
 
+#### `batch_diabetes_from_file(patients_file)`
+
+Runs diabetes risk scoring for every patient in the CSV dataset.
+
+**Output files in `/result/`:**
+- `diabetes_report.json` — batch diabetes risk results
+
+---
+
+#### `batch_triage_from_file(patients_file)`
+
+Runs triage for every patient and sorts the output by urgency.
+
+**Output files in `/result/`:**
+- `triage_report.json` — per-patient triage levels plus summary counts
+
+---
+
+#### `compute_cohort_statistics(patients_file)`
+
+Computes descriptive statistics across the full cohort for all numeric fields.
+
+**Output files in `/result/`:**
+- `cohort_stats.json` — cohort-level count/mean/std/min/max/median values
+
+---
+
+#### `filter_by_condition(patients_file, condition)`
+
+Filters the CSV dataset by `medical_history` values such as `diabetes`,
+`hypertension`, or `smoking`.
+
+**Output files in `/result/`:**
+- `condition_patients.csv` — filtered patient rows
+- `filter_summary.json` — match count, patient IDs, and timestamp
+
+---
+
 ### IntermediateResult chaining
 
 #### `generate_reports_from_results(analysis)`
@@ -252,6 +290,33 @@ let analysis  := analyze_patients_file(patients);
 let reports   := generate_reports_from_results(analysis);
 commit_result("hospital_reports", reports);
 ```
+
+---
+
+#### `compute_risk_distribution(analysis)`
+
+Reads either `analysis_report.json` or `diabetes_report.json` from an
+`IntermediateResult` and returns a JSON string with counts and percentages per
+`risk_level`.
+
+---
+
+### Additional single-patient utilities
+
+#### `compute_mortality_risk(dataset)`
+
+Combines CVD risk, diabetes risk, and triage severity into a composite
+30-day mortality risk score and level.
+
+#### `check_vital_signs(dataset)`
+
+Returns a JSON string with per-vital interpretations for blood pressure,
+heart rate, temperature, and SpO2.
+
+#### `predict_readmission_risk(dataset)`
+
+Returns a JSON string estimating 30-day readmission risk from age,
+comorbidities, HbA1c, SpO2, and cardiovascular risk.
 
 ---
 
@@ -285,10 +350,11 @@ commit_result("hospital_reports", reports);
 ## CSV dataset format
 
 ```
-patient_id,age,gender,blood_pressure,heart_rate,total_cholesterol,glucose,medical_history
-PAT001,65,M,155,88,230,112,hypertension|smoking
-PAT002,42,F,118,72,185,95,
+patient_id,age,gender,blood_pressure,heart_rate,total_cholesterol,glucose,hba1c,temperature,spo2,weight_kg,height_cm,medical_history
+PAT001,67,M,165,88,245,112,6.1,37.2,96,92,175,hypertension|smoking
+PAT002,45,F,135,72,210,95,5.5,36.8,98,68,165,
 ```
 
-`medical_history` is pipe-separated (`|`). Optional columns: `glucose`, `temperature`, `spo2`, `weight_kg`, `height_cm`, `hba1c`.
-
+`medical_history` is pipe-separated (`|`). Numeric cohort/statistical functions
+use `age`, `blood_pressure`, `heart_rate`, `total_cholesterol`, `glucose`,
+`hba1c`, `temperature`, `spo2`, `weight_kg`, and `height_cm`.

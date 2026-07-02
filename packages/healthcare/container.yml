@@ -179,3 +179,93 @@ actions:
     output:
       - name: output
         type: IntermediateResult
+
+  'batch_diabetes_from_file':
+    description: "Run diabetes risk assessment on all patients in a CSV dataset. Writes diabetes_report.json to /result/."
+    command:
+      args: [batch_diabetes_from_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'batch_triage_from_file':
+    description: "Triage all patients in a CSV dataset sorted by urgency level. Writes triage_report.json to /result/."
+    command:
+      args: [batch_triage_from_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'compute_cohort_statistics':
+    description: "Compute descriptive statistics (mean/std/min/max/median) for all numeric fields in a patient CSV. Writes cohort_stats.json to /result/."
+    command:
+      args: [compute_cohort_statistics]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'filter_by_condition':
+    description: "Filter a patients CSV to those with a given condition in medical_history (e.g. diabetes, hypertension, smoking). Writes condition_patients.csv and filter_summary.json to /result/."
+    command:
+      args: [filter_by_condition]
+    input:
+      - name: patients_file
+        type: Data
+      - name: condition
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'compute_risk_distribution':
+    description: "Read a CVD or diabetes analysis IntermediateResult and return a JSON string with patient counts and percentages per risk level."
+    command:
+      args: [compute_risk_distribution]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: string
+
+  'compute_mortality_risk':
+    description: "Compute composite 30-day mortality risk for a single patient JSON record, combining CVD, diabetes, and triage scores. Returns a JSON string."
+    command:
+      args: [compute_mortality_risk]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'check_vital_signs':
+    description: "Flag all abnormal vital signs for a single patient JSON record with clinical interpretation. Returns a JSON string with per-sign findings."
+    command:
+      args: [check_vital_signs]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
+
+  'predict_readmission_risk':
+    description: "Predict 30-day hospital readmission risk for a single patient JSON record based on age, comorbidities, and clinical indicators. Returns a JSON string."
+    command:
+      args: [predict_readmission_risk]
+    input:
+      - name: dataset
+        type: string
+    output:
+      - name: output
+        type: string
