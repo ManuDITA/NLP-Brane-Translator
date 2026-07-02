@@ -16,4 +16,5 @@ evaluation_results/
 *__pycache__/*
 *.log
 *.out
-logs/*
+logs/*logs/
+dashboard_data/

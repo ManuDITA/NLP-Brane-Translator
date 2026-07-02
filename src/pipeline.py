@@ -476,7 +476,8 @@ def ask_for_clarification(question: str) -> str:
     return answer.strip()
 
 
-def execute_workflow(code: str, user_query: str = "") -> dict:
+def execute_workflow(code: str, user_query: str = "",
+                     model_name: str = "", attempt_number: int = 1) -> dict:
     """
     Submit the BraneScript to the file-based job queue on Snellius and
     block until job_watcher.py on the local machine returns a result.
@@ -508,6 +509,8 @@ def execute_workflow(code: str, user_query: str = "") -> dict:
         "workflow": code,
         "query": user_query,
         "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "model": model_name,
+        "attempt_number": attempt_number,
     }
 
     job_path = os.path.join(pending_dir, f"{job_id}.json")
@@ -783,7 +786,9 @@ def run_pipeline(user_query: str,
 
         # ── Execute and retry on failure ──────────────────────────────────
         t0 = time.time()
-        exec_result = execute_workflow(code, user_query)
+        exec_result = execute_workflow(code, user_query,
+                                       model_name=model_name,
+                                       attempt_number=attempt)
         t_execution_total += time.time() - t0
         if exec_result["success"]:
             print(f"\n✅ Workflow executed successfully.")

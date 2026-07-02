@@ -60,6 +60,12 @@ REMOTE = f"{SNELLIUS_USER}@{SNELLIUS_HOST}" if SNELLIUS_USER else SNELLIUS_HOST
 PENDING_DIR = f"{SNELLIUS_JOBS_DIR}/pending"
 DONE_DIR = f"{SNELLIUS_JOBS_DIR}/done"
 
+# Local dashboard data dir — populated after each job so the dashboard can read it
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DASHBOARD_DATA_DIR = Path(os.environ.get(
+    "DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "dashboard_data")
+))
+
 # Where Brane stores committed results on the local machine
 BRANE_DATA_DIR = Path.home() / ".local/share/brane/data"
 
@@ -183,6 +189,38 @@ def collect_committed_outputs(before: float) -> dict:
         result[name] = {"files": files}
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Dashboard data (local)
+# ---------------------------------------------------------------------------
+def save_to_dashboard(job: dict, result: dict) -> None:
+    """
+    Write a combined record to DASHBOARD_DATA_DIR/results/<job_id>.json
+    so the local dashboard server can display it.
+    """
+    results_dir = DASHBOARD_DATA_DIR / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "id":             job.get("id", ""),
+        "submitted_at":   job.get("submitted_at"),
+        "executed_at":    result.get("executed_at"),
+        "intent":         job.get("query", ""),
+        "model":          job.get("model", ""),
+        "attempt_number": job.get("attempt_number", 1),
+        "generated_code": job.get("workflow", ""),
+        "verdict":        "pass" if result.get("success") else "fail",
+        "error_type":     result.get("error_type"),
+        "stdout":         result.get("stdout", ""),
+        "stderr":         result.get("stderr", ""),
+        "exit_code":      result.get("exit_code"),
+        "committed_data": result.get("committed_data", {}),
+        "timing":         job.get("timing"),
+    }
+    out_path = results_dir / f"{record['id']}.json"
+    out_path.write_text(json.dumps(record, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
+    _log(f"  dashboard record saved → {out_path.name}")
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +366,7 @@ def process_job(remote_path: str) -> None:
 
     upload_result(job_id, result)
     delete_pending(remote_path)
+    save_to_dashboard(job, result)
     _log(f"Job {job_id[:8]}… complete — success={result['success']}")
     if not result['success'] and result.get('stderr'):
         _log(f"  stderr: {result['stderr'][:300]}")
