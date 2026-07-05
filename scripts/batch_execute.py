@@ -149,27 +149,50 @@ def main():
                         help="Pass --dry-run to brane (no Docker, instant)")
     parser.add_argument("--filter", type=str, default="",
                         help="Only run examples from files matching this substring")
+    parser.add_argument("--input", type=str, default="",
+                        help="Path to a specific .jsonl file to run (overrides default glob)")
+    parser.add_argument("--output", type=str, default="",
+                        help="Path to write results to (overrides default results file)")
     args = parser.parse_args()
 
-    examples = load_examples()
-    if args.filter:
-        examples = [e for e in examples if args.filter in e["source_file"]]
+    # --input overrides the default glob
+    if args.input:
+        input_path = Path(args.input)
+        fname = input_path.stem
+        examples = []
+        with open(input_path, encoding="utf-8") as f:
+            for lineno, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ex = json.loads(line)
+                    ex["id"]          = f"{fname}-{lineno:04d}"
+                    ex["source_file"] = input_path.name
+                    examples.append(ex)
+                except json.JSONDecodeError as e:
+                    print(f"  ⚠️  JSON error in {fname}:{lineno} — {e}", flush=True)
+    else:
+        examples = load_examples()
+        if args.filter:
+            examples = [e for e in examples if args.filter in e["source_file"]]
 
-    done_ids = load_done_ids(RESULTS_FILE) if args.resume else set()
+    results_file = Path(args.output) if args.output else RESULTS_FILE
+    done_ids = load_done_ids(results_file) if args.resume else set()
 
     pending = [e for e in examples if e["id"] not in done_ids]
     total   = len(pending)
 
     print(f"📋 Loaded {len(examples)} examples  |  Pending: {total}  |  Already done: {len(done_ids)}")
-    print(f"⏱  Timeout: {args.timeout}s  |  Dry-run: {args.dry_run}  |  Results → {RESULTS_FILE}")
+    print(f"⏱  Timeout: {args.timeout}s  |  Dry-run: {args.dry_run}  |  Results → {results_file}")
     print()
 
-    RESULTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    results_file.parent.mkdir(parents=True, exist_ok=True)
 
     passed = failed = timed_out = 0
     t_batch_start = time.monotonic()
 
-    with open(RESULTS_FILE, "a", encoding="utf-8") as out_f:
+    with open(results_file, "a", encoding="utf-8") as out_f:
         for idx, ex in enumerate(pending, start=1):
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             print(f"[{idx:4d}/{total}] {ex['id']}  ", end="", flush=True)
@@ -215,7 +238,7 @@ def main():
     print(f"⏰  Timed out: {timed_out}")
     print(f"📝  Total:     {total}")
     print(f"⏱  Wall time: {elapsed_total/60:.1f} min")
-    print(f"💾  Results  → {RESULTS_FILE}")
+    print(f"💾  Results  → {results_file}")
 
 
 if __name__ == "__main__":

@@ -5,8 +5,8 @@ Converts the curated (intent, BraneScript) example pairs in data/examples/*.json
 into a chat-format JSONL ready for QLoRA fine-tuning.
 
 Output:
-    fine_tuning/train.jsonl  — 85% split
-    fine_tuning/val.jsonl    — 15% split
+    training_data/train.jsonl  — 85% split
+    training_data/val.jsonl    — 15% split
 
 Each line in the output files follows the Alpaca/ChatML format:
     {
@@ -30,7 +30,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 EXAMPLES_DIR = ROOT / "data" / "examples"
-OUTPUT_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = ROOT / "training_data"
 TRAIN_FILE = OUTPUT_DIR / "train.jsonl"
 VAL_FILE = OUTPUT_DIR / "val.jsonl"
 

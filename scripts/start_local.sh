@@ -7,14 +7,14 @@
 # Usage:
 #   bash scripts/start_local.sh
 #
-# Logs are written to logs/job_watcher.log and logs/dashboard.log.
+# Logs are written to outputs/logs/job_watcher.log and outputs/logs/dashboard.log.
 # Press Ctrl-C to stop watching logs (services keep running in background).
-# To stop the services: kill $(cat logs/job_watcher.pid) $(cat logs/dashboard.pid)
+# To stop the services: kill $(cat outputs/logs/job_watcher.pid) $(cat outputs/logs/dashboard.pid)
 
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-LOG_DIR="${PROJECT_ROOT}/logs"
+LOG_DIR="${PROJECT_ROOT}/outputs/logs"
 FRONTEND_DIR="${PROJECT_ROOT}/frontend"
 WATCHER_SCRIPT="${PROJECT_ROOT}/scripts/remote_execution/local/job_watcher.py"
 DASHBOARD_SCRIPT="${FRONTEND_DIR}/server.py"
@@ -101,7 +101,7 @@ if ${all_ok}; then
   echo "  🔍 job_watcher →  PID ${JW_PID}"
   echo ""
   echo "  To stop:  kill ${JW_PID} ${DASH_PID}"
-  echo "            (or: kill \$(cat logs/job_watcher.pid) \$(cat logs/dashboard.pid))"
+  echo "            (or: kill \$(cat outputs/logs/job_watcher.pid) \$(cat outputs/logs/dashboard.pid))"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
   echo "  Tailing logs (Ctrl-C stops watching, services keep running)..."

@@ -3,15 +3,15 @@
 frontend/server.py — Brane Pipeline Dashboard backend.
 
 Serves the dashboard HTML and exposes a REST API over the
-dashboard_data/results/ directory populated by job_watcher.py.
+outputs/pipeline/ directory populated by job_watcher.py.
 
 Usage:
     source .env
     python frontend/server.py
 
 Env vars:
-    DASHBOARD_DATA_DIR   Path to dashboard data dir
-                         (default: <project_root>/dashboard_data)
+    DASHBOARD_DATA_DIR   Path to pipeline outputs dir
+                         (default: <project_root>/outputs/pipeline)
     DASHBOARD_PORT       Port to listen on (default: 5001)
     DASHBOARD_HOST       Host to bind to   (default: 127.0.0.1)
 """
@@ -54,9 +54,9 @@ _HERE = Path(__file__).resolve().parent
 _PROJECT_ROOT = _HERE.parent
 
 DASHBOARD_DATA_DIR = Path(
-    os.environ.get("DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "dashboard_data"))
+    os.environ.get("DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "outputs" / "pipeline"))
 )
-RESULTS_DIR          = DASHBOARD_DATA_DIR / "results"
+RESULTS_DIR          = DASHBOARD_DATA_DIR
 PACKAGES_DIR         = _PROJECT_ROOT / "packages"
 DATASETS_DIR         = _PROJECT_ROOT / "datasets"
 EXEC_RESULTS_FILE    = _PROJECT_ROOT / "training_data" / "execution_results.jsonl"

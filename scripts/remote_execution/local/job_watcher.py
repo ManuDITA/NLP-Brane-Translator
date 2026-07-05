@@ -63,7 +63,7 @@ DONE_DIR = f"{SNELLIUS_JOBS_DIR}/done"
 # Local dashboard data dir — populated after each job so the dashboard can read it
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DASHBOARD_DATA_DIR = Path(os.environ.get(
-    "DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "dashboard_data")
+    "DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "outputs" / "pipeline")
 ))
 
 # Where Brane stores committed results on the local machine

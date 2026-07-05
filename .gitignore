@@ -11,10 +11,11 @@ DYNAMOS/
 generated_branescripts/
 runs/*
 training_data/
-evaluation_results/
 .env
 *__pycache__/*
 *.log
 *.out
-logs/*logs/
-dashboard_data/
+outputs/logs/
+outputs/slurm/
+outputs/models/
+outputs/eval/

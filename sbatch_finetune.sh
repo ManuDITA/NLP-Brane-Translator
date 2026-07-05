@@ -7,7 +7,7 @@
 #SBATCH --mem=80G
 #SBATCH --time=08:00:00
 #SBATCH --job-name=brane-finetune
-#SBATCH --output=logs/slurm_out/finetune-%j.out
+#SBATCH --output=outputs/slurm/finetune-%j.out
 
 echo "Job started on $(hostname) at $(date)"
 
@@ -53,7 +53,7 @@ export TRAIN_MODE="${TRAIN_MODE:-sft}"
 echo "Base model  : ${FINETUNE_MODEL}"
 echo "Train mode  : ${TRAIN_MODE}"
 
-mkdir -p "${PROJECT_DIR}/logs/slurm_out"
+mkdir -p "${PROJECT_DIR}/outputs/slurm"
 
 # ── GPU info ──────────────────────────────────────────────────────────────────
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader 2>/dev/null || true

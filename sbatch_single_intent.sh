@@ -7,7 +7,7 @@
 #SBATCH --mem=64G
 #SBATCH --time=00:10:00
 #SBATCH --job-name=brane-single-intent
-#SBATCH --output=logs/slurm_out/slurm-%j.out
+#SBATCH --output=outputs/slurm/slurm-%j.out
 
 set -eo pipefail
 
@@ -48,7 +48,7 @@ source ~/Thesis/NLP-Brane-Translator/.venv/bin/activate
 
 # ---- folders ----
 mkdir -p "${PROJECT_DIR}/runs"
-mkdir -p "${PROJECT_DIR}/logs/slurm_out"
+mkdir -p "${PROJECT_DIR}/outputs/slurm"
 
 # ---- useful HF/cache settings ----
 export HF_HOME=$HOME/.cache/huggingface

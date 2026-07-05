@@ -68,12 +68,15 @@ BASE_MODEL  = os.environ.get("FINETUNE_MODEL", "Qwen/Qwen3.5-9B")
 MODEL_SLUG  = BASE_MODEL.split("/")[-1].lower()          # e.g. "qwen3.5-9b"
 
 _HERE       = Path(__file__).resolve().parent
-OUTPUT_DIR  = _HERE / f"output_{MODEL_SLUG}"             # SFT adapter
-GRPO_DIR    = _HERE / f"output_{MODEL_SLUG}_grpo"        # GRPO adapter
-MERGED_DIR  = _HERE / f"output_merged_{MODEL_SLUG}"      # merged full model
+_ROOT       = _HERE.parent.parent                         # project root
+_MODELS_DIR = _ROOT / "outputs" / "models"
 
-TRAIN_FILE  = _HERE / "train.jsonl"
-VAL_FILE    = _HERE / "val.jsonl"
+OUTPUT_DIR  = _MODELS_DIR / f"output_{MODEL_SLUG}"        # SFT adapter
+GRPO_DIR    = _MODELS_DIR / f"output_{MODEL_SLUG}_grpo"   # GRPO adapter
+MERGED_DIR  = _MODELS_DIR / f"output_merged_{MODEL_SLUG}" # merged full model
+
+TRAIN_FILE  = _ROOT / "training_data" / "train.jsonl"
+VAL_FILE    = _ROOT / "training_data" / "val.jsonl"
 
 # SFT hyperparameters
 MAX_SEQ_LEN   = 2048
@@ -107,24 +110,53 @@ BRANE_WORKERS   = 8           # parallel execution threads
 # Brane reward function
 # ---------------------------------------------------------------------------
 
+# Reference stdout lookup: intent → expected stdout from execution_results.jsonl
+# Built once at module load time; used by the reward function during GRPO.
+_REFERENCE_OUTPUTS: dict[str, str] = {}
+
+def _load_reference_outputs() -> None:
+    """Load pre-executed reference stdout values from execution_results.jsonl."""
+    ref_file = _HERE.parent.parent / "training_data" / "execution_results.jsonl"
+    if not ref_file.exists():
+        print(f"⚠️  Reference outputs not found at {ref_file} — stdout matching disabled.")
+        return
+    loaded = 0
+    with open(ref_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+                if r.get("success") and r.get("intent"):
+                    _REFERENCE_OUTPUTS[r["intent"]] = (r.get("stdout") or "").strip()
+                    loaded += 1
+            except Exception:
+                pass
+    print(f"📚 Loaded {loaded} reference outputs for stdout-matching reward.")
+
+_load_reference_outputs()
+
+
 def _extract_branescript(text: str) -> str:
     """Strip thinking blocks and markdown fences from model output."""
-    # Qwen3.x thinking tokens
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-    # Markdown code fences  (```branescript ... ``` or ``` ... ```)
     m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
     if m:
         return m.group(1).strip()
     return text.strip()
 
 
-def _score_one(code: str) -> float:
+def _score_one(code: str, reference_stdout: str = "") -> float:
     """
-    Run a BraneScript on the local Brane instance and return a reward:
-      +1.0  execution succeeded  (exit_code == 0)
-      +0.3  runtime error        (compiled but failed at runtime)
-      -1.0  compilation error    (syntax / parse error)
-      -1.0  timeout or exception
+    Run a BraneScript on the Brane instance and return a reward score.
+
+    Scoring uses stdout comparison when a reference is available:
+      +1.0  ran successfully AND stdout matches reference
+      +0.5  ran successfully, no reference stdout to compare (e.g. commit_result only)
+      +0.3  ran successfully but stdout differs from reference
+      -0.5  runtime error (compiled but crashed)
+      -1.0  compilation / syntax error, timeout, or empty code
     """
     code = _extract_branescript(code)
     if not code or len(code) < 10:
@@ -141,15 +173,28 @@ def _score_one(code: str) -> float:
             ["brane", "workflow", "run", BRANE_INSTANCE, path],
             capture_output=True, text=True, timeout=BRANE_TIMEOUT,
         )
-        if result.returncode == 0:
-            return 1.0
-        stderr = result.stderr.lower()
-        if ("compilation of workflow failed" in stderr
-                or "parse error" in stderr
-                or "does not exist" in stderr
-                or "undefined function" in stderr):
-            return -1.0   # syntax / compile error
-        return 0.3        # compiled but failed at runtime
+
+        if result.returncode != 0:
+            stderr = result.stderr.lower()
+            if ("compilation of workflow failed" in stderr
+                    or "parse error" in stderr
+                    or "does not exist" in stderr
+                    or "undefined function" in stderr):
+                return -1.0   # syntax / compile error
+            return -0.5       # runtime error (compiled, crashed at execution)
+
+        # Script ran successfully — compare stdout to reference
+        stdout = result.stdout.strip()
+
+        if not reference_stdout:
+            # No reference available (e.g. script only calls commit_result)
+            return 0.5
+
+        if stdout == reference_stdout:
+            return 1.0    # exact match
+
+        return 0.3        # ran but different output
+
     except subprocess.TimeoutExpired:
         return -1.0
     except FileNotFoundError:
@@ -165,14 +210,36 @@ def _score_one(code: str) -> float:
             pass
 
 
-def brane_execution_reward(completions: list[str], **kwargs) -> list[float]:
+def brane_execution_reward(completions: list[str], prompts=None, **kwargs) -> list[float]:
     """
-    TRL-compatible reward function.
-    Runs all completions in parallel and returns per-completion reward scores.
+    TRL-compatible reward function with stdout-matching.
+
+    For each completion:
+      1. Extract the intent from the prompt (user message)
+      2. Look up the reference stdout from execution_results.jsonl
+      3. Run the generated BraneScript on Brane
+      4. Score based on execution success + stdout match
     """
-    rewards = [None] * len(completions)
+    # Extract intent strings from prompt message lists
+    refs: list[str] = []
+    if prompts:
+        for prompt in prompts:
+            if isinstance(prompt, list):
+                intent = next(
+                    (m["content"] for m in prompt if m.get("role") == "user"), ""
+                )
+            else:
+                intent = str(prompt)
+            refs.append(_REFERENCE_OUTPUTS.get(intent, ""))
+    else:
+        refs = [""] * len(completions)
+
+    rewards: list[float | None] = [None] * len(completions)
     with ThreadPoolExecutor(max_workers=min(BRANE_WORKERS, len(completions))) as ex:
-        futures = {ex.submit(_score_one, code): i for i, code in enumerate(completions)}
+        futures = {
+            ex.submit(_score_one, code, ref): i
+            for i, (code, ref) in enumerate(zip(completions, refs))
+        }
         for fut in as_completed(futures):
             idx = futures[fut]
             try:
@@ -186,7 +253,7 @@ def brane_execution_reward(completions: list[str], **kwargs) -> list[float]:
 def mock_reward(completions: list[str], **kwargs) -> list[float]:
     """Dummy reward for testing the GRPO loop without a Brane instance."""
     import random
-    return [random.choice([-1.0, 0.3, 1.0]) for _ in completions]
+    return [random.choice([-1.0, -0.5, 0.3, 0.5, 1.0]) for _ in completions]
 
 
 # ---------------------------------------------------------------------------
