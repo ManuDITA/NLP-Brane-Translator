@@ -43,150 +43,6 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 # ---------------------------------------------------------------------------
-# BraneScript canonical few-shot examples injected into every prompt.
-# These are intentionally domain-neutral — they teach syntax, not a specific
-# package.  Real package/function names come from RAG retrieval at runtime.
-# ---------------------------------------------------------------------------
-BRANESCRIPT_FEW_SHOT = """
-## BRANESCRIPT SYNTAX REFERENCE (few-shot examples)
-
-Example 1 – import a package, define classes for structured input, call a function:
-```
-import compute;
-
-class Config {
-    iterations: int;
-    threshold:  int;
-}
-
-let cfg := new Config {
-    iterations := 100,
-    threshold  := 50,
-};
-
-let result := run(cfg);
-println(result);
-```
-
-Example 2 – variable assignment and if/else:
-```
-let x := 42;
-let msg := "hello";
-if (x > 10) {
-    println(msg);
-} else {
-    println("small");
-}
-```
-
-Example 3 – function definition and call:
-```
-func greet(name) {
-    return "Hello, " + name;
-}
-let greeting := greet("world");
-println(greeting);
-```
-
-Example 4 – nested classes, routing execution to a named node/site with #[on("name")]:
-```
-import analytics;
-
-class Config {
-    threshold:  int;
-    iterations: int;
-}
-
-class Job {
-    id:     string;
-    config: Config;
-}
-
-let cfg := new Config {
-    threshold  := 50,
-    iterations := 100,
-};
-
-let job := new Job {
-    id     := "job-001",
-    config := cfg,
-};
-
-#[on("marco")]
-let result := process(job);
-println(result);
-```
-
-Example 5 – deeply nested classes (three levels), single package call, node routing:
-```
-import bioanalysis;
-
-class Measurements {
-    pressure: int;
-    rate:     int;
-}
-
-class Labs {
-    cholesterol: int;
-}
-
-class Subject {
-    id:           string;
-    age:          int;
-    measurements: Measurements;
-    labs:         Labs;
-}
-
-let m := new Measurements {
-    pressure := 150,
-    rate     := 75,
-};
-
-let l := new Labs {
-    cholesterol := 210,
-};
-
-let subject := new Subject {
-    id           := "S001",
-    age          := 58,
-    measurements := m,
-    labs         := l,
-};
-
-#[on("amy")]
-    let result := evaluate(subject);
-println(result);
-```
-NOTE: whenever the user says "on node X", "on site X", "at location X", or "run on X",
-place `#[on("X")]` immediately before the relevant function call or block.
-
-Example 6 – referencing a registered dataset (Data), getting an IntermediateResult, and committing it:
-```
-import copy_result;
-import cat;
-
-// Reference an existing dataset by name — Data is a builtin class with one field: name
-let raw := new Data { name := "patient_records" };
-
-// Pass the Data reference to a package function.
-// Functions that output file/data results return an IntermediateResult (not a plain value).
-// You cannot create an IntermediateResult yourself — it is always returned by a package function.
-let processed := copy_result(raw);
-
-// To persist the result beyond this workflow, commit it with a new name.
-// commit_result("new-dataset-name", intermediate_result_variable)
-commit_result("patient_records_copy", processed);
-```
-RULES for Data and IntermediateResult:
-- Use `new Data {{ name := "dataset-name" }}` to reference a registered dataset.
-- `IntermediateResult` is returned by package functions — you NEVER instantiate it yourself.
-- Use `commit_result("name", result)` to save an IntermediateResult as a persistent dataset.
-- `commit_result` also returns a value that can be assigned and passed to further package functions.
-- Both `Data` and `IntermediateResult` can be passed as arguments to package functions.
-- Do NOT try to access fields or content of a Data/IntermediateResult in BraneScript — they are opaque references.
-"""
-
-# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
@@ -215,7 +71,6 @@ EXECUTOR_TIMEOUT = int(os.environ.get("BRANE_EXECUTOR_TIMEOUT", "300"))
 # System message: constant rules + few-shot examples + syntax reference
 # (syntax_reference injected at runtime via .format())
 GENERATION_SYSTEM_TEMPLATE = """You are an expert in the Brane Framework and BraneScript.
-{few_shot}
 ## ABSOLUTE RULES — READ CAREFULLY
 1. Output ONLY valid BraneScript code.
 2. BraneScript is NOT Python, Java, Rust, or any other language. Do NOT output code in any other language.
@@ -618,18 +473,14 @@ def run_pipeline(user_query: str,
                  text_gen_pipeline,
                  tokenizer,
                  syntax_reference: str,
-                 few_shot_override: str = None,
                  execute: bool = False,
                  collector: Optional[TrainingCollector] = None,
                  model_name: str = "") -> str:
-
-    few_shot = few_shot_override if few_shot_override is not None else BRANESCRIPT_FEW_SHOT
 
     t_start = time.time()
 
     # Pre-build the system message — constant for all attempts of this query
     system_msg = GENERATION_SYSTEM_TEMPLATE.format(
-        few_shot=few_shot,
         lang_context=syntax_reference,
     )
 
@@ -1034,7 +885,6 @@ if __name__ == "__main__":
             text_gen_pipeline=text_gen_pipeline,
             tokenizer=tokenizer,
             syntax_reference=syntax_reference,
-            few_shot_override=BRANESCRIPT_FEW_SHOT,
             execute=args.execute,
             collector=collector,
             model_name=args.model,
