@@ -56,9 +56,10 @@ _PROJECT_ROOT = _HERE.parent
 DASHBOARD_DATA_DIR = Path(
     os.environ.get("DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "dashboard_data"))
 )
-RESULTS_DIR  = DASHBOARD_DATA_DIR / "results"
-PACKAGES_DIR = _PROJECT_ROOT / "packages"
-DATASETS_DIR = _PROJECT_ROOT / "datasets"
+RESULTS_DIR          = DASHBOARD_DATA_DIR / "results"
+PACKAGES_DIR         = _PROJECT_ROOT / "packages"
+DATASETS_DIR         = _PROJECT_ROOT / "datasets"
+EXEC_RESULTS_FILE    = _PROJECT_ROOT / "training_data" / "execution_results.jsonl"
 
 PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
@@ -319,6 +320,113 @@ def api_dataset_detail(name):
     if not yml_path.exists():
         return jsonify({"error": "not found"}), 404
     return jsonify(_parse_data_yml(yml_path))
+
+
+# ---------------------------------------------------------------------------
+# Execution Results API
+# ---------------------------------------------------------------------------
+
+def _load_exec_results() -> list[dict]:
+    """Read training_data/execution_results.jsonl, newest-timestamp first."""
+    if not EXEC_RESULTS_FILE.exists():
+        return []
+    rows = []
+    with open(EXEC_RESULTS_FILE, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                pass
+    rows.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+    return rows
+
+
+@app.route("/api/execution-results")
+def api_exec_results():
+    """
+    GET /api/execution-results
+    Query params:
+        success=true|false   filter by success status
+        search=<text>        substring match on intent (case-insensitive)
+        source=<filename>    filter by source_file name
+        limit=<int>          max rows to return (default 1000)
+    """
+    rows = _load_exec_results()
+
+    success_filter = request.args.get("success", "")
+    search         = request.args.get("search", "").lower()
+    source         = request.args.get("source", "")
+    limit          = int(request.args.get("limit", "1000"))
+
+    if success_filter == "true":
+        rows = [r for r in rows if r.get("success")]
+    elif success_filter == "false":
+        rows = [r for r in rows if not r.get("success")]
+    if search:
+        rows = [r for r in rows if search in (r.get("intent") or "").lower()]
+    if source:
+        rows = [r for r in rows if r.get("source_file") == source]
+
+    # Strip heavy fields for list view; keep full data for detail
+    lite = []
+    for r in rows[:limit]:
+        lite.append({
+            "id":               r.get("id"),
+            "source_file":      r.get("source_file"),
+            "intent":           r.get("intent"),
+            "exit_code":        r.get("exit_code"),
+            "success":          r.get("success"),
+            "timed_out":        r.get("timed_out"),
+            "execution_time_s": r.get("execution_time_s"),
+            "timestamp":        r.get("timestamp"),
+            "stdout_preview":   (r.get("stdout") or "")[:200],
+            "stderr_preview":   (r.get("stderr") or "")[:200],
+        })
+    return jsonify(lite)
+
+
+@app.route("/api/execution-results/<path:exec_id>")
+def api_exec_result_detail(exec_id):
+    """GET /api/execution-results/<id> — full record including code + full output."""
+    rows = _load_exec_results()
+    for r in rows:
+        if r.get("id") == exec_id:
+            return jsonify(r)
+    return jsonify({"error": "not found"}), 404
+
+
+@app.route("/api/execution-results/stats")
+def api_exec_results_stats():
+    """GET /api/execution-results/stats — aggregate counts."""
+    rows  = _load_exec_results()
+    total = len(rows)
+    passed  = sum(1 for r in rows if r.get("success"))
+    failed  = total - passed
+    timed   = sum(1 for r in rows if r.get("timed_out"))
+    times   = [r["execution_time_s"] for r in rows if r.get("execution_time_s") is not None]
+    avg_t   = round(sum(times) / len(times), 3) if times else None
+
+    sources: dict[str, dict] = {}
+    for r in rows:
+        s = r.get("source_file") or "unknown"
+        if s not in sources:
+            sources[s] = {"total": 0, "passed": 0}
+        sources[s]["total"] += 1
+        if r.get("success"):
+            sources[s]["passed"] += 1
+
+    return jsonify({
+        "total":      total,
+        "passed":     passed,
+        "failed":     failed,
+        "timed_out":  timed,
+        "pass_rate":  round(passed / total * 100, 1) if total else 0,
+        "avg_time_s": avg_t,
+        "sources":    sources,
+    })
 
 
 # ---------------------------------------------------------------------------

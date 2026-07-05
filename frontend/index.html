@@ -501,6 +501,7 @@
   <button class="page-nav-btn active" data-page="runs">📋 Runs</button>
   <button class="page-nav-btn" data-page="packages">📦 Packages</button>
   <button class="page-nav-btn" data-page="datasets">🗄️ Datasets</button>
+  <button class="page-nav-btn" data-page="execresults">🧪 Exec Results</button>
 </nav>
 
 <!-- ── RUNS PAGE ──────────────────────────────────────────────── -->
@@ -564,6 +565,46 @@
   </div>
 </div>
 
+<!-- ── EXEC RESULTS PAGE ──────────────────────────────────────── -->
+<div class="page" id="page-execresults">
+  <div class="stats-bar" id="er-stats-bar">
+    <div class="stat-card"><div class="label">Total</div><div class="value" id="er-s-total">—</div></div>
+    <div class="stat-card pass"><div class="label">Passed</div><div class="value" id="er-s-pass">—</div></div>
+    <div class="stat-card fail"><div class="label">Failed</div><div class="value" id="er-s-fail">—</div></div>
+    <div class="stat-card rate"><div class="label">Pass rate</div><div class="value" id="er-s-rate">—</div></div>
+    <div class="stat-card time"><div class="label">Avg time</div><div class="value" id="er-s-avg">—</div></div>
+  </div>
+  <div class="toolbar">
+    <input type="text" id="er-search" placeholder="Search intent…" />
+    <div class="btn-group" id="er-filter-group">
+      <button class="active" data-erfilter="all">All</button>
+      <button data-erfilter="pass">Pass</button>
+      <button data-erfilter="fail">Fail</button>
+    </div>
+    <select id="er-source-filter" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;font-size:13px;cursor:pointer;">
+      <option value="">All sources</option>
+    </select>
+    <span class="count" id="er-row-count"></span>
+  </div>
+  <div class="table-wrap">
+    <table id="er-table">
+      <thead>
+        <tr>
+          <th style="width:130px" data-ercol="timestamp">Time <span class="sort-icon">↕</span></th>
+          <th data-ercol="intent">Intent <span class="sort-icon">↕</span></th>
+          <th style="width:150px" data-ercol="source_file">Source <span class="sort-icon">↕</span></th>
+          <th style="width:90px"  data-ercol="success">Status <span class="sort-icon">↕</span></th>
+          <th style="width:70px"  data-ercol="exit_code">Exit <span class="sort-icon">↕</span></th>
+          <th style="width:80px"  data-ercol="execution_time_s">Time <span class="sort-icon">↕</span></th>
+        </tr>
+      </thead>
+      <tbody id="er-tbody">
+        <tr><td colspan="6"><div class="empty-state"><p>Loading…</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ── Catalog detail panel (packages + datasets) ────────────── -->
 <div class="detail-panel-overlay" id="catalog-overlay"></div>
 <div class="detail-panel" id="catalog-panel">
@@ -604,6 +645,32 @@
     </div>
     <div class="tab-content" id="tab-datasets">
       <div id="m-datasets"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Exec Result detail modal ────────────────────────────────── -->
+<div class="modal-overlay" id="er-modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="intent-text" id="er-m-intent"></div>
+        <div class="meta" id="er-m-meta"></div>
+      </div>
+      <button class="close-btn" id="er-close-modal">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn er-tab active" data-ertab="code">BraneScript</button>
+      <button class="tab-btn er-tab" data-ertab="output">Output</button>
+    </div>
+    <div class="tab-content active" id="er-tab-code">
+      <pre><code class="language-clike" id="er-m-code"></code></pre>
+    </div>
+    <div class="tab-content" id="er-tab-output">
+      <div class="output-label">stdout</div>
+      <div class="output-block" id="er-m-stdout"></div>
+      <div class="output-label">stderr</div>
+      <div class="output-block stderr" id="er-m-stderr"></div>
     </div>
   </div>
 </div>
@@ -862,7 +929,7 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') { closeModal(); closeErModal(); closeCatalogPanel(); }
 });
 
 document.querySelectorAll('.tab-btn').forEach(btn =>
@@ -875,8 +942,9 @@ function switchPage(name) {
   document.querySelectorAll('.page-nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById(`page-${name}`).classList.add('active');
   document.querySelector(`[data-page="${name}"]`).classList.add('active');
-  if (name === 'packages' && !packagesLoaded) loadPackages();
-  if (name === 'datasets' && !datasetsLoaded) loadDatasets();
+  if (name === 'packages'    && !packagesLoaded)    loadPackages();
+  if (name === 'datasets'    && !datasetsLoaded)    loadDatasets();
+  if (name === 'execresults' && !erLoaded)          loadExecResults();
 }
 document.querySelectorAll('.page-nav-btn').forEach(btn =>
   btn.addEventListener('click', () => switchPage(btn.dataset.page))
@@ -1073,6 +1141,175 @@ function fmtBytes(b) {
   if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
   return (b/1024/1024).toFixed(1) + ' MB';
 }
+
+// ── Exec Results ──────────────────────────────────────────────────────────
+let erAllRows      = [];
+let erFilter       = 'all';
+let erSearchText   = '';
+let erSourceFilter = '';
+let erSortCol      = 'timestamp';
+let erSortAsc      = false;
+let erLoaded       = false;
+
+async function loadExecResults() {
+  erLoaded = true;
+  try {
+    const [statsRes, rowsRes] = await Promise.all([
+      fetch('/api/execution-results/stats'),
+      fetch('/api/execution-results?limit=1000'),
+    ]);
+    const stats = await statsRes.json();
+    erAllRows = await rowsRes.json();
+
+    document.getElementById('er-s-total').textContent = stats.total;
+    document.getElementById('er-s-pass').textContent  = stats.passed;
+    document.getElementById('er-s-fail').textContent  = stats.failed;
+    document.getElementById('er-s-rate').textContent  = stats.pass_rate + '%';
+    document.getElementById('er-s-avg').textContent   = stats.avg_time_s != null ? stats.avg_time_s + 's' : '—';
+
+    // Populate source filter dropdown
+    const sel = document.getElementById('er-source-filter');
+    const existing = new Set(Array.from(sel.options).map(o => o.value));
+    Object.keys(stats.sources || {}).sort().forEach(src => {
+      if (!existing.has(src)) {
+        const opt = document.createElement('option');
+        opt.value = src; opt.textContent = src;
+        sel.appendChild(opt);
+      }
+    });
+
+    renderErTable();
+  } catch(e) {
+    document.getElementById('er-tbody').innerHTML =
+      `<tr><td colspan="6" style="color:var(--fail);padding:20px">Failed to load: ${e}</td></tr>`;
+  }
+}
+
+function erFilteredRows() {
+  let rows = erAllRows.slice();
+  if (erFilter === 'pass') rows = rows.filter(r => r.success);
+  if (erFilter === 'fail') rows = rows.filter(r => !r.success);
+  if (erSearchText) rows = rows.filter(r => (r.intent || '').toLowerCase().includes(erSearchText));
+  if (erSourceFilter) rows = rows.filter(r => r.source_file === erSourceFilter);
+  rows.sort((a, b) => {
+    let av = a[erSortCol], bv = b[erSortCol];
+    if (av == null) av = ''; if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number')
+      return erSortAsc ? av - bv : bv - av;
+    return erSortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+  });
+  return rows;
+}
+
+function renderErTable() {
+  const rows  = erFilteredRows();
+  const tbody = document.getElementById('er-tbody');
+  document.getElementById('er-row-count').textContent = rows.length + ' examples';
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+      <div style="font-size:32px">🔬</div><p>No results match the current filter.</p>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const ts    = r.timestamp ? relativeTime(r.timestamp) : '—';
+    const intent = truncate(r.intent || '—', 80);
+    const src   = (r.source_file || '').replace('.jsonl','');
+    const badge = r.success
+      ? '<span class="badge pass">✓ Pass</span>'
+      : (r.timed_out ? '<span class="badge" style="background:#744210;color:#fef3c7">⏰ Timeout</span>'
+                      : '<span class="badge fail">✗ Fail</span>');
+    const exit  = r.exit_code != null ? r.exit_code : '—';
+    const dur   = r.execution_time_s != null ? r.execution_time_s + 's' : '—';
+    return `<tr data-erid="${escHtml(r.id)}">
+      <td title="${escHtml(r.timestamp || '')}">${ts}</td>
+      <td title="${escHtml(r.intent || '')}">${escHtml(intent)}</td>
+      <td><span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">${escHtml(src)}</span></td>
+      <td>${badge}</td>
+      <td style="font-family:var(--font-mono);font-size:12px">${exit}</td>
+      <td style="font-family:var(--font-mono);font-size:12px">${dur}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr[data-erid]').forEach(tr =>
+    tr.addEventListener('click', () => openErDetail(tr.dataset.erid))
+  );
+}
+
+async function openErDetail(id) {
+  let r = erAllRows.find(x => x.id === id);
+  // Fetch full record (includes branescript + full stdout/stderr)
+  try {
+    r = await (await fetch(`/api/execution-results/${encodeURIComponent(id)}`)).json();
+  } catch { if (!r) return; }
+
+  document.getElementById('er-m-intent').textContent = r.intent || '(no intent)';
+  const badge = r.success ? '✓ Pass' : (r.timed_out ? '⏰ Timeout' : `✗ Fail  (exit ${r.exit_code})`);
+  document.getElementById('er-m-meta').innerHTML =
+    [`<span class="meta-tag">${escHtml(r.source_file || '')}</span>`,
+     `<span class="meta-tag">${escHtml(badge)}</span>`,
+     r.execution_time_s != null ? `<span class="meta-tag">${r.execution_time_s}s</span>` : '',
+     r.timestamp ? `<span class="meta-tag">${escHtml(fmtDateTime(r.timestamp))}</span>` : '',
+    ].filter(Boolean).join('');
+
+  const codeEl = document.getElementById('er-m-code');
+  codeEl.textContent = r.branescript || '(no code)';
+  Prism.highlightElement(codeEl);
+
+  document.getElementById('er-m-stdout').textContent = r.stdout || '(empty)';
+  document.getElementById('er-m-stderr').textContent = r.stderr || '(empty)';
+
+  // Reset to code tab
+  document.querySelectorAll('.er-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#er-modal-overlay .tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-ertab="code"]').classList.add('active');
+  document.getElementById('er-tab-code').classList.add('active');
+
+  document.getElementById('er-modal-overlay').classList.add('open');
+}
+
+function closeErModal() {
+  document.getElementById('er-modal-overlay').classList.remove('open');
+}
+
+// Event wiring – exec results
+document.getElementById('er-search').addEventListener('input', e => {
+  erSearchText = e.target.value.toLowerCase().trim();
+  renderErTable();
+});
+document.querySelectorAll('#er-filter-group button').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#er-filter-group button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    erFilter = btn.dataset.erfilter;
+    renderErTable();
+  })
+);
+document.getElementById('er-source-filter').addEventListener('change', e => {
+  erSourceFilter = e.target.value;
+  renderErTable();
+});
+document.querySelectorAll('#er-table thead th[data-ercol]').forEach(th =>
+  th.addEventListener('click', () => {
+    if (erSortCol === th.dataset.ercol) { erSortAsc = !erSortAsc; }
+    else { erSortCol = th.dataset.ercol; erSortAsc = th.dataset.ercol !== 'timestamp'; }
+    document.querySelectorAll('#er-table thead th').forEach(h => h.classList.remove('sorted'));
+    th.classList.add('sorted');
+    th.querySelector('.sort-icon').textContent = erSortAsc ? '↑' : '↓';
+    renderErTable();
+  })
+);
+document.getElementById('er-close-modal').addEventListener('click', closeErModal);
+document.getElementById('er-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('er-modal-overlay')) closeErModal();
+});
+document.querySelectorAll('.er-tab').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.er-tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#er-modal-overlay .tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`er-tab-${btn.dataset.ertab}`).classList.add('active');
+  })
+);
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 fetchResults();
