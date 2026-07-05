@@ -9,7 +9,7 @@ browse chronologically.
 Directory layout
 ----------------
 ~/Thesis/NLP-Brane-Translator/
-  training_data/
+  data/training/
     index.jsonl                          <- lightweight index (one line per run)
   runs/
     2026-06-24_221905_a3b7c2d1/
@@ -85,7 +85,7 @@ from typing import Any, Dict, Optional
 DEFAULT_TRAINING_DIR = str(
     Path(os.environ["TRAINING_DATA_DIR"])
     if "TRAINING_DATA_DIR" in os.environ
-    else Path(__file__).resolve().parent.parent / "training_data"
+    else Path(__file__).resolve().parent.parent / "data" / "training"
 )
 
 VALID_VERDICTS = {"pass", "fail"}

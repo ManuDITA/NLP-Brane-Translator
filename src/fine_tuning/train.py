@@ -75,8 +75,8 @@ OUTPUT_DIR  = _MODELS_DIR / f"output_{MODEL_SLUG}"        # SFT adapter
 GRPO_DIR    = _MODELS_DIR / f"output_{MODEL_SLUG}_grpo"   # GRPO adapter
 MERGED_DIR  = _MODELS_DIR / f"output_merged_{MODEL_SLUG}" # merged full model
 
-TRAIN_FILE  = _ROOT / "training_data" / "train.jsonl"
-VAL_FILE    = _ROOT / "training_data" / "val.jsonl"
+TRAIN_FILE  = _ROOT / "data" / "training" / "train.jsonl"
+VAL_FILE    = _ROOT / "data" / "training" / "val.jsonl"
 
 # SFT hyperparameters
 MAX_SEQ_LEN   = 2048
@@ -116,7 +116,7 @@ _REFERENCE_OUTPUTS: dict[str, str] = {}
 
 def _load_reference_outputs() -> None:
     """Load pre-executed reference stdout values from execution_results.jsonl."""
-    ref_file = _HERE.parent.parent / "training_data" / "execution_results.jsonl"
+    ref_file = _HERE.parent.parent / "data" / "training" / "execution_results.jsonl"
     if not ref_file.exists():
         print(f"⚠️  Reference outputs not found at {ref_file} — stdout matching disabled.")
         return

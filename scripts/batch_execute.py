@@ -5,7 +5,7 @@ batch_execute.py
 Runs every BraneScript example found in data/examples/*.jsonl through
   brane workflow run local-instance <file>
 and saves the complete output (stdout, stderr, exit_code, timing) to
-  training_data/execution_results.jsonl
+  data/training/execution_results.jsonl
 
 Usage:
     python scripts/batch_execute.py [--timeout 60] [--resume]
@@ -32,7 +32,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 PROJECT_ROOT   = Path(__file__).resolve().parent.parent
 EXAMPLES_GLOB  = str(PROJECT_ROOT / "data" / "examples" / "*.jsonl")
-RESULTS_FILE   = PROJECT_ROOT / "training_data" / "execution_results.jsonl"
+RESULTS_FILE   = PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
 BRANE_INSTANCE = "local-instance"
 DEFAULT_TIMEOUT = 60   # seconds per script
 

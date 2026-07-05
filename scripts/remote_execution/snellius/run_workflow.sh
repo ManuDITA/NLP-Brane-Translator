@@ -6,10 +6,10 @@
 #
 # Options:
 #   --intent "text"   Natural-language description of what the workflow does.
-#                     Used as the intent label in training_data/index.jsonl.
+#                     Used as the intent label in data/training/index.jsonl.
 #                     Defaults to the filename if omitted.
 #   --collect         Append the result to TRAINING_DATA_DIR/index.jsonl
-#                     (default: <project>/training_data). Also activates automatically
+#                     (default: <project>/data/training). Also activates automatically
 #                     if the TRAINING_DATA_DIR env var is already set.
 #
 # How it works (no port forwarding needed):

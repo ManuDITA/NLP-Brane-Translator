@@ -52,8 +52,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _HERE          = Path(__file__).resolve().parent
 PROJECT_ROOT   = _HERE.parent.parent
-TEST_FILE      = PROJECT_ROOT / "data" / "test" / "test_intents.jsonl"
-TEST_RESULTS   = PROJECT_ROOT / "data" / "test" / "test_results.jsonl"
+TEST_FILE      = PROJECT_ROOT / "outputs" / "eval" / "test_intents.jsonl"
+TEST_RESULTS   = PROJECT_ROOT / "outputs" / "eval" / "test_results.jsonl"
 EVAL_DIR       = PROJECT_ROOT / "outputs" / "eval"
 
 BRANE_INSTANCE = os.environ.get("BRANE_INSTANCE", "local-instance")

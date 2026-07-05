@@ -10,7 +10,6 @@ brane_pkg_db/
 DYNAMOS/
 generated_branescripts/
 runs/*
-training_data/
 .env
 *__pycache__/*
 *.log
@@ -18,4 +17,5 @@ training_data/
 outputs/logs/
 outputs/slurm/
 outputs/models/
-outputs/eval/
+outputs/eval/*.json
+outputs/pipeline/

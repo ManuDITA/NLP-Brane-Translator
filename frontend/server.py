@@ -59,7 +59,7 @@ DASHBOARD_DATA_DIR = Path(
 RESULTS_DIR          = DASHBOARD_DATA_DIR
 PACKAGES_DIR         = _PROJECT_ROOT / "packages"
 DATASETS_DIR         = _PROJECT_ROOT / "datasets"
-EXEC_RESULTS_FILE    = _PROJECT_ROOT / "training_data" / "execution_results.jsonl"
+EXEC_RESULTS_FILE    = _PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
 
 PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
@@ -327,7 +327,7 @@ def api_dataset_detail(name):
 # ---------------------------------------------------------------------------
 
 def _load_exec_results() -> list[dict]:
-    """Read training_data/execution_results.jsonl, newest-timestamp first."""
+    """Read data/training/execution_results.jsonl, newest-timestamp first."""
     if not EXEC_RESULTS_FILE.exists():
         return []
     rows = []

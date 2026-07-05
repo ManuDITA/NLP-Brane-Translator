@@ -72,7 +72,7 @@ mkdir -p "${SNELLIUS_JOBS_DIR}/pending" "${SNELLIUS_JOBS_DIR}/done"
 echo "Job queue: ${SNELLIUS_JOBS_DIR}"
 
 # ---- Training data collection ----------------------------------------------
-export TRAINING_DATA_DIR="${PROJECT_DIR}/training_data"
+export TRAINING_DATA_DIR="${PROJECT_DIR}/data/training"
 mkdir -p "${TRAINING_DATA_DIR}"
 echo "Training data: ${TRAINING_DATA_DIR}/index.jsonl"
 

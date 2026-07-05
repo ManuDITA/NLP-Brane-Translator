@@ -53,8 +53,8 @@ python fine_tuning/prepare_dataset.py
 ```
 
 This creates:
-- `fine_tuning/train.jsonl`
-- `fine_tuning/val.jsonl`
+- `data/training/train.jsonl`
+- `data/training/val.jsonl`
 
 ---
 

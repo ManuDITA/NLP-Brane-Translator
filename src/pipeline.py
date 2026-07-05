@@ -964,7 +964,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--collect", action="store_true", default=False,
         help="Enable training data collection. Every generation attempt (pass and fail) "
-             "is stored in TRAINING_DATA_DIR/runs/ (default: <project>/training_data). "
+             "is stored in TRAINING_DATA_DIR/runs/ (default: <project>/data/training). "
              "Set the TRAINING_DATA_DIR env var to override the directory."
     )
     parser.add_argument(
