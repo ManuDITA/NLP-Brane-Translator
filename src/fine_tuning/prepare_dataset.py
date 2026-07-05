@@ -28,7 +28,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 EXAMPLES_DIR = ROOT / "data" / "examples"
 OUTPUT_DIR = Path(__file__).resolve().parent
 TRAIN_FILE = OUTPUT_DIR / "train.jsonl"

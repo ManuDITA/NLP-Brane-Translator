@@ -3,67 +3,208 @@ train.py
 
 QLoRA fine-tuning of a Qwen model on BraneScript (intent → code) pairs.
 
-Tries to use unsloth for fast training; falls back to plain trl + peft +
-bitsandbytes if unsloth is not available (e.g. on Snellius with CUDA 13.x).
+Two training modes
+──────────────────
+  sft   Supervised Fine-Tuning on (intent → BraneScript) pairs.
+        Classic next-token prediction. Fast, stable, good starting point.
 
-Resume support: re-running train.py automatically continues from the latest
-checkpoint in OUTPUT_DIR.  Use --restart to ignore checkpoints and start fresh.
+  grpo  Group Relative Policy Optimization with execution-based reward.
+        The model generates multiple BraneScripts per intent; each is run on
+        a live Brane instance and scored. The model learns from the relative
+        quality of scripts within each group — no reference answer needed.
+        Requires a Brane instance accessible via `brane workflow run`.
 
-Usage:
-    # Train (auto-resumes if a checkpoint exists)
-    python src/fine_tuning/train.py
+Output directories are named per model so multiple runs co-exist:
+  src/fine_tuning/output_{slug}/        — SFT LoRA adapter
+  src/fine_tuning/output_{slug}_grpo/   — GRPO LoRA adapter
+  src/fine_tuning/output_merged_{slug}/ — merged full model
 
-    # Train from scratch, ignoring any existing checkpoints
-    python src/fine_tuning/train.py --restart
+Usage
+─────
+  # SFT (auto-resumes from latest checkpoint)
+  python src/fine_tuning/train.py
+  python src/fine_tuning/train.py --mode sft
 
-    # Merge LoRA weights into the base model and save a full HF checkpoint
-    python src/fine_tuning/train.py --merge
+  # GRPO (requires Brane instance at $BRANE_INSTANCE, default: local-instance)
+  python src/fine_tuning/train.py --mode grpo
 
-Dependencies (plain, no unsloth):
-    pip install trl peft accelerate bitsandbytes datasets transformers
+  # GRPO warm-started from SFT adapter (recommended: run --merge first)
+  python src/fine_tuning/train.py --mode grpo --warm-start
+
+  # Ignore existing checkpoints
+  python src/fine_tuning/train.py --mode sft --restart
+
+  # Merge LoRA adapter into base model
+  python src/fine_tuning/train.py --merge [--mode grpo]
+
+  # Test GRPO training loop without a real Brane instance
+  python src/fine_tuning/train.py --mode grpo --mock-rewards
+
+Environment variables
+─────────────────────
+  FINETUNE_MODEL    HuggingFace model ID  (default: Qwen/Qwen3.5-9B)
+  BRANE_INSTANCE    Brane instance name   (default: local-instance)
+
+Dependencies
+────────────
+  pip install trl peft accelerate bitsandbytes datasets transformers
 """
 
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BASE_MODEL  = os.environ.get("FINETUNE_MODEL", "Qwen/Qwen3-8B")
-OUTPUT_DIR  = Path(__file__).resolve().parent / "output"
-MERGED_DIR  = Path(__file__).resolve().parent / "output_merged"
-TRAIN_FILE  = Path(__file__).resolve().parent / "train.jsonl"
-VAL_FILE    = Path(__file__).resolve().parent / "val.jsonl"
 
-MAX_SEQ_LEN  = 2048
-LORA_RANK    = 16
-EPOCHS       = 3
-BATCH_SIZE   = 2
-GRAD_ACCUM   = 4
-LR           = 2e-4
-WARMUP_STEPS = 10
-SAVE_STEPS   = 25   # checkpoint every 25 steps (fine-grained resume)
+BASE_MODEL  = os.environ.get("FINETUNE_MODEL", "Qwen/Qwen3.5-9B")
+MODEL_SLUG  = BASE_MODEL.split("/")[-1].lower()          # e.g. "qwen3.5-9b"
+
+_HERE       = Path(__file__).resolve().parent
+OUTPUT_DIR  = _HERE / f"output_{MODEL_SLUG}"             # SFT adapter
+GRPO_DIR    = _HERE / f"output_{MODEL_SLUG}_grpo"        # GRPO adapter
+MERGED_DIR  = _HERE / f"output_merged_{MODEL_SLUG}"      # merged full model
+
+TRAIN_FILE  = _HERE / "train.jsonl"
+VAL_FILE    = _HERE / "val.jsonl"
+
+# SFT hyperparameters
+MAX_SEQ_LEN   = 2048
+LORA_RANK     = 16
+SFT_EPOCHS    = 3
+BATCH_SIZE    = 2
+GRAD_ACCUM    = 4
+SFT_LR        = 2e-4
+WARMUP_STEPS  = 10
+SAVE_STEPS    = 25
 LOGGING_STEPS = 5
+
+# GRPO hyperparameters
+GRPO_EPOCHS          = 2
+GRPO_LR              = 5e-6
+GRPO_BATCH_SIZE      = 1
+GRPO_GRAD_ACCUM      = 8
+GRPO_NUM_GENERATIONS = 8     # completions per prompt; reduce to 4 for 27B+
+GRPO_MAX_NEW_TOKENS  = 512
+GRPO_TEMPERATURE     = 0.8
+GRPO_TOP_P           = 0.9
+GRPO_WARMUP_STEPS    = 5
+
+# Brane executor
+BRANE_INSTANCE  = os.environ.get("BRANE_INSTANCE", "local-instance")
+BRANE_TIMEOUT   = 30          # seconds per script execution
+BRANE_WORKERS   = 8           # parallel execution threads
+
+
+# ---------------------------------------------------------------------------
+# Brane reward function
+# ---------------------------------------------------------------------------
+
+def _extract_branescript(text: str) -> str:
+    """Strip thinking blocks and markdown fences from model output."""
+    # Qwen3.x thinking tokens
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Markdown code fences  (```branescript ... ``` or ``` ... ```)
+    m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+def _score_one(code: str) -> float:
+    """
+    Run a BraneScript on the local Brane instance and return a reward:
+      +1.0  execution succeeded  (exit_code == 0)
+      +0.3  runtime error        (compiled but failed at runtime)
+      -1.0  compilation error    (syntax / parse error)
+      -1.0  timeout or exception
+    """
+    code = _extract_branescript(code)
+    if not code or len(code) < 10:
+        return -1.0
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".bs", encoding="utf-8", delete=False
+    ) as f:
+        f.write(code)
+        path = f.name
+
+    try:
+        result = subprocess.run(
+            ["brane", "workflow", "run", BRANE_INSTANCE, path],
+            capture_output=True, text=True, timeout=BRANE_TIMEOUT,
+        )
+        if result.returncode == 0:
+            return 1.0
+        stderr = result.stderr.lower()
+        if ("compilation of workflow failed" in stderr
+                or "parse error" in stderr
+                or "does not exist" in stderr
+                or "undefined function" in stderr):
+            return -1.0   # syntax / compile error
+        return 0.3        # compiled but failed at runtime
+    except subprocess.TimeoutExpired:
+        return -1.0
+    except FileNotFoundError:
+        raise RuntimeError(
+            "`brane` not found in PATH. "
+            "GRPO requires a running Brane instance. "
+            "Use --mock-rewards to test the training loop without one."
+        )
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def brane_execution_reward(completions: list[str], **kwargs) -> list[float]:
+    """
+    TRL-compatible reward function.
+    Runs all completions in parallel and returns per-completion reward scores.
+    """
+    rewards = [None] * len(completions)
+    with ThreadPoolExecutor(max_workers=min(BRANE_WORKERS, len(completions))) as ex:
+        futures = {ex.submit(_score_one, code): i for i, code in enumerate(completions)}
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            try:
+                rewards[idx] = fut.result()
+            except Exception as e:
+                print(f"  ⚠️  reward error for completion {idx}: {e}", flush=True)
+                rewards[idx] = -1.0
+    return rewards
+
+
+def mock_reward(completions: list[str], **kwargs) -> list[float]:
+    """Dummy reward for testing the GRPO loop without a Brane instance."""
+    import random
+    return [random.choice([-1.0, 0.3, 1.0]) for _ in completions]
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 def load_jsonl(path: Path) -> list[dict]:
-    data = []
+    rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
-                data.append(json.loads(line))
-    return data
+                rows.append(json.loads(line))
+    return rows
 
 
-def format_samples(samples: list[dict], tokenizer) -> list[dict]:
-    """Apply chat template to each sample (list of messages)."""
+def format_sft_samples(samples: list[dict], tokenizer) -> list[dict]:
+    """Apply chat template to full (system+user+assistant) messages for SFT."""
     out = []
     for s in samples:
         try:
@@ -83,11 +224,19 @@ def format_samples(samples: list[dict], tokenizer) -> list[dict]:
     return out
 
 
+def format_grpo_prompts(samples: list[dict]) -> list[dict]:
+    """Extract system+user messages only (no assistant) for GRPO prompts."""
+    return [
+        {"prompt": [m for m in s["messages"] if m["role"] != "assistant"]}
+        for s in samples
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint helpers
 # ---------------------------------------------------------------------------
+
 def latest_checkpoint(output_dir: Path):
-    """Return path to the latest checkpoint, or None."""
     if not output_dir.exists():
         return None
     checkpoints = sorted(
@@ -98,62 +247,61 @@ def latest_checkpoint(output_dir: Path):
 
 
 # ---------------------------------------------------------------------------
-# Training — tries unsloth, falls back to plain HF
+# SFT training
 # ---------------------------------------------------------------------------
-def train(restart: bool = False):
+
+def train_sft(restart: bool = False):
+    print(f"🔧 Mode       : SFT")
     print(f"🔧 Base model : {BASE_MODEL}")
     print(f"📂 Output dir : {OUTPUT_DIR}")
     print(f"📊 Train file : {TRAIN_FILE}  ({sum(1 for _ in open(TRAIN_FILE))} samples)")
 
     if not TRAIN_FILE.exists():
-        print(f"❌ {TRAIN_FILE} not found.")
-        print("   Run: python src/harvest_training_data.py --exclude-benchmark")
+        print(f"❌ {TRAIN_FILE} not found — run prepare_dataset.py first.")
         sys.exit(1)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ── Determine resume checkpoint ─────────────────────────────────────
     resume_from = None
     if not restart:
         resume_from = latest_checkpoint(OUTPUT_DIR)
         if resume_from:
-            print(f"🔄 Resuming from checkpoint: {resume_from}")
+            print(f"🔄 Resuming from: {resume_from}")
         else:
-            print("🆕 No checkpoint found — starting fresh")
+            print("🆕 Starting fresh")
     else:
-        print("🔁 --restart flag set — ignoring any existing checkpoints")
+        print("🔁 --restart: ignoring existing checkpoints")
 
-    # ── Try unsloth first ────────────────────────────────────────────────
     try:
         from unsloth import FastLanguageModel
-        _train_unsloth(resume_from)
+        _sft_unsloth(resume_from)
         return
     except ImportError:
         print("ℹ️  unsloth not available — using plain trl + peft + bitsandbytes")
     except Exception as exc:
         print(f"⚠️  unsloth failed ({exc}) — falling back to plain HF")
 
-    _train_plain(resume_from)
+    _sft_plain(resume_from)
 
 
-def _build_trainer_args(resume_from):
+def _build_sft_config(resume_from):
     from trl import SFTConfig
     return SFTConfig(
         output_dir=str(OUTPUT_DIR),
-        num_train_epochs=EPOCHS,
+        num_train_epochs=SFT_EPOCHS,
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=GRAD_ACCUM,
-        learning_rate=LR,
+        learning_rate=SFT_LR,
         warmup_steps=WARMUP_STEPS,
         lr_scheduler_type="cosine",
-        bf16=True,           # H100 supports bf16; falls back gracefully
+        bf16=True,
         fp16=False,
         logging_steps=LOGGING_STEPS,
         eval_strategy="steps",
         eval_steps=SAVE_STEPS,
         save_strategy="steps",
         save_steps=SAVE_STEPS,
-        save_total_limit=3,          # keep only 3 checkpoints
+        save_total_limit=3,
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
@@ -162,140 +310,244 @@ def _build_trainer_args(resume_from):
     )
 
 
-def _train_unsloth(resume_from):
+def _sft_unsloth(resume_from):
     from unsloth import FastLanguageModel
     from trl import SFTTrainer
     from datasets import Dataset
 
     model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=BASE_MODEL,
-        max_seq_length=MAX_SEQ_LEN,
-        load_in_4bit=True,
+        model_name=BASE_MODEL, max_seq_length=MAX_SEQ_LEN, load_in_4bit=True,
     )
     model = FastLanguageModel.get_peft_model(
-        model,
-        r=LORA_RANK,
+        model, r=LORA_RANK,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
                         "gate_proj", "up_proj", "down_proj"],
-        lora_alpha=LORA_RANK * 2,
-        lora_dropout=0.05,
-        bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=42,
+        lora_alpha=LORA_RANK * 2, lora_dropout=0.05, bias="none",
+        use_gradient_checkpointing="unsloth", random_state=42,
     )
 
-    train_dataset = Dataset.from_list(format_samples(load_jsonl(TRAIN_FILE), tokenizer))
-    val_dataset   = Dataset.from_list(format_samples(load_jsonl(VAL_FILE),   tokenizer))
-    print(f"✅ Train: {len(train_dataset)}  |  Val: {len(val_dataset)}")
+    train_ds = Dataset.from_list(format_sft_samples(load_jsonl(TRAIN_FILE), tokenizer))
+    val_ds   = Dataset.from_list(format_sft_samples(load_jsonl(VAL_FILE),   tokenizer))
+    print(f"✅ Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        max_seq_length=MAX_SEQ_LEN,
-        args=_build_trainer_args(resume_from),
-    )
+    SFTTrainer(
+        model=model, tokenizer=tokenizer,
+        train_dataset=train_ds, eval_dataset=val_ds,
+        max_seq_length=MAX_SEQ_LEN, args=_build_sft_config(resume_from),
+    ).train(resume_from_checkpoint=resume_from)
 
-    print("\n🏋️  Fine-tuning (unsloth)...")
-    trainer.train(resume_from_checkpoint=resume_from)
-
-    print(f"\n💾 Saving LoRA adapter → {OUTPUT_DIR}")
+    print(f"\n💾 Saving SFT adapter → {OUTPUT_DIR}")
     model.save_pretrained(str(OUTPUT_DIR))
     tokenizer.save_pretrained(str(OUTPUT_DIR))
     print("✅ Done.")
 
 
-def _train_plain(resume_from):
+def _sft_plain(resume_from):
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from trl import SFTTrainer
     from datasets import Dataset
 
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_use_double_quant=True,
+    bnb = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
     )
-
     print("📥 Loading tokenizer…")
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL, trust_remote_code=True)
-    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token  = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
     print("📥 Loading model in 4-bit…")
     model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
+        BASE_MODEL, quantization_config=bnb, device_map="auto", trust_remote_code=True,
     )
     model = prepare_model_for_kbit_training(model)
-    model = get_peft_model(
-        model,
-        LoraConfig(
-            r=LORA_RANK,
-            lora_alpha=LORA_RANK * 2,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                            "gate_proj", "up_proj", "down_proj"],
-            lora_dropout=0.05,
-            bias="none",
-            task_type="CAUSAL_LM",
-        ),
-    )
+    model = get_peft_model(model, LoraConfig(
+        r=LORA_RANK, lora_alpha=LORA_RANK * 2,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
+    ))
     model.print_trainable_parameters()
 
-    train_dataset = Dataset.from_list(format_samples(load_jsonl(TRAIN_FILE), tokenizer))
-    val_dataset   = Dataset.from_list(format_samples(load_jsonl(VAL_FILE),   tokenizer))
-    print(f"✅ Train: {len(train_dataset)}  |  Val: {len(val_dataset)}")
+    train_ds = Dataset.from_list(format_sft_samples(load_jsonl(TRAIN_FILE), tokenizer))
+    val_ds   = Dataset.from_list(format_sft_samples(load_jsonl(VAL_FILE),   tokenizer))
+    print(f"✅ Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
-    trainer = SFTTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
-        max_seq_length=MAX_SEQ_LEN,
-        args=_build_trainer_args(resume_from),
-    )
+    SFTTrainer(
+        model=model, tokenizer=tokenizer,
+        train_dataset=train_ds, eval_dataset=val_ds,
+        max_seq_length=MAX_SEQ_LEN, args=_build_sft_config(resume_from),
+    ).train(resume_from_checkpoint=resume_from)
 
-    print("\n🏋️  Fine-tuning (plain HF)…")
-    trainer.train(resume_from_checkpoint=resume_from)
-
-    print(f"\n💾 Saving LoRA adapter → {OUTPUT_DIR}")
+    print(f"\n💾 Saving SFT adapter → {OUTPUT_DIR}")
     model.save_pretrained(str(OUTPUT_DIR))
     tokenizer.save_pretrained(str(OUTPUT_DIR))
     print("✅ Done.")
 
 
 # ---------------------------------------------------------------------------
-# Merge LoRA into base model (produces a standalone HF model)
+# GRPO training
 # ---------------------------------------------------------------------------
-def merge():
+
+def train_grpo(restart: bool = False, warm_start: bool = False,
+               mock_rewards: bool = False):
     """
-    Merge the LoRA adapter into the base weights and save a full HF model.
-    Use this before running evaluate.py with the fine-tuned model.
+    GRPO training with Brane execution as the reward signal.
+
+    For each training step:
+      1. Sample a batch of intents from train.jsonl
+      2. Generate GRPO_NUM_GENERATIONS BraneScripts per intent
+      3. Run all generated scripts on Brane in parallel
+      4. Score each: +1.0 (runs), +0.3 (runtime error), -1.0 (compile/timeout)
+      5. Normalise rewards within each group (this is the R in GRPO)
+      6. Update LoRA adapters to increase probability of higher-reward scripts
+
+    Warm-start (--warm-start):
+      Loads output_merged_{slug}/ as the base model instead of the raw
+      pretrained model. Run `--merge` after SFT before using this flag.
     """
+    base = str(MERGED_DIR) if warm_start else BASE_MODEL
+    if warm_start and not MERGED_DIR.exists():
+        print(f"❌ --warm-start requested but {MERGED_DIR} not found.")
+        print("   Run: python train.py --merge   first.")
+        sys.exit(1)
+
+    reward_fn = mock_reward if mock_rewards else brane_execution_reward
+
+    print(f"🔧 Mode          : GRPO {'(mock rewards)' if mock_rewards else ''}")
+    print(f"🔧 Base model    : {base}")
+    print(f"📂 Output dir    : {GRPO_DIR}")
+    print(f"🎯 Reward        : {'mock (random)' if mock_rewards else f'brane execution ({BRANE_INSTANCE})'}")
+    print(f"👥 Generations   : {GRPO_NUM_GENERATIONS} per prompt")
+    print(f"📊 Train prompts : {TRAIN_FILE}")
+
+    if not TRAIN_FILE.exists():
+        print(f"❌ {TRAIN_FILE} not found — run prepare_dataset.py first.")
+        sys.exit(1)
+
+    GRPO_DIR.mkdir(parents=True, exist_ok=True)
+
+    resume_from = None
+    if not restart:
+        resume_from = latest_checkpoint(GRPO_DIR)
+        if resume_from:
+            print(f"🔄 Resuming from: {resume_from}")
+        else:
+            print("🆕 Starting fresh")
+    else:
+        print("🔁 --restart: ignoring existing checkpoints")
+
+    _grpo_plain(base, reward_fn, resume_from)
+
+
+def _build_grpo_config(resume_from):
+    from trl import GRPOConfig
+    return GRPOConfig(
+        output_dir=str(GRPO_DIR),
+        num_train_epochs=GRPO_EPOCHS,
+        per_device_train_batch_size=GRPO_BATCH_SIZE,
+        gradient_accumulation_steps=GRPO_GRAD_ACCUM,
+        learning_rate=GRPO_LR,
+        warmup_steps=GRPO_WARMUP_STEPS,
+        lr_scheduler_type="cosine",
+        bf16=True,
+        fp16=False,
+        logging_steps=LOGGING_STEPS,
+        save_strategy="steps",
+        save_steps=SAVE_STEPS,
+        save_total_limit=3,
+        report_to="none",
+        # GRPO-specific
+        num_generations=GRPO_NUM_GENERATIONS,
+        max_new_tokens=GRPO_MAX_NEW_TOKENS,
+        temperature=GRPO_TEMPERATURE,
+        top_p=GRPO_TOP_P,
+        # Keep generations short enough to avoid OOM
+        max_prompt_length=512,
+    )
+
+
+def _grpo_plain(base_model: str, reward_fn, resume_from):
+    import torch
+    from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from trl import GRPOTrainer
+    from datasets import Dataset
+
+    bnb = BitsAndBytesConfig(
+        load_in_4bit=True, bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
+    )
+
+    print("📥 Loading tokenizer…")
+    tokenizer = AutoTokenizer.from_pretrained(base_model, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"   # GRPOTrainer needs left-padding
+
+    print("📥 Loading model in 4-bit…")
+    model = AutoModelForCausalLM.from_pretrained(
+        base_model, quantization_config=bnb, device_map="auto",
+        trust_remote_code=True,
+    )
+    model = prepare_model_for_kbit_training(model)
+    model = get_peft_model(model, LoraConfig(
+        r=LORA_RANK, lora_alpha=LORA_RANK * 2,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.05, bias="none", task_type="CAUSAL_LM",
+    ))
+    model.print_trainable_parameters()
+
+    # GRPO only needs prompts — no reference answers
+    train_ds = Dataset.from_list(format_grpo_prompts(load_jsonl(TRAIN_FILE)))
+    print(f"✅ GRPO train prompts: {len(train_ds)}")
+
+    trainer = GRPOTrainer(
+        model=model,
+        reward_funcs=reward_fn,
+        args=_build_grpo_config(resume_from),
+        train_dataset=train_ds,
+        processing_class=tokenizer,
+    )
+
+    print("\n🏋️  GRPO training…")
+    print("   Each step: generate → execute on Brane → score → update")
+    trainer.train(resume_from_checkpoint=resume_from)
+
+    print(f"\n💾 Saving GRPO adapter → {GRPO_DIR}")
+    model.save_pretrained(str(GRPO_DIR))
+    tokenizer.save_pretrained(str(GRPO_DIR))
+    print("✅ Done.")
+
+
+# ---------------------------------------------------------------------------
+# Merge LoRA into base model
+# ---------------------------------------------------------------------------
+
+def merge(mode: str = "sft"):
+    """Merge LoRA adapter into base weights → standalone HF model."""
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM
     from peft import PeftModel
 
-    if not OUTPUT_DIR.exists():
-        print(f"❌ {OUTPUT_DIR} not found — run training first.")
+    adapter_dir = GRPO_DIR if mode == "grpo" else OUTPUT_DIR
+    base        = str(MERGED_DIR) if (mode == "grpo" and MERGED_DIR.exists()) else BASE_MODEL
+
+    if not adapter_dir.exists():
+        print(f"❌ Adapter not found at {adapter_dir} — train first.")
         sys.exit(1)
 
     MERGED_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"🔧 Loading base model: {BASE_MODEL}")
-    tokenizer = AutoTokenizer.from_pretrained(OUTPUT_DIR, trust_remote_code=True)
-    base = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True,
+    print(f"🔧 Loading base  : {base}")
+    tokenizer = AutoTokenizer.from_pretrained(adapter_dir, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        base, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True,
     )
-    print(f"🔧 Loading LoRA adapter: {OUTPUT_DIR}")
-    model = PeftModel.from_pretrained(base, str(OUTPUT_DIR))
+    print(f"🔧 Loading adapter: {adapter_dir}")
+    model = PeftModel.from_pretrained(model, str(adapter_dir))
 
     print("🔀 Merging weights…")
     model = model.merge_and_unload()
@@ -304,22 +556,48 @@ def merge():
     model.save_pretrained(str(MERGED_DIR))
     tokenizer.save_pretrained(str(MERGED_DIR))
     print(f"✅ Merged model saved to {MERGED_DIR}")
-    print(f"   Use this path with evaluate.py: --model {MERGED_DIR}")
+    print(f"   Use with evaluate.py: --model {MERGED_DIR}")
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="QLoRA fine-tuning for BraneScript")
-    parser.add_argument("--restart", action="store_true",
-                        help="Ignore existing checkpoints and start training from scratch")
-    parser.add_argument("--merge", action="store_true",
-                        help="Merge LoRA adapter into base model and save a full HF checkpoint")
+    parser = argparse.ArgumentParser(description="BraneScript fine-tuning: SFT or GRPO")
+    parser.add_argument(
+        "--mode", choices=["sft", "grpo"], default="sft",
+        help="Training mode: sft (supervised) or grpo (execution-reward RL)",
+    )
+    parser.add_argument(
+        "--restart", action="store_true",
+        help="Ignore existing checkpoints and start training from scratch",
+    )
+    parser.add_argument(
+        "--warm-start", action="store_true",
+        help="(GRPO only) Start from the merged SFT model instead of raw base",
+    )
+    parser.add_argument(
+        "--mock-rewards", action="store_true",
+        help="(GRPO only) Use random rewards instead of real Brane execution",
+    )
+    parser.add_argument(
+        "--merge", action="store_true",
+        help="Merge LoRA adapter into base model and save a full HF checkpoint",
+    )
     args = parser.parse_args()
 
+    print(f"Model : {BASE_MODEL}  (slug: {MODEL_SLUG})")
+
     if args.merge:
-        merge()
+        merge(mode=args.mode)
+    elif args.mode == "grpo":
+        train_grpo(
+            restart=args.restart,
+            warm_start=args.warm_start,
+            mock_rewards=args.mock_rewards,
+        )
     else:
-        train(restart=args.restart)
+        train_sft(restart=args.restart)
+
 

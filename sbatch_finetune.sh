@@ -47,9 +47,11 @@ if [[ -f "${PROJECT_DIR}/.env" ]]; then
     set -a; source "${PROJECT_DIR}/.env"; set +a
 fi
 
-# Allow overriding the base model via environment variable
-export FINETUNE_MODEL="${FINETUNE_MODEL:-Qwen/Qwen3-8B}"
-echo "Base model: ${FINETUNE_MODEL}"
+# Allow overriding the base model and training mode via environment variables
+export FINETUNE_MODEL="${FINETUNE_MODEL:-Qwen/Qwen3.5-9B}"
+export TRAIN_MODE="${TRAIN_MODE:-sft}"
+echo "Base model  : ${FINETUNE_MODEL}"
+echo "Train mode  : ${TRAIN_MODE}"
 
 mkdir -p "${PROJECT_DIR}/logs/slurm_out"
 
@@ -63,7 +65,7 @@ echo ""
 echo "🏋️  Starting fine-tuning at $(date)"
 echo "──────────────────────────────────────────────────────"
 
-python "${PROJECT_DIR}/src/fine_tuning/train.py" ${EXTRA_ARGS:-}
+python "${PROJECT_DIR}/src/fine_tuning/train.py" --mode "${TRAIN_MODE}" ${EXTRA_ARGS:-}
 
 echo ""
 echo "✅ Fine-tuning finished at $(date)"
