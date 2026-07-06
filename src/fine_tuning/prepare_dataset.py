@@ -4,6 +4,10 @@ prepare_dataset.py
 Converts the curated (intent, BraneScript) example pairs in data/examples/*.jsonl
 into a chat-format JSONL ready for QLoRA fine-tuning.
 
+Only examples whose BraneScript executed successfully (exit_code == 0) are included,
+using data/training/execution_results.jsonl as the filter. Examples not present in
+execution_results.jsonl (e.g. syntax-only examples without a Brane run) are kept.
+
 Output:
     data/training/train.jsonl  — 85% split
     data/training/val.jsonl    — 15% split
@@ -30,6 +34,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent.parent  # project root
 EXAMPLES_DIR = ROOT / "data" / "examples"
+EXEC_RESULTS  = ROOT / "data" / "training" / "execution_results.jsonl"
 OUTPUT_DIR = ROOT / "data" / "training"
 TRAIN_FILE = OUTPUT_DIR / "train.jsonl"
 VAL_FILE = OUTPUT_DIR / "val.jsonl"
@@ -48,12 +53,41 @@ SYSTEM_PROMPT = (
 )
 
 # ---------------------------------------------------------------------------
+# Load execution results: intent -> success bool
+# ---------------------------------------------------------------------------
+
+def load_execution_results(path: Path) -> dict[str, bool]:
+    """Return a mapping of intent -> True/False based on execution_results.jsonl."""
+    results: dict[str, bool] = {}
+    if not path.exists():
+        print(f"⚠️  {path.name} not found — skipping execution filter (all examples kept).")
+        return results
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+                intent = r.get("intent", "").strip()
+                if intent:
+                    results[intent] = bool(r.get("success", False))
+            except json.JSONDecodeError:
+                continue
+    passed = sum(1 for v in results.values() if v)
+    print(f"📊 Execution results loaded: {passed}/{len(results)} passed")
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Load examples
 # ---------------------------------------------------------------------------
 
-def load_examples(examples_dir: Path) -> list[dict]:
+def load_examples(examples_dir: Path, exec_results: dict[str, bool]) -> list[dict]:
     examples = []
+    total = kept = filtered = 0
     for jsonl_file in sorted(examples_dir.glob("*.jsonl")):
+        file_total = file_kept = 0
         with open(jsonl_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -61,11 +95,23 @@ def load_examples(examples_dir: Path) -> list[dict]:
                     continue
                 try:
                     entry = json.loads(line)
-                    if "intent" in entry and "branescript" in entry:
+                    if "intent" not in entry or "branescript" not in entry:
+                        continue
+                    file_total += 1
+                    intent = entry["intent"].strip()
+                    # Keep if: passed execution, OR not present in results (no Brane run recorded)
+                    if exec_results.get(intent, True):
                         examples.append(entry)
+                        file_kept += 1
+                    else:
+                        pass  # failed execution — drop
                 except json.JSONDecodeError:
                     continue
-        print(f"  📄 {jsonl_file.name}: loaded")
+        total += file_total
+        kept += file_kept
+        filtered += file_total - file_kept
+        print(f"  📄 {jsonl_file.name}: {file_kept}/{file_total} kept")
+    print(f"\n✅ Total: {kept} kept, {filtered} dropped (failed execution)")
     return examples
 
 
@@ -89,8 +135,8 @@ def to_chat_format(entry: dict) -> dict:
 
 def main():
     print(f"📂 Loading examples from {EXAMPLES_DIR}...")
-    examples = load_examples(EXAMPLES_DIR)
-    print(f"✅ Total examples: {len(examples)}")
+    exec_results = load_execution_results(EXEC_RESULTS)
+    examples = load_examples(EXAMPLES_DIR, exec_results)
 
     if len(examples) == 0:
         print("❌ No examples found. Populate data/examples/*.jsonl first.")

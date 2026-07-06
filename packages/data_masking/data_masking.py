@@ -133,14 +133,24 @@ def _detect_pii_in_text(text: str) -> Dict[str, List[str]]:
 
 
 def _parse_fields_json(raw: str) -> List[Dict[str, str]]:
-    """Parse a JSON array of {field/column, strategy} dicts from a raw string."""
+    """Parse a JSON array of {field/column, strategy} dicts from a raw string.
+
+    Also accepts plain string items (e.g. ["name", "email"]) and normalises
+    them to {"field": name, "strategy": "redact"} for convenience.
+    """
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f'fields_json is not valid JSON: {exc}') from exc
     if not isinstance(parsed, list):
         raise ValueError('fields_json must be a JSON array')
-    return parsed
+    normalized = []
+    for item in parsed:
+        if isinstance(item, str):
+            normalized.append({'field': item, 'strategy': 'redact'})
+        else:
+            normalized.append(item)
+    return normalized
 
 
 def _apply_fields_to_record(
