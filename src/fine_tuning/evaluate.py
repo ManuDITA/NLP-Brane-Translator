@@ -240,20 +240,27 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
 
 def evaluate(model_path: str, adapter_path: str | None = None,
              label: str | None = None,
-             test_file: Path | None = None) -> dict:
+             test_file: Path | None = None,
+             generate_only: bool = False) -> dict:
     """
     Run full evaluation on a test set.
-    Returns a dict with metrics and per-example details.
+
+    generate_only=True  → skip Brane execution (use on Snellius or any host
+                          without a running Brane instance).  Results contain
+                          generated_bs for every example; execution metrics are
+                          omitted.  A companion *_generated.jsonl is saved so
+                          the scripts can be batch-executed locally afterwards.
     """
-    test_set  = _load_test_set(test_file)
-    ref_outs  = _load_reference_outputs()
+    test_set    = _load_test_set(test_file)
+    ref_outs    = _load_reference_outputs() if not generate_only else {}
     model_label = label or Path(model_path).name
 
+    mode_str = "generate-only (no Brane execution)" if generate_only else "full (generate + execute)"
     print(f"\n{'='*60}")
-    print(f"🔍 Evaluating: {model_label}")
-    print(f"   Test file     : {test_file or TEST_FILE}")
-    print(f"   Test examples : {len(test_set)}")
-    print(f"   Reference outs: {len(ref_outs)}")
+    print(f"🔍 Evaluating : {model_label}")
+    print(f"   Mode        : {mode_str}")
+    print(f"   Test file   : {test_file or TEST_FILE}")
+    print(f"   Examples    : {len(test_set)}")
     print(f"{'='*60}")
 
     model, tokenizer = load_model(model_path, adapter_path)
@@ -264,50 +271,69 @@ def evaluate(model_path: str, adapter_path: str | None = None,
         print(f"[{i:3d}/{len(test_set)}] {intent[:65]}…", end=" ", flush=True)
 
         generated = generate_branescript(model, tokenizer, intent)
+
+        if generate_only:
+            print("✏️ generated", flush=True)
+            results.append({
+                "id":           ex.get("id", ""),
+                "source_file":  ex.get("source_file", ""),
+                "intent":       intent,
+                "reference_bs": ex.get("branescript", ""),
+                "generated_bs": generated,
+            })
+            continue
+
         execution = _run_branescript(generated)
-
         ref_stdout = ref_outs.get(intent, "")
-        if execution["success"] and ref_stdout:
-            output_match = execution["stdout"] == ref_stdout
-        else:
-            output_match = None  # can't determine
+        output_match = (execution["stdout"] == ref_stdout
+                        if execution["success"] and ref_stdout else None)
 
-        status = "✅" if execution["success"] else ("🔶" if execution["error_type"] == "runtime" else "❌")
+        status    = "✅" if execution["success"] else ("🔶" if execution["error_type"] == "runtime" else "❌")
         match_str = (" match" if output_match else (" no-match" if output_match is False else ""))
         print(f"{status}{match_str}", flush=True)
 
         results.append({
-            "intent":        intent,
-            "reference_bs":  ex.get("branescript", ""),
-            "generated_bs":  generated,
-            "execution":     execution,
-            "ref_stdout":    ref_stdout,
-            "output_match":  output_match,
+            "id":           ex.get("id", ""),
+            "source_file":  ex.get("source_file", ""),
+            "intent":       intent,
+            "reference_bs": ex.get("branescript", ""),
+            "generated_bs": generated,
+            "execution":    execution,
+            "ref_stdout":   ref_stdout,
+            "output_match": output_match,
         })
 
-    # Compute metrics
-    n = len(results)
-    compiled   = sum(1 for r in results if r["execution"]["error_type"] != "compile"
-                     and r["execution"]["error_type"] != "empty")
-    executed   = sum(1 for r in results if r["execution"]["success"])
-    matchable  = [r for r in results if r["output_match"] is not None]
-    matched    = sum(1 for r in matchable if r["output_match"])
-
-    metrics = {
-        "model":            model_label,
-        "model_path":       model_path,
-        "adapter_path":     adapter_path,
-        "total":            n,
-        "compile_rate":     round(compiled / n * 100, 1),
-        "execution_rate":   round(executed / n * 100, 1),
-        "output_match_rate": round(matched / len(matchable) * 100, 1) if matchable else None,
-        "output_match_n":   len(matchable),
-        "timestamp":        datetime.now(timezone.utc).isoformat(),
-        "examples":         results,
+    # Build metrics dict
+    metrics: dict = {
+        "model":       model_label,
+        "model_path":  model_path,
+        "adapter_path":adapter_path,
+        "total":       len(results),
+        "timestamp":   datetime.now(timezone.utc).isoformat(),
+        "examples":    results,
     }
 
-    _print_metrics(metrics)
-    _save_results(metrics)
+    if generate_only:
+        metrics["mode"] = "generate_only"
+        _save_results(metrics, suffix="_generated")
+        print(f"\n✏️  Generated {len(results)} scripts — run execute_generated.py locally to get execution metrics.\n")
+    else:
+        n = len(results)
+        compiled  = sum(1 for r in results if r["execution"]["error_type"] not in ("compile", "empty"))
+        executed  = sum(1 for r in results if r["execution"]["success"])
+        matchable = [r for r in results if r["output_match"] is not None]
+        matched   = sum(1 for r in matchable if r["output_match"])
+
+        metrics.update({
+            "mode":              "full",
+            "compile_rate":      round(compiled / n * 100, 1),
+            "execution_rate":    round(executed / n * 100, 1),
+            "output_match_rate": round(matched / len(matchable) * 100, 1) if matchable else None,
+            "output_match_n":    len(matchable),
+        })
+        _print_metrics(metrics)
+        _save_results(metrics)
+
     return metrics
 
 
@@ -317,17 +343,16 @@ def _print_metrics(m: dict) -> None:
     print(f"  Total examples   : {m['total']}")
     print(f"  Compile rate     : {m['compile_rate']}%")
     print(f"  Execution rate   : {m['execution_rate']}%")
-    if m["output_match_rate"] is not None:
+    if m.get("output_match_rate") is not None:
         print(f"  Output match rate: {m['output_match_rate']}%  (over {m['output_match_n']} comparable examples)")
     print(f"{'─'*40}\n")
 
 
-def _save_results(m: dict) -> None:
+def _save_results(m: dict, suffix: str = "") -> None:
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^a-z0-9_-]", "_", m["model"].lower())
     ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = EVAL_DIR / f"{slug}_{ts}.json"
-    # Save without per-example details for the summary, full details separately
+    path = EVAL_DIR / f"{slug}_{ts}{suffix}.json"
     path.write_text(json.dumps(m, indent=2, ensure_ascii=False, default=str))
     print(f"💾 Results saved → {path}")
 
@@ -336,16 +361,15 @@ def _save_results(m: dict) -> None:
 # Compare-all mode: base / SFT / GRPO for a given model
 # ---------------------------------------------------------------------------
 
-def compare_all(base_model: str) -> None:
+def compare_all(base_model: str, test_file: Path | None = None,
+               generate_only: bool = False) -> None:
     """Evaluate base, SFT-merged, and GRPO-merged variants and print comparison."""
-    slug       = base_model.split("/")[-1].lower()
-    models_dir = PROJECT_ROOT / "outputs" / "models"
-    sft_merged = str(models_dir / f"output_merged_{slug}")
-    grpo_merged= str(models_dir / f"output_merged_{slug}_grpo")
+    slug        = base_model.split("/")[-1].lower()
+    models_dir  = PROJECT_ROOT / "outputs" / "models"
+    sft_merged  = str(models_dir / f"output_merged_{slug}")
+    grpo_merged = str(models_dir / f"output_merged_{slug}_grpo")
 
-    variants = [
-        (base_model,  None, f"{slug} (base)"),
-    ]
+    variants = [(base_model, None, f"{slug} (base)")]
     if Path(sft_merged).exists():
         variants.append((sft_merged, None, f"{slug} (SFT)"))
     else:
@@ -356,14 +380,19 @@ def compare_all(base_model: str) -> None:
     else:
         print(f"⚠️  GRPO merged model not found at {grpo_merged} — skipping.")
 
-    all_metrics = [evaluate(mp, ap, label) for mp, ap, label in variants]
+    all_metrics = [
+        evaluate(mp, ap, label, test_file=test_file, generate_only=generate_only)
+        for mp, ap, label in variants
+    ]
 
-    # Summary table
+    if generate_only:
+        return  # no numeric table to print
+
     print("\n" + "="*65)
     print(f"{'Model':<30} {'Compile':>8} {'Execute':>8} {'Match':>8}")
     print("─"*65)
     for m in all_metrics:
-        match_str = f"{m['output_match_rate']}%" if m["output_match_rate"] is not None else "—"
+        match_str = f"{m['output_match_rate']}%" if m.get("output_match_rate") is not None else "—"
         print(f"{m['model']:<30} {m['compile_rate']:>7}% {m['execution_rate']:>7}% {match_str:>8}")
     print("="*65)
 
@@ -379,12 +408,21 @@ if __name__ == "__main__":
     parser.add_argument("--adapter", default=None,
                         help="Path to LoRA adapter directory (optional, for pre-merge evaluation)")
     parser.add_argument("--label", default=None,
-                        help="Human-readable label for this model in results (e.g. 'qwen3.5-9b SFT')")
+                        help="Human-readable label for this model in results (e.g. 'qwen3-4b baseline')")
+    parser.add_argument("--test-file", default=None,
+                        help="Path to a .jsonl test file (default: outputs/eval/test_intents.jsonl). "
+                             "Pass data/training/train.jsonl to benchmark on the full training suite.")
+    parser.add_argument("--generate-only", action="store_true",
+                        help="Skip Brane execution — only generate BraneScript and save to JSON. "
+                             "Use on Snellius or any host without a running Brane instance.")
     parser.add_argument("--compare-all", action="store_true",
                         help="Evaluate base + SFT + GRPO variants for the given model in sequence")
     args = parser.parse_args()
 
+    tf = Path(args.test_file) if args.test_file else None
+
     if args.compare_all:
-        compare_all(args.model)
+        compare_all(args.model, test_file=tf, generate_only=args.generate_only)
     else:
-        evaluate(args.model, adapter_path=args.adapter, label=args.label)
+        evaluate(args.model, adapter_path=args.adapter, label=args.label,
+                 test_file=tf, generate_only=args.generate_only)

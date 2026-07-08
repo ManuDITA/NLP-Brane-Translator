@@ -36,17 +36,21 @@ if [[ -f "${PROJECT_DIR}/.env" ]]; then
 fi
 
 # ── Model configuration ───────────────────────────────────────────────────────
-# Override via: EVAL_MODEL=Qwen/Qwen3-4B sbatch sbatch_baseline.sh
+# Override via environment variables before calling sbatch, e.g.:
+#   EVAL_MODEL=Qwen/Qwen3-4B EVAL_LABEL="qwen3-4b (base)" sbatch sbatch_baseline.sh
 #
-# Placeholder model IDs — fill in with the correct HuggingFace repo names:
-#   SMALL  (4B)  → e.g. Qwen/Qwen3-4B
-#   MEDIUM (9B)  → e.g. Qwen/Qwen3-8B
-#   LARGE  (27B) → e.g. Qwen/Qwen3-32B
-export EVAL_MODEL="${EVAL_MODEL:-PLACEHOLDER/model-name-4b}"
+# Qwen3 model IDs on HuggingFace:
+#   Small  (4B)  → Qwen/Qwen3-4B
+#   Medium (8B)  → Qwen/Qwen3-8B
+#   Large  (32B) → Qwen/Qwen3-32B
+export EVAL_MODEL="${EVAL_MODEL:-Qwen/Qwen3-4B}"
 export EVAL_LABEL="${EVAL_LABEL:-${EVAL_MODEL##*/} (base)}"
+# Full training suite (607 examples) for the baseline benchmark
+export EVAL_TEST_FILE="${EVAL_TEST_FILE:-${PROJECT_DIR}/data/training/train.jsonl}"
 
-echo "Model  : ${EVAL_MODEL}"
-echo "Label  : ${EVAL_LABEL}"
+echo "Model    : ${EVAL_MODEL}"
+echo "Label    : ${EVAL_LABEL}"
+echo "Test file: ${EVAL_TEST_FILE}"
 
 mkdir -p "${PROJECT_DIR}/outputs/slurm" "${PROJECT_DIR}/outputs/eval"
 
@@ -59,8 +63,10 @@ echo "🔍 Starting baseline evaluation at $(date)"
 echo "──────────────────────────────────────────────────────"
 
 python "${PROJECT_DIR}/src/fine_tuning/evaluate.py" \
-    --model  "${EVAL_MODEL}" \
-    --label  "${EVAL_LABEL}"
+    --model         "${EVAL_MODEL}" \
+    --label         "${EVAL_LABEL}" \
+    --test-file     "${EVAL_TEST_FILE}" \
+    --generate-only
 
 echo ""
 echo "✅ Baseline evaluation finished at $(date)"
