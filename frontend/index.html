@@ -849,6 +849,7 @@
     <div class="tabs">
       <button class="tab-btn er-tab active" data-ertab="code">BraneScript</button>
       <button class="tab-btn er-tab" data-ertab="output">Output</button>
+      <button class="tab-btn er-tab" data-ertab="committed">Committed</button>
     </div>
     <div class="tab-content active" id="er-tab-code">
       <pre><code class="language-clike" id="er-m-code"></code></pre>
@@ -858,6 +859,9 @@
       <div class="output-block" id="er-m-stdout"></div>
       <div class="output-label">stderr</div>
       <div class="output-block stderr" id="er-m-stderr"></div>
+    </div>
+    <div class="tab-content" id="er-tab-committed">
+      <div id="er-m-committed"></div>
     </div>
   </div>
 </div>
@@ -1445,6 +1449,15 @@ async function openErDetail(id) {
 
   document.getElementById('er-m-stdout').textContent = r.stdout || '(empty)';
   document.getElementById('er-m-stderr').textContent = r.stderr || '(empty)';
+
+  // Committed results tab — show/hide button depending on whether data exists
+  const committed = r.committed_results || {};
+  const hasCommitted = Object.keys(committed).length > 0;
+  const commitTabBtn = document.querySelector('[data-ertab="committed"]');
+  commitTabBtn.style.display = hasCommitted ? '' : 'none';
+  document.getElementById('er-m-committed').innerHTML = hasCommitted
+    ? committedHtml(committed)
+    : '<p style="color:var(--muted);padding:12px 0;font-size:13px">No committed datasets for this execution.</p>';
 
   // Reset to code tab
   document.querySelectorAll('.er-tab').forEach(b => b.classList.remove('active'));
