@@ -141,6 +141,21 @@ def _load_test_set(test_file: Path | None = None) -> list[dict]:
     return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
+def _get_reference_bs(ex: dict) -> str:
+    """Extract the reference BraneScript from an example dict.
+
+    Supports two formats:
+      - Raw format  (data/examples/*.jsonl):  top-level "branescript" key
+      - ChatML format (data/training/train.jsonl): messages[assistant].content
+    """
+    if ex.get("branescript"):
+        return ex["branescript"]
+    for msg in ex.get("messages", []):
+        if msg.get("role") == "assistant":
+            return msg.get("content", "")
+    return ""
+
+
 def _load_reference_outputs() -> dict[str, str]:
     """
     Load intent → reference stdout.
@@ -341,7 +356,7 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                 "id":           ex.get("id", ""),
                 "source_file":  ex.get("source_file", ""),
                 "intent":       intent,
-                "reference_bs": ex.get("branescript", ""),
+                "reference_bs": _get_reference_bs(ex),
                 "generated_bs": "",
                 "error":        f"generation_error: {exc}",
                 **({"execution": {"exit_code": -1, "stdout": "", "stderr": str(exc),
@@ -360,7 +375,7 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                 "id":           ex.get("id", ""),
                 "source_file":  ex.get("source_file", ""),
                 "intent":       intent,
-                "reference_bs": ex.get("branescript", ""),
+                "reference_bs": _get_reference_bs(ex),
                 "generated_bs": generated,
             })
         else:
@@ -384,7 +399,7 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                 "id":           ex.get("id", ""),
                 "source_file":  ex.get("source_file", ""),
                 "intent":       intent,
-                "reference_bs": ex.get("branescript", ""),
+                "reference_bs": _get_reference_bs(ex),
                 "generated_bs": generated,
                 "execution":    execution,
                 "ref_stdout":   ref_stdout,

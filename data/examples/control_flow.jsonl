@@ -1,5 +1,5 @@
-{"id": "control_flow-0001", "intent": "Check if a number is positive or negative and print the result", "branescript": "let n := 42;\nif (n > 0) {\n    println(\"positive\");\n} else {\n    println(\"non-positive\");\n}"}
-{"id": "control_flow-0002", "intent": "Count from 0 to 4 using a while loop", "branescript": "let i := 0;\nwhile (i < 5) {\n    println(i);\n    i := i + 1;\n}"}
-{"id": "control_flow-0003", "intent": "Count from 0 to 9 using a for loop", "branescript": "for (let i := 0; i < 10; i := i + 1) {\n    println(i);\n}"}
-{"id": "control_flow-0004", "intent": "Print numbers from 1 to 5 and double each one inside the loop", "branescript": "for (let i := 1; i <= 5; i := i + 1) {\n    let doubled := i * 2;\n    println(doubled);\n}"}
-{"id": "control_flow-0005", "intent": "Use nested if-else: print low, medium, or high based on a score value", "branescript": "let score := 65;\nif (score < 40) {\n    println(\"low\");\n} else {\n    if (score < 70) {\n        println(\"medium\");\n    } else {\n        println(\"high\");\n    }\n}"}
+{"id": "control_flow-0001", "intent": "Check if the number 42 is positive or negative and print the result", "branescript": "let n := 42;\nif (n > 0) {\n    println(\"positive\");\n} else {\n    println(\"non-positive\");\n}"}
+{"id": "control_flow-0002", "intent": "Use a while loop to count from 0 to 4 and print each value", "branescript": "let i := 0;\nwhile (i < 5) {\n    println(i);\n    i := i + 1;\n}"}
+{"id": "control_flow-0003", "intent": "Use a for loop to count from 0 to 9 and print each value", "branescript": "for (let i := 0; i < 10; i := i + 1) {\n    println(i);\n}"}
+{"id": "control_flow-0004", "intent": "For each number from 1 to 5, compute its double and print it", "branescript": "for (let i := 1; i <= 5; i := i + 1) {\n    let doubled := i * 2;\n    println(doubled);\n}"}
+{"id": "control_flow-0005", "intent": "Given a score of 65, print 'low' if below 40, 'medium' if below 70, or 'high' otherwise", "branescript": "let score := 65;\nif (score < 40) {\n    println(\"low\");\n} else {\n    if (score < 70) {\n        println(\"medium\");\n    } else {\n        println(\"high\");\n    }\n}"}

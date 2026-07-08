@@ -27,6 +27,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from brane_utils import extract_commit_names, pre_clean_committed, read_and_clear_committed
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -81,7 +83,15 @@ def load_done_ids(results_file: Path) -> set[str]:
 def run_script(bs_code: str, timeout: int, dry_run: bool = False) -> dict:
     """
     Write bs_code to a temp file, run brane workflow run, return result dict.
+    Also captures any committed datasets (commit_result(...)) from the local
+    Brane data store and removes them immediately after reading.
     """
+    commit_names = extract_commit_names(bs_code) if not dry_run else []
+
+    # Remove any leftover data from a previous (possibly crashed) run
+    # BEFORE executing so we never capture stale committed results.
+    pre_clean_committed(commit_names)
+
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".bs", encoding="utf-8", delete=False
     ) as tmp:
@@ -100,33 +110,37 @@ def run_script(bs_code: str, timeout: int, dry_run: bool = False) -> dict:
             timeout=timeout,
         )
         elapsed = time.monotonic() - t0
+        committed = read_and_clear_committed(commit_names) if proc.returncode == 0 else {}
         return {
-            "stdout":          proc.stdout,
-            "stderr":          proc.stderr,
-            "exit_code":       proc.returncode,
-            "success":         proc.returncode == 0,
-            "timed_out":       False,
-            "execution_time_s": round(elapsed, 3),
+            "stdout":             proc.stdout,
+            "stderr":             proc.stderr,
+            "exit_code":          proc.returncode,
+            "success":            proc.returncode == 0,
+            "timed_out":          False,
+            "execution_time_s":   round(elapsed, 3),
+            "committed_results":  committed,
         }
     except subprocess.TimeoutExpired:
         elapsed = time.monotonic() - t0
         return {
-            "stdout":          "",
-            "stderr":          f"TIMEOUT after {timeout}s",
-            "exit_code":       -1,
-            "success":         False,
-            "timed_out":       True,
-            "execution_time_s": round(elapsed, 3),
+            "stdout":             "",
+            "stderr":             f"TIMEOUT after {timeout}s",
+            "exit_code":          -1,
+            "success":            False,
+            "timed_out":          True,
+            "execution_time_s":   round(elapsed, 3),
+            "committed_results":  {},
         }
     except Exception as exc:
         elapsed = time.monotonic() - t0
         return {
-            "stdout":          "",
-            "stderr":          str(exc),
-            "exit_code":       -2,
-            "success":         False,
-            "timed_out":       False,
-            "execution_time_s": round(elapsed, 3),
+            "stdout":             "",
+            "stderr":             str(exc),
+            "exit_code":          -2,
+            "success":            False,
+            "timed_out":          False,
+            "execution_time_s":   round(elapsed, 3),
+            "committed_results":  {},
         }
     finally:
         try:
@@ -201,17 +215,18 @@ def main():
 
             # Build full record
             record = {
-                "id":              ex["id"],
-                "source_file":     ex["source_file"],
-                "intent":          ex["intent"],
-                "branescript":     ex["branescript"],
-                "stdout":          result["stdout"],
-                "stderr":          result["stderr"],
-                "exit_code":       result["exit_code"],
-                "success":         result["success"],
-                "timed_out":       result["timed_out"],
-                "execution_time_s": result["execution_time_s"],
-                "timestamp":       ts,
+                "id":                ex["id"],
+                "source_file":       ex["source_file"],
+                "intent":            ex["intent"],
+                "branescript":       ex["branescript"],
+                "stdout":            result["stdout"],
+                "stderr":            result["stderr"],
+                "exit_code":         result["exit_code"],
+                "success":           result["success"],
+                "timed_out":         result["timed_out"],
+                "execution_time_s":  result["execution_time_s"],
+                "committed_results": result.get("committed_results", {}),
+                "timestamp":         ts,
             }
 
             out_f.write(json.dumps(record, ensure_ascii=False) + "\n")

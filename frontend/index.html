@@ -596,6 +596,24 @@
     }
     .out-mini.err { color: #fc8181; }
 
+    /* Committed results block */
+    .committed-block { margin-top: 10px; }
+    .committed-block .committed-ds-header {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--muted); margin-bottom: 4px; margin-top: 8px;
+    }
+    .committed-block .committed-ds-name {
+      font-size: 11px; font-weight: 600; color: #90cdf4; margin-bottom: 3px;
+    }
+    .committed-block .committed-file {
+      font-size: 10px; color: var(--muted); margin-bottom: 1px;
+    }
+    .committed-block pre {
+      background: rgba(0,0,0,.25); border-radius: 4px; padding: 6px 8px;
+      font-size: 10px; overflow-x: auto; white-space: pre; max-height: 160px;
+      overflow-y: auto; margin: 0 0 6px 0;
+    }
+
     /* Match tag */
     .match-tag {
       font-size: 11px; font-weight: 600; padding: 2px 7px;
@@ -604,6 +622,22 @@
     .match-tag.yes { background: rgba(72,187,120,.15);  color: var(--pass); }
     .match-tag.no  { background: rgba(245,101,101,.15); color: var(--fail); }
     .match-tag.na  { background: rgba(113,128,150,.15); color: var(--muted); }
+
+    /* Reference card — same structure as model-out-card but distinct colour */
+    .ref-model-card { border: 1px solid #2c5282; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+    .ref-model-header {
+      display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+      background: #1a365d; cursor: pointer; user-select: none;
+    }
+    .ref-model-header:hover { background: #2a4a7f; }
+    .ref-label-tag {
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 4px; background: #2b6cb0; color: #bee3f8; flex-shrink: 0;
+    }
+    .ref-badge-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #4299e1; margin-right: 1px; vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -1472,6 +1506,7 @@ let evalByIntent     = {};   // intent → [{model, example}]
 let evalAllIntents   = [];   // sorted unique intents
 let evalIntentSel    = null;
 let evalIntentSearch = '';
+let evalGroundTruth  = {};   // intent → {branescript, stdout, id, source_file}
 
 async function loadEvaluation() {
   evalLoaded = true;
@@ -1482,7 +1517,12 @@ async function loadEvaluation() {
   intentList.innerHTML = '<div style="color:var(--muted);padding:20px 14px;font-size:12px">Loading…</div>';
 
   try {
-    const summaries = await (await fetch('/api/eval/runs')).json();
+    // Load ground truth and eval runs in parallel
+    const [summaries, gt] = await Promise.all([
+      fetch('/api/eval/runs').then(r => r.json()),
+      fetch('/api/eval/ground-truth').then(r => r.json()),
+    ]);
+    evalGroundTruth = gt || {};
 
     if (!summaries.length) {
       cmpWrap.innerHTML = `<div class="empty-state" style="padding:30px 0">
@@ -1514,6 +1554,10 @@ async function loadEvaluation() {
         if (!evalByIntent[ex.intent]) evalByIntent[ex.intent] = [];
         evalByIntent[ex.intent].push({ model: run.model, example: ex });
       }
+    }
+    // Include intents that only appear in ground truth (no model run yet)
+    for (const intent of Object.keys(evalGroundTruth)) {
+      if (!evalByIntent[intent]) evalByIntent[intent] = [];
     }
     evalAllIntents = Object.keys(evalByIntent).sort();
     renderEvalIntentList();
@@ -1549,8 +1593,18 @@ function renderEvalCmpTable(summaries) {
       ? `<span class="metric-val ${evalMetricClass(s.execution_rate)}">${s.execution_rate}%</span>`
       : '<span class="metric-val none">—</span>';
     const mr = s.output_match_rate != null
-      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}">${s.output_match_rate}%</span>
-         <span style="color:var(--muted);font-size:11px"> /${s.output_match_n}</span>`
+      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}"
+              title="Overall output match rate (stdout + committed datasets)"
+            >${s.output_match_rate}%</span>
+         <span style="color:var(--muted);font-size:11px"
+               title="${s.output_match_n} scripts had a reference output to compare against"
+             > /${s.output_match_n} with ref</span>`
+      : '<span class="metric-val none">—</span>';
+    const cmr = s.committed_match_rate != null
+      ? `<span class="metric-val ${evalMetricClass(s.committed_match_rate)}"
+              title="% of executed scripts whose committed datasets match the reference"
+            >${s.committed_match_rate}%</span>
+         <span style="color:var(--muted);font-size:11px"> /${s.committed_match_n}</span>`
       : '<span class="metric-val none">—</span>';
     const ts = s.timestamp ? relativeTime(s.timestamp) : '—';
     return `<tr>
@@ -1558,6 +1612,7 @@ function renderEvalCmpTable(summaries) {
       <td>${cr}</td>
       <td>${er}</td>
       <td>${mr}</td>
+      <td>${cmr}</td>
       <td style="color:var(--muted);font-family:var(--font-mono);font-size:12px">${s.total ?? '—'}</td>
       <td style="color:var(--muted);font-size:12px">${ts}</td>
     </tr>`;
@@ -1570,6 +1625,7 @@ function renderEvalCmpTable(summaries) {
         <th>Compile %</th>
         <th>Execute %</th>
         <th>Output Match %</th>
+        <th>Committed Match %</th>
         <th>Examples</th>
         <th>Evaluated</th>
       </tr></thead>
@@ -1591,14 +1647,28 @@ function renderEvalIntentList() {
   list.innerHTML = shown.map(intent => {
     const entries = evalByIntent[intent] || [];
     const badges  = entries.map(e => {
-      const ok = e.example.execution?.success;
-      const tc = evalTagClass(e.model || '');
-      return `<span class="model-label-tag ${tc}" style="font-size:10px;padding:1px 5px">${ok ? '✓' : '✗'}</span>`;
+      const ok    = e.example.execution?.success;
+      const match = e.example.output_match;
+      const tc    = evalTagClass(e.model || '');
+      const bgStyle = ok && match === true  ? 'background:#276749;color:#9ae6b4'
+                    : ok && match === false ? 'background:#744210;color:#fef3c7'
+                    : ok                   ? ''
+                                           : 'background:#742a2a;color:#fed7d7';
+      const title = ok && match === true  ? 'Executed ✓ and output matches reference'
+                  : ok && match === false ? 'Executed ✓ but output differs from reference'
+                  : ok                   ? 'Executed ✓ (no reference output to compare)'
+                                         : 'Did not execute ✗';
+      return `<span class="model-label-tag ${tc}" title="${title}"
+                style="font-size:10px;padding:1px 5px;${bgStyle}">${ok ? '✓' : '✗'}</span>`;
     }).join('');
+    const hasRef = !!evalGroundTruth[intent];
+    const refDot = hasRef
+      ? `<span class="ref-badge-dot" title="Reference BraneScript available"></span>`
+      : '';
     const sel = intent === evalIntentSel ? ' selected' : '';
     return `<div class="eval-intent-item${sel}" data-intent="${escHtml(intent)}">
       <div style="line-height:1.4">${escHtml(truncate(intent, 64))}</div>
-      <div class="eval-intent-badges">${badges}</div>
+      <div class="eval-intent-badges">${refDot}${badges}</div>
     </div>`;
   }).join('');
 
@@ -1611,6 +1681,24 @@ function renderEvalIntentList() {
   );
 }
 
+// Render a committed_results dict as HTML blocks
+function committedHtml(committed) {
+  if (!committed || !Object.keys(committed).length) return '';
+  let html = '<div class="committed-block"><div class="committed-ds-header">committed datasets</div>';
+  for (const [dsName, files] of Object.entries(committed)) {
+    html += `<div class="committed-ds-name">📦 ${escHtml(dsName)}</div>`;
+    if (typeof files === 'object' && files !== null) {
+      for (const [fname, content] of Object.entries(files)) {
+        html += `<div class="committed-file">${escHtml(fname)}</div>`;
+        html += `<pre>${escHtml((content || '').slice(0, 600))}${content && content.length > 600 ? '\n…(truncated)' : ''}</pre>`;
+      }
+    } else {
+      html += `<pre>${escHtml(String(files || '').slice(0, 600))}</pre>`;
+    }
+  }
+  return html + '</div>';
+}
+
 function renderEvalDetail(intent) {
   const area    = document.getElementById('eval-detail-area');
   const entries = evalByIntent[intent] || [];
@@ -1619,7 +1707,28 @@ function renderEvalDetail(intent) {
     return;
   }
 
-  const refBs = entries.find(e => e.example.reference_bs)?.example.reference_bs || '';
+  const gt        = evalGroundTruth[intent] || null;
+  const gtCommitted = (gt && gt.committed_results && Object.keys(gt.committed_results).length > 0)
+    ? gt.committed_results : null;
+
+  // Reference card from execution_results.jsonl — always shown if available
+  const refCardHtml = gt ? `
+    <div class="ref-model-card">
+      <div class="ref-model-header" data-toggle="ref-model-body">
+        <span class="ref-label-tag">📋 Reference (ground truth)</span>
+        ${gt.stdout ? `<span class="match-tag yes" style="margin-left:4px" title="Expected stdout">stdout available</span>` : ''}
+        ${gtCommitted ? `<span class="match-tag yes" style="margin-left:4px" title="Expected committed datasets">committed available</span>` : ''}
+        <span class="toggle-arrow" style="margin-left:auto">▸</span>
+      </div>
+      <div class="model-out-body hidden" id="ref-model-body">
+        <div class="output-label" style="margin-top:0">Reference BraneScript
+          <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:8px">${escHtml(gt.id || '')}</span>
+        </div>
+        <pre style="margin:0"><code class="language-clike">${escHtml(gt.branescript || '(none)')}</code></pre>
+        ${gt.stdout ? `<div class="out-mini"><div class="lbl">expected stdout</div><div>${escHtml(gt.stdout.slice(0,400))}</div></div>` : ''}
+        ${committedHtml(gt.committed_results)}
+      </div>
+    </div>` : '';
 
   const cardsHtml = entries.map((e, idx) => {
     const ex     = e.example;
@@ -1634,64 +1743,61 @@ function renderEvalDetail(intent) {
        : etype === 'empty'   ? '<span class="badge" style="background:#2d3748;color:#a0aec0">Empty output</span>'
                               : '<span class="badge fail">✗ Runtime error</span>');
 
-    const matchBadge = ex.output_match === true  ? '<span class="match-tag yes">✓ Match</span>'
-                     : ex.output_match === false ? '<span class="match-tag no">✗ No match</span>'
-                                                 : '<span class="match-tag na">Match N/A</span>';
+    const overallMatch = ex.output_match;
+    const stdoutMatch  = ex.stdout_match;
+    const commitMatch  = ex.committed_match;
+
+    const matchBadge = overallMatch === true
+      ? '<span class="match-tag yes" title="All available outputs match the reference">✓ Match</span>'
+      : overallMatch === false
+      ? '<span class="match-tag no"  title="One or more outputs differ from the reference">✗ No match</span>'
+      : '<span class="match-tag na"  title="Cannot compare: script did not execute or no reference available">— N/A</span>';
+
+    // Per-output sub-badges when both are present
+    const subBadges = (stdoutMatch !== null && stdoutMatch !== undefined &&
+                       commitMatch !== null && commitMatch !== undefined)
+      ? `<span class="match-tag ${stdoutMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="stdout comparison">stdout: ${stdoutMatch ? '✓' : '✗'}</span>
+         <span class="match-tag ${commitMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="committed results comparison">committed: ${commitMatch ? '✓' : '✗'}</span>`
+      : (commitMatch !== null && commitMatch !== undefined)
+      ? `<span class="match-tag ${commitMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="committed datasets comparison">committed: ${commitMatch ? '✓' : '✗'}</span>`
+      : '';
 
     const stdout = (ex.execution?.stdout || '').slice(0, 400);
     const stderr = (ex.execution?.stderr || '').slice(0, 400);
+    const modelCommitted = ex.execution?.committed_results || {};
 
     return `<div class="model-out-card">
       <div class="model-out-header" data-toggle="model-out-body-${idx}">
         <span class="model-label-tag ${tc}">${escHtml(e.model || 'unknown')}</span>
-        ${resultBadge} ${matchBadge}
-        <span class="toggle-arrow">▾</span>
+        ${resultBadge} ${matchBadge} ${subBadges}
+        <span class="toggle-arrow">▸</span>
       </div>
-      <div class="model-out-body" id="model-out-body-${idx}">
+      <div class="model-out-body hidden" id="model-out-body-${idx}">
         <div class="output-label" style="margin-top:0">Generated BraneScript</div>
         <pre style="margin:0"><code class="language-clike">${escHtml(ex.generated_bs || '(none)')}</code></pre>
         ${stdout ? `<div class="out-mini"><div class="lbl">stdout</div><div>${escHtml(stdout)}</div></div>` : ''}
         ${stderr ? `<div class="out-mini err"><div class="lbl">stderr</div><div>${escHtml(stderr)}</div></div>` : ''}
+        ${committedHtml(modelCommitted)}
       </div>
     </div>`;
   }).join('');
-
-  const refHtml = refBs
-    ? `<div class="ref-card">
-        <div class="ref-card-header" data-toggle="ref-card-body">
-          📋 Reference BraneScript <span class="toggle-arrow">▸</span>
-        </div>
-        <div class="ref-card-body hidden" id="ref-card-body">
-          <pre style="margin:0"><code class="language-clike">${escHtml(refBs)}</code></pre>
-        </div>
-      </div>` : '';
 
   area.innerHTML = `
     <div style="font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.5;font-weight:500">
       ${escHtml(intent)}
     </div>
-    ${cardsHtml}
-    ${refHtml}`;
+    ${refCardHtml}
+    ${cardsHtml}`;
 
   area.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
 }
 
 // Toggle card open/close via event delegation on the detail area
 document.getElementById('eval-detail-area').addEventListener('click', e => {
-  const mHeader = e.target.closest('.model-out-header[data-toggle]');
-  if (mHeader) {
-    const body  = document.getElementById(mHeader.dataset.toggle);
-    const arrow = mHeader.querySelector('.toggle-arrow');
-    if (!body) return;
-    const hidden = body.classList.toggle('hidden');
-    if (arrow) arrow.textContent = hidden ? '▸' : '▾';
-    if (!hidden) body.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
-    return;
-  }
-  const rHeader = e.target.closest('.ref-card-header[data-toggle]');
-  if (rHeader) {
-    const body  = document.getElementById(rHeader.dataset.toggle);
-    const arrow = rHeader.querySelector('.toggle-arrow');
+  const header = e.target.closest('.model-out-header[data-toggle], .ref-model-header[data-toggle]');
+  if (header) {
+    const body  = document.getElementById(header.dataset.toggle);
+    const arrow = header.querySelector('.toggle-arrow');
     if (!body) return;
     const hidden = body.classList.toggle('hidden');
     if (arrow) arrow.textContent = hidden ? '▸' : '▾';

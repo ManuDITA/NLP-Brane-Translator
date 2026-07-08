@@ -37,6 +37,13 @@ BRANE_INSTANCE = os.environ.get("BRANE_INSTANCE", "local-instance")
 BRANE_TIMEOUT  = 30
 BRANE_WORKERS  = 8
 
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent))
+from brane_utils import (
+    extract_commit_names, pre_clean_committed,
+    patch_commit_names, read_and_clear_committed, compare_committed,
+)
+
 
 # ---------------------------------------------------------------------------
 # Brane execution (same logic as evaluate.py)
@@ -54,18 +61,31 @@ def _run_branescript(code: str) -> dict:
     code = _extract_branescript(code)
     if not code or len(code) < 5:
         return {"exit_code": -1, "stdout": "", "stderr": "empty output",
-                "success": False, "error_type": "empty"}
+                "success": False, "error_type": "empty", "committed_results": {}}
+
+    commit_names = extract_commit_names(code)
+
+    # Rewrite commit names to be unique so parallel workers never collide,
+    # then pre-clean those unique names as a safety net for crashed prior runs.
+    patched_code, name_map = patch_commit_names(code) if commit_names else (code, {})
+    unique_names = list(name_map.values()) if name_map else commit_names
+    pre_clean_committed(unique_names)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".bs", encoding="utf-8", delete=False
     ) as f:
-        f.write(code)
+        f.write(patched_code)
         path = f.name
 
     try:
         result = subprocess.run(
             ["brane", "workflow", "run", BRANE_INSTANCE, path],
             capture_output=True, text=True, timeout=BRANE_TIMEOUT,
+        )
+        # Read unique-named directories; results are keyed by original names
+        committed = (
+            read_and_clear_committed(commit_names, name_map=name_map)
+            if result.returncode == 0 else {}
         )
         stderr = result.stderr.lower()
         if result.returncode != 0:
@@ -79,15 +99,16 @@ def _run_branescript(code: str) -> dict:
         else:
             error_type = None
         return {
-            "exit_code":  result.returncode,
-            "stdout":     result.stdout.strip(),
-            "stderr":     result.stderr.strip(),
-            "success":    result.returncode == 0,
-            "error_type": error_type,
+            "exit_code":         result.returncode,
+            "stdout":            result.stdout.strip(),
+            "stderr":            result.stderr.strip(),
+            "success":           result.returncode == 0,
+            "error_type":        error_type,
+            "committed_results": committed,
         }
     except subprocess.TimeoutExpired:
         return {"exit_code": -1, "stdout": "", "stderr": "TIMEOUT",
-                "success": False, "error_type": "timeout"}
+                "success": False, "error_type": "timeout", "committed_results": {}}
     finally:
         try:
             os.unlink(path)
@@ -95,8 +116,9 @@ def _run_branescript(code: str) -> dict:
             pass
 
 
-def _load_reference_outputs() -> dict[str, str]:
-    refs = {}
+def _load_reference_outputs() -> dict[str, dict]:
+    """Return {intent: {stdout, committed_results}} from ground-truth files."""
+    refs: dict[str, dict] = {}
     for src in [EXEC_RESULTS, TEST_RESULTS]:
         if not src.exists():
             continue
@@ -106,7 +128,10 @@ def _load_reference_outputs() -> dict[str, str]:
             try:
                 r = json.loads(line)
                 if r.get("success") and r.get("intent") and r["intent"] not in refs:
-                    refs[r["intent"]] = (r.get("stdout") or "").strip()
+                    refs[r["intent"]] = {
+                        "stdout":            (r.get("stdout") or "").strip(),
+                        "committed_results": r.get("committed_results") or {},
+                    }
             except Exception:
                 pass
     return refs
@@ -141,19 +166,39 @@ def execute_generated(input_path: Path) -> None:
             execution = _run_branescript(generated)
         except Exception as exc:
             execution = {"exit_code": -1, "stdout": "", "stderr": str(exc),
-                         "success": False, "error_type": "execution_error"}
-        ref_stdout = ref_outs.get(intent, "")
-        output_match = (execution["stdout"] == ref_stdout
-                        if execution["success"] and ref_stdout else None)
+                         "success": False, "error_type": "execution_error",
+                         "committed_results": {}}
+
+        ref       = ref_outs.get(intent, {})
+        ref_stdout     = ref.get("stdout", "")
+        ref_committed  = ref.get("committed_results", {})
+
+        # Per-output match flags
+        stdout_match = (
+            execution["stdout"] == ref_stdout
+            if execution["success"] and ref_stdout else None
+        )
+        committed_match = (
+            compare_committed(ref_committed, execution.get("committed_results", {}))
+            if execution["success"] else None
+        )
+
+        # Overall match: True only if every available comparison passes
+        matches = [m for m in (stdout_match, committed_match) if m is not None]
+        output_match = all(matches) if matches else None
+
         return {
-            "id":           ex.get("id", ""),
-            "source_file":  ex.get("source_file", ""),
-            "intent":       intent,
-            "reference_bs": ex.get("reference_bs", ""),
-            "generated_bs": generated,
-            "execution":    execution,
-            "ref_stdout":   ref_stdout,
-            "output_match": output_match,
+            "id":              ex.get("id", ""),
+            "source_file":     ex.get("source_file", ""),
+            "intent":          intent,
+            "reference_bs":    ex.get("reference_bs", ""),
+            "generated_bs":    generated,
+            "execution":       execution,
+            "ref_stdout":      ref_stdout,
+            "ref_committed":   ref_committed,
+            "stdout_match":    stdout_match,
+            "committed_match": committed_match,
+            "output_match":    output_match,
         }
 
     # Run with thread pool (each worker calls brane CLI)
@@ -172,15 +217,19 @@ def execute_generated(input_path: Path) -> None:
                 # but guarantees no single example kills the whole run)
                 print(f"⚠️  [{i}/{total}] unhandled error — skipping: {exc}", flush=True)
                 result = {
-                    "id":           ex.get("id", ""),
-                    "source_file":  ex.get("source_file", ""),
-                    "intent":       ex.get("intent", ""),
-                    "reference_bs": ex.get("reference_bs", ""),
-                    "generated_bs": ex.get("generated_bs", ""),
-                    "execution":    {"exit_code": -1, "stdout": "", "stderr": str(exc),
-                                     "success": False, "error_type": "execution_error"},
-                    "ref_stdout":   "",
-                    "output_match": None,
+                    "id":              ex.get("id", ""),
+                    "source_file":     ex.get("source_file", ""),
+                    "intent":          ex.get("intent", ""),
+                    "reference_bs":    ex.get("reference_bs", ""),
+                    "generated_bs":    ex.get("generated_bs", ""),
+                    "execution":       {"exit_code": -1, "stdout": "", "stderr": str(exc),
+                                        "success": False, "error_type": "execution_error",
+                                        "committed_results": {}},
+                    "ref_stdout":      "",
+                    "ref_committed":   {},
+                    "stdout_match":    None,
+                    "committed_match": None,
+                    "output_match":    None,
                 }
             done_map[i] = result
             status = "✅" if result["execution"]["success"] else (
@@ -195,17 +244,21 @@ def execute_generated(input_path: Path) -> None:
     executed  = sum(1 for r in results if r["execution"]["success"])
     matchable = [r for r in results if r["output_match"] is not None]
     matched   = sum(1 for r in matchable if r["output_match"])
+    commit_matchable = [r for r in results if r.get("committed_match") is not None]
+    commit_matched   = sum(1 for r in commit_matchable if r["committed_match"])
 
     metrics = {
         **{k: v for k, v in data.items() if k != "examples"},
-        "mode":              "full",
-        "total":             n,
-        "compile_rate":      round(compiled / n * 100, 1),
-        "execution_rate":    round(executed / n * 100, 1),
-        "output_match_rate": round(matched / len(matchable) * 100, 1) if matchable else None,
-        "output_match_n":    len(matchable),
-        "executed_at":       datetime.now(timezone.utc).isoformat(),
-        "examples":          results,
+        "mode":                    "full",
+        "total":                   n,
+        "compile_rate":            round(compiled / n * 100, 1),
+        "execution_rate":          round(executed / n * 100, 1),
+        "output_match_rate":       round(matched / len(matchable) * 100, 1) if matchable else None,
+        "output_match_n":          len(matchable),
+        "committed_match_rate":    round(commit_matched / len(commit_matchable) * 100, 1) if commit_matchable else None,
+        "committed_match_n":       len(commit_matchable),
+        "executed_at":             datetime.now(timezone.utc).isoformat(),
+        "examples":                results,
     }
 
     # Print summary
@@ -216,6 +269,8 @@ def execute_generated(input_path: Path) -> None:
     print(f"  Execution rate   : {metrics['execution_rate']}%")
     if metrics["output_match_rate"] is not None:
         print(f"  Output match rate: {metrics['output_match_rate']}%  ({metrics['output_match_n']} comparable)")
+    if metrics["committed_match_rate"] is not None:
+        print(f"  Commit match rate: {metrics['committed_match_rate']}%  ({metrics['committed_match_n']} comparable)")
     print(f"{'─'*40}\n")
 
     # Save — strip _generated suffix if present

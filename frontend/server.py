@@ -439,16 +439,18 @@ def _eval_run_summary(path: Path) -> dict | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return {
-            "file":              path.name,
-            "slug":              path.stem,
-            "model":             data.get("model"),
-            "model_path":        data.get("model_path"),
-            "total":             data.get("total"),
-            "compile_rate":      data.get("compile_rate"),
-            "execution_rate":    data.get("execution_rate"),
-            "output_match_rate": data.get("output_match_rate"),
-            "output_match_n":    data.get("output_match_n"),
-            "timestamp":         data.get("timestamp"),
+            "file":                  path.name,
+            "slug":                  path.stem,
+            "model":                 data.get("model"),
+            "model_path":            data.get("model_path"),
+            "total":                 data.get("total"),
+            "compile_rate":          data.get("compile_rate"),
+            "execution_rate":        data.get("execution_rate"),
+            "output_match_rate":     data.get("output_match_rate"),
+            "output_match_n":        data.get("output_match_n"),
+            "committed_match_rate":  data.get("committed_match_rate"),
+            "committed_match_n":     data.get("committed_match_n"),
+            "timestamp":             data.get("timestamp"),
         }
     except Exception:
         return None
@@ -472,6 +474,30 @@ def api_eval_run_detail(slug):
     if not path.exists():
         return jsonify({"error": "not found"}), 404
     return jsonify(json.loads(path.read_text(encoding="utf-8")))
+
+
+@app.route("/api/eval/ground-truth")
+def api_eval_ground_truth():
+    """GET /api/eval/ground-truth — intent-keyed reference data from execution_results.jsonl."""
+    if not EXEC_RESULTS_FILE.exists():
+        return jsonify({})
+    refs = {}
+    for line in EXEC_RESULTS_FILE.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+            if r.get("intent") and r.get("success"):
+                refs[r["intent"]] = {
+                    "branescript":     r.get("branescript", ""),
+                    "stdout":          (r.get("stdout") or "").strip(),
+                    "committed_results": r.get("committed_results") or {},
+                    "id":              r.get("id", ""),
+                    "source_file":     r.get("source_file", ""),
+                }
+        except Exception:
+            pass
+    return jsonify(refs)
 
 
 # ---------------------------------------------------------------------------
