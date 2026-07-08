@@ -29,10 +29,11 @@ echo ""
 for entry in "${MODELS[@]}"; do
     model="${entry%%|*}"
     label="${entry##*|}"
+    test_file="${EVAL_TEST_FILE:-${SCRIPT_DIR}/data/training/train.jsonl}"
     job_id=$(
-        EVAL_MODEL="${model}" \
-        EVAL_LABEL="${label}" \
-        sbatch --parsable "${SCRIPT_DIR}/sbatch_baseline.sh"
+        sbatch --parsable \
+            --export="EVAL_MODEL=${model},EVAL_LABEL=${label},EVAL_TEST_FILE=${test_file}" \
+            "${SCRIPT_DIR}/sbatch_baseline.sh"
     )
     printf "  %-32s → job %s\n" "${model}" "${job_id}"
 done

@@ -53,9 +53,8 @@ echo "HF cache : ${HF_HOME}"
 #   Small  (4B)  → Qwen/Qwen3-4B
 #   Medium (8B)  → Qwen/Qwen3-8B
 #   Large  (32B) → Qwen/Qwen3-32B
-export EVAL_MODEL="${EVAL_MODEL:-Qwen/Qwen3-4B}"
+export EVAL_MODEL="${EVAL_MODEL:?ERROR: EVAL_MODEL not set — use submit_baselines.sh}"
 export EVAL_LABEL="${EVAL_LABEL:-${EVAL_MODEL##*/} (base)}"
-# Full training suite (607 examples) for the baseline benchmark
 export EVAL_TEST_FILE="${EVAL_TEST_FILE:-${PROJECT_DIR}/data/training/train.jsonl}"
 
 echo "Model    : ${EVAL_MODEL}"
