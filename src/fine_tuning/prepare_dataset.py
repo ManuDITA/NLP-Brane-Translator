@@ -27,6 +27,7 @@ Run:
 
 import json
 import random
+import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -42,15 +43,11 @@ VAL_FILE = OUTPUT_DIR / "val.jsonl"
 VAL_FRACTION = 0.15
 RANDOM_SEED = 42
 
-SYSTEM_PROMPT = (
-    "You are an expert in the Brane Framework and BraneScript. "
-    "Given a user intent, generate ONLY valid BraneScript code. "
-    "Do NOT output Python, Java, or any other language. "
-    "Do NOT wrap the output in markdown code fences. "
-    "Use `let <name> := <expr>;` for variable assignment. "
-    "After importing a package, call functions directly as `function_name(args)` (never `<package>::<function>(args)`). "
-    "Output raw BraneScript code only."
-)
+# Make src/ importable
+sys.path.insert(0, str(ROOT / "src"))
+from prompts import load_system_prompt  # noqa: E402
+
+SYSTEM_PROMPT = load_system_prompt()
 
 # ---------------------------------------------------------------------------
 # Load execution results: intent -> success bool
@@ -101,6 +98,9 @@ def load_examples(examples_dir: Path, exec_results: dict[str, bool]) -> list[dic
                     intent = entry["intent"].strip()
                     # Keep if: passed execution, OR not present in results (no Brane run recorded)
                     if exec_results.get(intent, True):
+                        # Ensure source_file is always populated
+                        if "source_file" not in entry:
+                            entry["source_file"] = jsonl_file.name
                         examples.append(entry)
                         file_kept += 1
                     else:
@@ -121,6 +121,9 @@ def load_examples(examples_dir: Path, exec_results: dict[str, bool]) -> list[dic
 
 def to_chat_format(entry: dict) -> dict:
     return {
+        "id":          entry.get("id", ""),
+        "source_file": entry.get("source_file", ""),
+        "intent":      entry["intent"],
         "messages": [
             {"role": "system",    "content": SYSTEM_PROMPT},
             {"role": "user",      "content": entry["intent"]},

@@ -47,13 +47,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Make src/ importable from fine_tuning/
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from prompts import load_system_prompt, GENERATION_USER_DIRECT  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 _HERE          = Path(__file__).resolve().parent
 PROJECT_ROOT   = _HERE.parent.parent
-TEST_FILE      = PROJECT_ROOT / "outputs" / "eval" / "test_intents.jsonl"
+
+# Default test file — override via --test-file or EVAL_TEST_FILE env var
+_DEFAULT_TEST_FILE = PROJECT_ROOT / "outputs" / "eval" / "test_intents.jsonl"
+TEST_FILE      = Path(os.environ.get("EVAL_TEST_FILE", str(_DEFAULT_TEST_FILE)))
 TEST_RESULTS   = PROJECT_ROOT / "outputs" / "eval" / "test_results.jsonl"
+EXEC_RESULTS   = PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
 EVAL_DIR       = PROJECT_ROOT / "outputs" / "eval"
 
 BRANE_INSTANCE = os.environ.get("BRANE_INSTANCE", "local-instance")
@@ -62,15 +70,8 @@ BRANE_WORKERS  = 8
 MAX_NEW_TOKENS = 512
 TEMPERATURE    = 0.0   # greedy for reproducible evaluation
 
-SYSTEM_PROMPT = (
-    "You are an expert in the Brane Framework and BraneScript. "
-    "Given a user intent, generate ONLY valid BraneScript code. "
-    "Do NOT output Python, Java, or any other language. "
-    "Do NOT wrap the output in markdown code fences. "
-    "Use `let <name> := <expr>;` for variable assignment. "
-    "After importing a package, call functions directly as `function_name(args)` "
-    "(never `<package>::<function>(args)`). Output raw BraneScript code only."
-)
+# Built once at module load — includes full syntax_reference.md
+SYSTEM_PROMPT  = load_system_prompt()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -132,29 +133,35 @@ def _run_branescript(code: str) -> dict:
             pass
 
 
-def _load_test_set() -> list[dict]:
-    if not TEST_FILE.exists():
-        print(f"❌ Test file not found: {TEST_FILE}")
-        print("   Run: python scripts/batch_execute.py --filter test to generate it.")
+def _load_test_set(test_file: Path | None = None) -> list[dict]:
+    path = test_file or TEST_FILE
+    if not path.exists():
+        print(f"❌ Test file not found: {path}")
         sys.exit(1)
-    return [json.loads(l) for l in TEST_FILE.read_text().splitlines() if l.strip()]
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
 
 
 def _load_reference_outputs() -> dict[str, str]:
-    """Load intent → reference stdout from test_results.jsonl."""
-    if not TEST_RESULTS.exists():
-        print(f"⚠️  {TEST_RESULTS} not found — output_match_rate will be skipped.")
-        return {}
+    """
+    Load intent → reference stdout.
+    Checks execution_results.jsonl (full 607 suite) first, then test_results.jsonl.
+    Both files are merged so coverage is maximised.
+    """
     refs = {}
-    for line in TEST_RESULTS.read_text().splitlines():
-        if not line.strip():
+    for src in [EXEC_RESULTS, TEST_RESULTS]:
+        if not src.exists():
             continue
-        try:
-            r = json.loads(line)
-            if r.get("success") and r.get("intent"):
-                refs[r["intent"]] = (r.get("stdout") or "").strip()
-        except Exception:
-            pass
+        for line in src.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+                if r.get("success") and r.get("intent") and r["intent"] not in refs:
+                    refs[r["intent"]] = (r.get("stdout") or "").strip()
+            except Exception:
+                pass
+    if not refs:
+        print("⚠️  No reference outputs found — output_match_rate will be skipped.")
     return refs
 
 
@@ -201,8 +208,8 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
     import torch
 
     messages = [
-        {"role": "system",    "content": SYSTEM_PROMPT},
-        {"role": "user",      "content": intent},
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user",   "content": GENERATION_USER_DIRECT.format(question=intent)},
     ]
     try:
         prompt = tokenizer.apply_chat_template(
@@ -232,17 +239,19 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
 # ---------------------------------------------------------------------------
 
 def evaluate(model_path: str, adapter_path: str | None = None,
-             label: str | None = None) -> dict:
+             label: str | None = None,
+             test_file: Path | None = None) -> dict:
     """
-    Run full evaluation on the test set.
+    Run full evaluation on a test set.
     Returns a dict with metrics and per-example details.
     """
-    test_set  = _load_test_set()
+    test_set  = _load_test_set(test_file)
     ref_outs  = _load_reference_outputs()
     model_label = label or Path(model_path).name
 
     print(f"\n{'='*60}")
     print(f"🔍 Evaluating: {model_label}")
+    print(f"   Test file     : {test_file or TEST_FILE}")
     print(f"   Test examples : {len(test_set)}")
     print(f"   Reference outs: {len(ref_outs)}")
     print(f"{'='*60}")
@@ -330,8 +339,9 @@ def _save_results(m: dict) -> None:
 def compare_all(base_model: str) -> None:
     """Evaluate base, SFT-merged, and GRPO-merged variants and print comparison."""
     slug       = base_model.split("/")[-1].lower()
-    sft_merged = str(_HERE / f"output_merged_{slug}")
-    grpo_merged= str(_HERE / f"output_merged_{slug}_grpo")
+    models_dir = PROJECT_ROOT / "outputs" / "models"
+    sft_merged = str(models_dir / f"output_merged_{slug}")
+    grpo_merged= str(models_dir / f"output_merged_{slug}_grpo")
 
     variants = [
         (base_model,  None, f"{slug} (base)"),

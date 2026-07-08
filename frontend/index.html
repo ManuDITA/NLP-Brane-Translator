@@ -485,6 +485,125 @@
 
     /* Empty panel message */
     .no-data { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+    /* ── Evaluation Page ─────────────────────────────────────── */
+    .eval-wrap { padding: 20px 24px; }
+    .eval-section { margin-bottom: 28px; }
+    .eval-section-hdr {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--muted);
+      padding-bottom: 8px; margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Comparison table */
+    .cmp-table { width: 100%; border-collapse: collapse; }
+    .cmp-table th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--muted); border-bottom: 1px solid var(--border);
+    }
+    .cmp-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+    .cmp-table tbody tr:last-child td { border-bottom: none; }
+    .metric-val { font-family: var(--font-mono); font-weight: 700; font-size: 14px; }
+    .metric-val.high { color: var(--pass); }
+    .metric-val.mid  { color: var(--warn); }
+    .metric-val.low  { color: var(--fail); }
+    .metric-val.none { color: var(--muted); font-weight: 400; font-size: 13px; }
+    .model-label-tag {
+      display: inline-block; padding: 2px 9px; border-radius: 10px;
+      font-size: 12px; font-weight: 600;
+    }
+    .model-label-tag.base  { background: rgba(79,142,247,.15); color: var(--accent); }
+    .model-label-tag.sft   { background: rgba(237,137,54,.15);  color: var(--warn);   }
+    .model-label-tag.grpo  { background: rgba(72,187,120,.15);  color: var(--pass);   }
+    .model-label-tag.other { background: rgba(160,160,200,.1);  color: #a8b2c2;       }
+
+    /* Browser two-pane layout */
+    .eval-browser {
+      display: flex; border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; height: 580px;
+    }
+    .eval-intent-sidebar {
+      width: 320px; flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .eval-intent-search-wrap {
+      padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .eval-intent-search-wrap input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      padding: 6px 10px; font-size: 13px; outline: none;
+    }
+    .eval-intent-search-wrap input:focus { border-color: var(--accent); }
+    .eval-intent-search-wrap input::placeholder { color: var(--muted); }
+    .eval-intent-list-inner { overflow-y: auto; flex: 1; }
+    .eval-intent-item {
+      padding: 8px 14px; border-bottom: 1px solid var(--border);
+      cursor: pointer; font-size: 12px; line-height: 1.5;
+      transition: background 0.1s;
+    }
+    .eval-intent-item:hover { background: var(--row-hover); }
+    .eval-intent-item.selected { background: var(--selected); border-left: 2px solid var(--accent); padding-left: 12px; }
+    .eval-intent-badges { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+
+    /* Detail pane */
+    .eval-detail-area { flex: 1; overflow-y: auto; padding: 16px 20px; }
+    .eval-detail-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; color: var(--muted); font-size: 13px;
+    }
+
+    /* Model output cards */
+    .model-out-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      margin-bottom: 10px; overflow: hidden;
+    }
+    .model-out-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border); cursor: pointer;
+      user-select: none;
+    }
+    .model-out-header:hover { background: var(--row-hover); }
+    .model-out-body { padding: 12px 14px; }
+    .model-out-body.hidden { display: none; }
+    .toggle-arrow { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+    /* Reference BraneScript card */
+    .ref-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; margin-top: 4px;
+    }
+    .ref-card-header {
+      padding: 9px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.4px; cursor: pointer; display: flex; align-items: center;
+      gap: 6px; user-select: none;
+    }
+    .ref-card-header:hover { background: var(--row-hover); }
+    .ref-card-body { padding: 12px 14px; }
+    .ref-card-body.hidden { display: none; }
+
+    /* Inline output previews */
+    .out-mini { font-family: var(--font-mono); font-size: 11px; margin-top: 8px; }
+    .out-mini .lbl {
+      text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px;
+      color: var(--muted); margin-bottom: 2px; margin-top: 8px;
+    }
+    .out-mini.err { color: #fc8181; }
+
+    /* Match tag */
+    .match-tag {
+      font-size: 11px; font-weight: 600; padding: 2px 7px;
+      border-radius: 4px; flex-shrink: 0;
+    }
+    .match-tag.yes { background: rgba(72,187,120,.15);  color: var(--pass); }
+    .match-tag.no  { background: rgba(245,101,101,.15); color: var(--fail); }
+    .match-tag.na  { background: rgba(113,128,150,.15); color: var(--muted); }
   </style>
 </head>
 <body>
@@ -502,6 +621,7 @@
   <button class="page-nav-btn" data-page="packages">📦 Packages</button>
   <button class="page-nav-btn" data-page="datasets">🗄️ Datasets</button>
   <button class="page-nav-btn" data-page="execresults">🧪 Exec Results</button>
+  <button class="page-nav-btn" data-page="evaluation">📊 Evaluation</button>
 </nav>
 
 <!-- ── RUNS PAGE ──────────────────────────────────────────────── -->
@@ -602,6 +722,39 @@
         <tr><td colspan="6"><div class="empty-state"><p>Loading…</p></div></td></tr>
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- ── EVALUATION PAGE ───────────────────────────────────────── -->
+<div class="page" id="page-evaluation">
+  <div class="eval-wrap">
+
+    <!-- Summary comparison table -->
+    <div class="eval-section">
+      <div class="eval-section-hdr">Model Comparison</div>
+      <div id="eval-cmp-wrap">
+        <div style="color:var(--muted);font-size:13px">Loading evaluation runs…</div>
+      </div>
+    </div>
+
+    <!-- Per-intent browser -->
+    <div class="eval-section">
+      <div class="eval-section-hdr">Per-Intent Browser</div>
+      <div class="eval-browser">
+        <div class="eval-intent-sidebar">
+          <div class="eval-intent-search-wrap">
+            <input type="text" id="eval-intent-search" placeholder="Search intents…" />
+          </div>
+          <div class="eval-intent-list-inner" id="eval-intent-list">
+            <div style="color:var(--muted);padding:20px 14px;font-size:12px">Navigate to this page to load intents.</div>
+          </div>
+        </div>
+        <div class="eval-detail-area" id="eval-detail-area">
+          <div class="eval-detail-placeholder">Select an intent to compare model outputs</div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -945,6 +1098,7 @@ function switchPage(name) {
   if (name === 'packages'    && !packagesLoaded)    loadPackages();
   if (name === 'datasets'    && !datasetsLoaded)    loadDatasets();
   if (name === 'execresults' && !erLoaded)          loadExecResults();
+  if (name === 'evaluation'  && !evalLoaded)        loadEvaluation();
 }
 document.querySelectorAll('.page-nav-btn').forEach(btn =>
   btn.addEventListener('click', () => switchPage(btn.dataset.page))
@@ -1310,6 +1464,245 @@ document.querySelectorAll('.er-tab').forEach(btn =>
     document.getElementById(`er-tab-${btn.dataset.ertab}`).classList.add('active');
   })
 );
+
+// ── Evaluation ────────────────────────────────────────────────────────────
+let evalLoaded       = false;
+let evalRuns         = [];   // full run objects with examples
+let evalByIntent     = {};   // intent → [{model, example}]
+let evalAllIntents   = [];   // sorted unique intents
+let evalIntentSel    = null;
+let evalIntentSearch = '';
+
+async function loadEvaluation() {
+  evalLoaded = true;
+  const cmpWrap    = document.getElementById('eval-cmp-wrap');
+  const intentList = document.getElementById('eval-intent-list');
+
+  cmpWrap.innerHTML    = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  intentList.innerHTML = '<div style="color:var(--muted);padding:20px 14px;font-size:12px">Loading…</div>';
+
+  try {
+    const summaries = await (await fetch('/api/eval/runs')).json();
+
+    if (!summaries.length) {
+      cmpWrap.innerHTML = `<div class="empty-state" style="padding:30px 0">
+        <div style="font-size:28px">📊</div>
+        <p>No evaluation runs found.</p>
+        <p style="margin-top:8px;font-size:12px;color:var(--muted)">
+          Run: <code style="font-family:var(--font-mono);background:var(--bg);padding:2px 6px;border-radius:4px">
+          python src/fine_tuning/evaluate.py --model Qwen/Qwen3-4B --compare-all</code>
+        </p></div>`;
+      intentList.innerHTML = '';
+      return;
+    }
+
+    renderEvalCmpTable(summaries);
+
+    // Fetch full details for all runs (examples included)
+    const details = await Promise.all(
+      summaries.map(s =>
+        fetch(`/api/eval/runs/${encodeURIComponent(s.slug)}`).then(r => r.json())
+      )
+    );
+    evalRuns = details.filter(d => d && !d.error);
+
+    // Index examples by intent
+    evalByIntent = {};
+    for (const run of evalRuns) {
+      for (const ex of (run.examples || [])) {
+        if (!ex.intent) continue;
+        if (!evalByIntent[ex.intent]) evalByIntent[ex.intent] = [];
+        evalByIntent[ex.intent].push({ model: run.model, example: ex });
+      }
+    }
+    evalAllIntents = Object.keys(evalByIntent).sort();
+    renderEvalIntentList();
+
+  } catch(e) {
+    cmpWrap.innerHTML = `<div style="color:var(--fail);padding:20px">Failed to load: ${e}</div>`;
+  }
+}
+
+function evalMetricClass(v) {
+  if (v == null) return 'none';
+  if (v >= 70)   return 'high';
+  if (v >= 40)   return 'mid';
+  return 'low';
+}
+
+function evalTagClass(label) {
+  const l = (label || '').toLowerCase();
+  if (l.includes('grpo')) return 'grpo';
+  if (l.includes('sft'))  return 'sft';
+  if (l.includes('base')) return 'base';
+  return 'other';
+}
+
+function renderEvalCmpTable(summaries) {
+  const wrap = document.getElementById('eval-cmp-wrap');
+  const rows = summaries.map(s => {
+    const tc = evalTagClass(s.model || '');
+    const cr = s.compile_rate      != null
+      ? `<span class="metric-val ${evalMetricClass(s.compile_rate)}">${s.compile_rate}%</span>`
+      : '<span class="metric-val none">—</span>';
+    const er = s.execution_rate    != null
+      ? `<span class="metric-val ${evalMetricClass(s.execution_rate)}">${s.execution_rate}%</span>`
+      : '<span class="metric-val none">—</span>';
+    const mr = s.output_match_rate != null
+      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}">${s.output_match_rate}%</span>
+         <span style="color:var(--muted);font-size:11px"> /${s.output_match_n}</span>`
+      : '<span class="metric-val none">—</span>';
+    const ts = s.timestamp ? relativeTime(s.timestamp) : '—';
+    return `<tr>
+      <td><span class="model-label-tag ${tc}">${escHtml(s.model || s.slug)}</span></td>
+      <td>${cr}</td>
+      <td>${er}</td>
+      <td>${mr}</td>
+      <td style="color:var(--muted);font-family:var(--font-mono);font-size:12px">${s.total ?? '—'}</td>
+      <td style="color:var(--muted);font-size:12px">${ts}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<div style="overflow-x:auto">
+    <table class="cmp-table">
+      <thead><tr>
+        <th>Model</th>
+        <th>Compile %</th>
+        <th>Execute %</th>
+        <th>Output Match %</th>
+        <th>Examples</th>
+        <th>Evaluated</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function renderEvalIntentList() {
+  const list   = document.getElementById('eval-intent-list');
+  const search = evalIntentSearch.toLowerCase();
+  const shown  = evalAllIntents.filter(i => !search || i.toLowerCase().includes(search));
+
+  if (!shown.length) {
+    list.innerHTML = '<div style="color:var(--muted);padding:20px 14px;font-size:12px">No intents match.</div>';
+    return;
+  }
+
+  list.innerHTML = shown.map(intent => {
+    const entries = evalByIntent[intent] || [];
+    const badges  = entries.map(e => {
+      const ok = e.example.execution?.success;
+      const tc = evalTagClass(e.model || '');
+      return `<span class="model-label-tag ${tc}" style="font-size:10px;padding:1px 5px">${ok ? '✓' : '✗'}</span>`;
+    }).join('');
+    const sel = intent === evalIntentSel ? ' selected' : '';
+    return `<div class="eval-intent-item${sel}" data-intent="${escHtml(intent)}">
+      <div style="line-height:1.4">${escHtml(truncate(intent, 64))}</div>
+      <div class="eval-intent-badges">${badges}</div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.eval-intent-item[data-intent]').forEach(el =>
+    el.addEventListener('click', () => {
+      evalIntentSel = el.dataset.intent;
+      renderEvalIntentList();
+      renderEvalDetail(el.dataset.intent);
+    })
+  );
+}
+
+function renderEvalDetail(intent) {
+  const area    = document.getElementById('eval-detail-area');
+  const entries = evalByIntent[intent] || [];
+  if (!entries.length) {
+    area.innerHTML = '<div class="eval-detail-placeholder">No model outputs for this intent.</div>';
+    return;
+  }
+
+  const refBs = entries.find(e => e.example.reference_bs)?.example.reference_bs || '';
+
+  const cardsHtml = entries.map((e, idx) => {
+    const ex     = e.example;
+    const tc     = evalTagClass(e.model || '');
+    const ok     = ex.execution?.success;
+    const etype  = ex.execution?.error_type;
+
+    const resultBadge = ok
+      ? '<span class="badge pass">✓ Pass</span>'
+      : (etype === 'compile' ? '<span class="badge fail">✗ Compile error</span>'
+       : etype === 'timeout' ? '<span class="badge" style="background:#744210;color:#fef3c7">⏰ Timeout</span>'
+       : etype === 'empty'   ? '<span class="badge" style="background:#2d3748;color:#a0aec0">Empty output</span>'
+                              : '<span class="badge fail">✗ Runtime error</span>');
+
+    const matchBadge = ex.output_match === true  ? '<span class="match-tag yes">✓ Match</span>'
+                     : ex.output_match === false ? '<span class="match-tag no">✗ No match</span>'
+                                                 : '<span class="match-tag na">Match N/A</span>';
+
+    const stdout = (ex.execution?.stdout || '').slice(0, 400);
+    const stderr = (ex.execution?.stderr || '').slice(0, 400);
+
+    return `<div class="model-out-card">
+      <div class="model-out-header" data-toggle="model-out-body-${idx}">
+        <span class="model-label-tag ${tc}">${escHtml(e.model || 'unknown')}</span>
+        ${resultBadge} ${matchBadge}
+        <span class="toggle-arrow">▾</span>
+      </div>
+      <div class="model-out-body" id="model-out-body-${idx}">
+        <div class="output-label" style="margin-top:0">Generated BraneScript</div>
+        <pre style="margin:0"><code class="language-clike">${escHtml(ex.generated_bs || '(none)')}</code></pre>
+        ${stdout ? `<div class="out-mini"><div class="lbl">stdout</div><div>${escHtml(stdout)}</div></div>` : ''}
+        ${stderr ? `<div class="out-mini err"><div class="lbl">stderr</div><div>${escHtml(stderr)}</div></div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+
+  const refHtml = refBs
+    ? `<div class="ref-card">
+        <div class="ref-card-header" data-toggle="ref-card-body">
+          📋 Reference BraneScript <span class="toggle-arrow">▸</span>
+        </div>
+        <div class="ref-card-body hidden" id="ref-card-body">
+          <pre style="margin:0"><code class="language-clike">${escHtml(refBs)}</code></pre>
+        </div>
+      </div>` : '';
+
+  area.innerHTML = `
+    <div style="font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.5;font-weight:500">
+      ${escHtml(intent)}
+    </div>
+    ${cardsHtml}
+    ${refHtml}`;
+
+  area.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
+}
+
+// Toggle card open/close via event delegation on the detail area
+document.getElementById('eval-detail-area').addEventListener('click', e => {
+  const mHeader = e.target.closest('.model-out-header[data-toggle]');
+  if (mHeader) {
+    const body  = document.getElementById(mHeader.dataset.toggle);
+    const arrow = mHeader.querySelector('.toggle-arrow');
+    if (!body) return;
+    const hidden = body.classList.toggle('hidden');
+    if (arrow) arrow.textContent = hidden ? '▸' : '▾';
+    if (!hidden) body.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
+    return;
+  }
+  const rHeader = e.target.closest('.ref-card-header[data-toggle]');
+  if (rHeader) {
+    const body  = document.getElementById(rHeader.dataset.toggle);
+    const arrow = rHeader.querySelector('.toggle-arrow');
+    if (!body) return;
+    const hidden = body.classList.toggle('hidden');
+    if (arrow) arrow.textContent = hidden ? '▸' : '▾';
+    if (!hidden) body.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
+  }
+});
+
+document.getElementById('eval-intent-search').addEventListener('input', e => {
+  evalIntentSearch = e.target.value.trim();
+  renderEvalIntentList();
+});
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 fetchResults();

@@ -60,6 +60,7 @@ RESULTS_DIR          = DASHBOARD_DATA_DIR
 PACKAGES_DIR         = _PROJECT_ROOT / "packages"
 DATASETS_DIR         = _PROJECT_ROOT / "datasets"
 EXEC_RESULTS_FILE    = _PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
+EVAL_DIR             = _PROJECT_ROOT / "outputs" / "eval"
 
 PORT = int(os.environ.get("DASHBOARD_PORT", "5001"))
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1")
@@ -427,6 +428,50 @@ def api_exec_results_stats():
         "avg_time_s": avg_t,
         "sources":    sources,
     })
+
+
+# ---------------------------------------------------------------------------
+# Evaluation Results API
+# ---------------------------------------------------------------------------
+
+def _eval_run_summary(path: Path) -> dict | None:
+    """Return lightweight metadata for one eval run JSON file."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            "file":              path.name,
+            "slug":              path.stem,
+            "model":             data.get("model"),
+            "model_path":        data.get("model_path"),
+            "total":             data.get("total"),
+            "compile_rate":      data.get("compile_rate"),
+            "execution_rate":    data.get("execution_rate"),
+            "output_match_rate": data.get("output_match_rate"),
+            "output_match_n":    data.get("output_match_n"),
+            "timestamp":         data.get("timestamp"),
+        }
+    except Exception:
+        return None
+
+
+@app.route("/api/eval/runs")
+def api_eval_runs():
+    """GET /api/eval/runs — list all evaluation run summaries, newest first."""
+    if not EVAL_DIR.exists():
+        return jsonify([])
+    runs = [s for f in sorted(EVAL_DIR.glob("*.json"))
+            if (s := _eval_run_summary(f)) is not None]
+    runs.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+    return jsonify(runs)
+
+
+@app.route("/api/eval/runs/<path:slug>")
+def api_eval_run_detail(slug):
+    """GET /api/eval/runs/<slug> — full eval run with per-example details."""
+    path = EVAL_DIR / f"{slug}.json"
+    if not path.exists():
+        return jsonify({"error": "not found"}), 404
+    return jsonify(json.loads(path.read_text(encoding="utf-8")))
 
 
 # ---------------------------------------------------------------------------
