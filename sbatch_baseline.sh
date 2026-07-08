@@ -8,6 +8,7 @@
 #SBATCH --time=04:00:00
 #SBATCH --job-name=brane-baseline
 #SBATCH --output=outputs/slurm/baseline-%j.out
+#SBATCH --error=outputs/slurm/baseline-%j.err
 
 echo "Job started on $(hostname) at $(date)"
 
@@ -66,7 +67,8 @@ python "${PROJECT_DIR}/src/fine_tuning/evaluate.py" \
     --model         "${EVAL_MODEL}" \
     --label         "${EVAL_LABEL}" \
     --test-file     "${EVAL_TEST_FILE}" \
-    --generate-only
+    --generate-only \
+    --resume
 
 echo ""
 echo "✅ Baseline evaluation finished at $(date)"

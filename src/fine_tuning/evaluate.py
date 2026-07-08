@@ -203,9 +203,18 @@ def load_model(model_path: str, adapter_path: str | None = None):
     return model, tokenizer
 
 
+# Max wall-clock seconds to wait for a single generate() call before giving up.
+GENERATION_TIMEOUT = 120
+
+
 def generate_branescript(model, tokenizer, intent: str) -> str:
-    """Generate BraneScript for a given intent using greedy decoding."""
+    """
+    Generate BraneScript for a given intent using greedy decoding.
+    Runs inside a thread so it can be abandoned if it hangs past
+    GENERATION_TIMEOUT seconds (returns empty string on timeout).
+    """
     import torch
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -222,16 +231,40 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
         )
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=TEMPERATURE > 0,
-            temperature=TEMPERATURE if TEMPERATURE > 0 else None,
-            pad_token_id=tokenizer.eos_token_id,
-        )
-    new_tokens = output[0][inputs["input_ids"].shape[1]:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+    def _generate():
+        with torch.no_grad():
+            output = model.generate(
+                **inputs,
+                max_new_tokens=MAX_NEW_TOKENS,
+                do_sample=TEMPERATURE > 0,
+                temperature=TEMPERATURE if TEMPERATURE > 0 else None,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+        new_tokens = output[0][inputs["input_ids"].shape[1]:]
+        return tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_generate)
+        try:
+            return future.result(timeout=GENERATION_TIMEOUT)
+        except FuturesTimeout:
+            raise TimeoutError(
+                f"generate() timed out after {GENERATION_TIMEOUT}s"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint helper
+# ---------------------------------------------------------------------------
+
+def _write_checkpoint(path: Path, model_label: str,
+                      results: list, i: int, total: int) -> None:
+    path.write_text(
+        json.dumps({"model": model_label, "examples": results},
+                   indent=2, ensure_ascii=False, default=str)
+    )
+    print(f"   💾 Checkpoint saved ({i}/{total})", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -241,37 +274,86 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
 def evaluate(model_path: str, adapter_path: str | None = None,
              label: str | None = None,
              test_file: Path | None = None,
-             generate_only: bool = False) -> dict:
+             generate_only: bool = False,
+             resume: bool = False) -> dict:
     """
     Run full evaluation on a test set.
 
     generate_only=True  → skip Brane execution (use on Snellius or any host
                           without a running Brane instance).  Results contain
                           generated_bs for every example; execution metrics are
-                          omitted.  A companion *_generated.jsonl is saved so
+                          omitted.  A companion *_generated.json is saved so
                           the scripts can be batch-executed locally afterwards.
+    resume=True         → load an existing in-progress checkpoint and skip
+                          already-processed examples (safe to re-submit after
+                          a timeout or OOM kill).
     """
     test_set    = _load_test_set(test_file)
     ref_outs    = _load_reference_outputs() if not generate_only else {}
     model_label = label or Path(model_path).name
+    suffix      = "_generated" if generate_only else ""
+
+    EVAL_DIR.mkdir(parents=True, exist_ok=True)
+    slug        = re.sub(r"[^a-z0-9_-]", "_", model_label.lower())
+    ckpt_path   = EVAL_DIR / f"{slug}_checkpoint{suffix}.json"
+    CHECKPOINT_EVERY = 50
+
+    # ── Resume: load already-done results from checkpoint ────────────────────
+    done_results: list[dict] = []
+    done_ids: set[str] = set()
+    if resume and ckpt_path.exists():
+        try:
+            prev = json.loads(ckpt_path.read_text())
+            done_results = prev.get("examples", [])
+            done_ids = {r["id"] for r in done_results if r.get("id")}
+            print(f"♻️  Resuming from checkpoint — {len(done_results)} examples already done.")
+        except Exception as e:
+            print(f"⚠️  Could not load checkpoint ({e}) — starting fresh.")
+            done_results, done_ids = [], set()
+
+    pending = [ex for ex in test_set
+               if not (resume and ex.get("id") and ex["id"] in done_ids)]
 
     mode_str = "generate-only (no Brane execution)" if generate_only else "full (generate + execute)"
     print(f"\n{'='*60}")
     print(f"🔍 Evaluating : {model_label}")
     print(f"   Mode        : {mode_str}")
     print(f"   Test file   : {test_file or TEST_FILE}")
-    print(f"   Examples    : {len(test_set)}")
+    print(f"   Total       : {len(test_set)}  |  Pending: {len(pending)}  |  Done: {len(done_results)}")
+    print(f"   Checkpoint  : {ckpt_path.name}  (every {CHECKPOINT_EVERY} examples)")
     print(f"{'='*60}")
 
     model, tokenizer = load_model(model_path, adapter_path)
 
-    results = []
-    for i, ex in enumerate(test_set, 1):
+    results = list(done_results)
+    total   = len(test_set)
+
+    for i, ex in enumerate(pending, start=len(done_results) + 1):
         intent = ex["intent"]
-        print(f"[{i:3d}/{len(test_set)}] {intent[:65]}…", end=" ", flush=True)
+        print(f"[{i:3d}/{total}] {intent[:62]}…", end=" ", flush=True)
 
-        generated = generate_branescript(model, tokenizer, intent)
+        # ── Generate ─────────────────────────────────────────────────────────
+        try:
+            generated = generate_branescript(model, tokenizer, intent)
+        except Exception as exc:
+            print(f"💥 generation error: {exc}", flush=True)
+            results.append({
+                "id":           ex.get("id", ""),
+                "source_file":  ex.get("source_file", ""),
+                "intent":       intent,
+                "reference_bs": ex.get("branescript", ""),
+                "generated_bs": "",
+                "error":        f"generation_error: {exc}",
+                **({"execution": {"exit_code": -1, "stdout": "", "stderr": str(exc),
+                                  "success": False, "error_type": "generation"},
+                    "ref_stdout": "", "output_match": None}
+                   if not generate_only else {}),
+            })
+            if i % CHECKPOINT_EVERY == 0:
+                _write_checkpoint(ckpt_path, model_label, results, i, total)
+            continue
 
+        # ── Generate-only path ────────────────────────────────────────────────
         if generate_only:
             print("✏️ generated", flush=True)
             results.append({
@@ -281,41 +363,51 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                 "reference_bs": ex.get("branescript", ""),
                 "generated_bs": generated,
             })
-            continue
+        else:
+            # ── Execute path ──────────────────────────────────────────────────
+            try:
+                execution = _run_branescript(generated)
+            except Exception as exc:
+                print(f"💥 execution error: {exc}", flush=True)
+                execution = {"exit_code": -1, "stdout": "", "stderr": str(exc),
+                             "success": False, "error_type": "execution_error"}
 
-        execution = _run_branescript(generated)
-        ref_stdout = ref_outs.get(intent, "")
-        output_match = (execution["stdout"] == ref_stdout
-                        if execution["success"] and ref_stdout else None)
+            ref_stdout = ref_outs.get(intent, "")
+            output_match = (execution["stdout"] == ref_stdout
+                            if execution["success"] and ref_stdout else None)
 
-        status    = "✅" if execution["success"] else ("🔶" if execution["error_type"] == "runtime" else "❌")
-        match_str = (" match" if output_match else (" no-match" if output_match is False else ""))
-        print(f"{status}{match_str}", flush=True)
+            status    = "✅" if execution["success"] else ("🔶" if execution["error_type"] == "runtime" else "❌")
+            match_str = (" match" if output_match else (" no-match" if output_match is False else ""))
+            print(f"{status}{match_str}", flush=True)
 
-        results.append({
-            "id":           ex.get("id", ""),
-            "source_file":  ex.get("source_file", ""),
-            "intent":       intent,
-            "reference_bs": ex.get("branescript", ""),
-            "generated_bs": generated,
-            "execution":    execution,
-            "ref_stdout":   ref_stdout,
-            "output_match": output_match,
-        })
+            results.append({
+                "id":           ex.get("id", ""),
+                "source_file":  ex.get("source_file", ""),
+                "intent":       intent,
+                "reference_bs": ex.get("branescript", ""),
+                "generated_bs": generated,
+                "execution":    execution,
+                "ref_stdout":   ref_stdout,
+                "output_match": output_match,
+            })
 
-    # Build metrics dict
+        # Periodic checkpoint
+        if i % CHECKPOINT_EVERY == 0:
+            _write_checkpoint(ckpt_path, model_label, results, i, total)
+
+    # ── Build final metrics dict ──────────────────────────────────────────────
     metrics: dict = {
-        "model":       model_label,
-        "model_path":  model_path,
-        "adapter_path":adapter_path,
-        "total":       len(results),
-        "timestamp":   datetime.now(timezone.utc).isoformat(),
-        "examples":    results,
+        "model":        model_label,
+        "model_path":   model_path,
+        "adapter_path": adapter_path,
+        "total":        len(results),
+        "timestamp":    datetime.now(timezone.utc).isoformat(),
+        "examples":     results,
     }
 
     if generate_only:
         metrics["mode"] = "generate_only"
-        _save_results(metrics, suffix="_generated")
+        _save_results(metrics, suffix=suffix)
         print(f"\n✏️  Generated {len(results)} scripts — run execute_generated.py locally to get execution metrics.\n")
     else:
         n = len(results)
@@ -333,6 +425,11 @@ def evaluate(model_path: str, adapter_path: str | None = None,
         })
         _print_metrics(metrics)
         _save_results(metrics)
+
+    # Clean up checkpoint on successful completion
+    if ckpt_path.exists():
+        ckpt_path.unlink()
+        print(f"🗑️  Checkpoint removed (job complete).")
 
     return metrics
 
@@ -362,7 +459,7 @@ def _save_results(m: dict, suffix: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def compare_all(base_model: str, test_file: Path | None = None,
-               generate_only: bool = False) -> None:
+               generate_only: bool = False, resume: bool = False) -> None:
     """Evaluate base, SFT-merged, and GRPO-merged variants and print comparison."""
     slug        = base_model.split("/")[-1].lower()
     models_dir  = PROJECT_ROOT / "outputs" / "models"
@@ -381,12 +478,13 @@ def compare_all(base_model: str, test_file: Path | None = None,
         print(f"⚠️  GRPO merged model not found at {grpo_merged} — skipping.")
 
     all_metrics = [
-        evaluate(mp, ap, label, test_file=test_file, generate_only=generate_only)
+        evaluate(mp, ap, label, test_file=test_file,
+                 generate_only=generate_only, resume=resume)
         for mp, ap, label in variants
     ]
 
     if generate_only:
-        return  # no numeric table to print
+        return
 
     print("\n" + "="*65)
     print(f"{'Model':<30} {'Compile':>8} {'Execute':>8} {'Match':>8}")
@@ -415,6 +513,9 @@ if __name__ == "__main__":
     parser.add_argument("--generate-only", action="store_true",
                         help="Skip Brane execution — only generate BraneScript and save to JSON. "
                              "Use on Snellius or any host without a running Brane instance.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from an existing checkpoint — skips already-processed examples. "
+                             "Safe to use after a job timeout or OOM kill.")
     parser.add_argument("--compare-all", action="store_true",
                         help="Evaluate base + SFT + GRPO variants for the given model in sequence")
     args = parser.parse_args()
@@ -422,7 +523,8 @@ if __name__ == "__main__":
     tf = Path(args.test_file) if args.test_file else None
 
     if args.compare_all:
-        compare_all(args.model, test_file=tf, generate_only=args.generate_only)
+        compare_all(args.model, test_file=tf,
+                    generate_only=args.generate_only, resume=args.resume)
     else:
         evaluate(args.model, adapter_path=args.adapter, label=args.label,
-                 test_file=tf, generate_only=args.generate_only)
+                 test_file=tf, generate_only=args.generate_only, resume=args.resume)

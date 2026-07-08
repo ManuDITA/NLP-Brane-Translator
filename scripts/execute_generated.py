@@ -137,7 +137,11 @@ def execute_generated(input_path: Path) -> None:
     def _process(ex):
         intent    = ex["intent"]
         generated = ex.get("generated_bs", "")
-        execution = _run_branescript(generated)
+        try:
+            execution = _run_branescript(generated)
+        except Exception as exc:
+            execution = {"exit_code": -1, "stdout": "", "stderr": str(exc),
+                         "success": False, "error_type": "execution_error"}
         ref_stdout = ref_outs.get(intent, "")
         output_match = (execution["stdout"] == ref_stdout
                         if execution["success"] and ref_stdout else None)
@@ -161,7 +165,23 @@ def execute_generated(input_path: Path) -> None:
         futures = {pool.submit(_process, ex): (i, ex) for i, ex in pending}
         for fut in as_completed(futures):
             i, ex = futures[fut]
-            result = fut.result()
+            try:
+                result = fut.result()
+            except Exception as exc:
+                # Catch anything that slipped past _process (shouldn't happen,
+                # but guarantees no single example kills the whole run)
+                print(f"⚠️  [{i}/{total}] unhandled error — skipping: {exc}", flush=True)
+                result = {
+                    "id":           ex.get("id", ""),
+                    "source_file":  ex.get("source_file", ""),
+                    "intent":       ex.get("intent", ""),
+                    "reference_bs": ex.get("reference_bs", ""),
+                    "generated_bs": ex.get("generated_bs", ""),
+                    "execution":    {"exit_code": -1, "stdout": "", "stderr": str(exc),
+                                     "success": False, "error_type": "execution_error"},
+                    "ref_stdout":   "",
+                    "output_match": None,
+                }
             done_map[i] = result
             status = "✅" if result["execution"]["success"] else (
                 "🔶" if result["execution"]["error_type"] == "runtime" else "❌")
