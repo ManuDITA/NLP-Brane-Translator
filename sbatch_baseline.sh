@@ -36,6 +36,15 @@ if [[ -f "${PROJECT_DIR}/.env" ]]; then
     set -a; source "${PROJECT_DIR}/.env"; set +a
 fi
 
+# ── HuggingFace cache → scratch (avoids home dir quota exhaustion) ────────────
+# Pre-download models here before submitting jobs:
+#   export HF_HOME=/scratch-shared/$USER/hf_cache
+#   python3 -c "from transformers import AutoModelForCausalLM; AutoModelForCausalLM.from_pretrained('<model>')"
+export HF_HOME="${HF_HOME:-/scratch-shared/${USER}/hf_cache}"
+export TRANSFORMERS_CACHE="${HF_HOME}"
+mkdir -p "${HF_HOME}"
+echo "HF cache : ${HF_HOME}"
+
 # ── Model configuration ───────────────────────────────────────────────────────
 # Override via environment variables before calling sbatch, e.g.:
 #   EVAL_MODEL=Qwen/Qwen3-4B EVAL_LABEL="qwen3-4b (base)" sbatch sbatch_baseline.sh
