@@ -377,13 +377,12 @@ def action_compute_attack_rate() -> None:
     else:
         severity = 'low'
 
-    _out_str(json.dumps({
-        'exposed': exposed,
-        'cases': cases,
+    _out_class('AttackRate', {
         'attack_rate_pct': attack_rate,
         'severity': severity,
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-    }))
+        'exposed': exposed,
+        'cases': cases,
+    })
 
 
 def action_compute_risk_factor_prevalence() -> None:

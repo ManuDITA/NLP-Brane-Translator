@@ -13,6 +13,38 @@ entrypoint:
   kind: task
   exec: statistics.py
 
+types:
+  SummaryStats:
+    name: SummaryStats
+    properties:
+      - name: column
+        type: string
+      - name: count
+        type: integer
+      - name: mean
+        type: real
+      - name: std_dev
+        type: real
+      - name: min_val
+        type: real
+      - name: max_val
+        type: real
+      - name: median
+        type: real
+  CorrelationResult:
+    name: CorrelationResult
+    properties:
+      - name: col_a
+        type: string
+      - name: col_b
+        type: string
+      - name: pearson_r
+        type: real
+      - name: interpretation
+        type: string
+      - name: n_pairs
+        type: integer
+
 actions:
   'compute_summary_stats':
     description: "Compute descriptive statistics (mean, median, std_dev, min, max, q25, q75) for a numeric column in a CSV dataset."
@@ -25,7 +57,7 @@ actions:
         type: string
     output:
       - name: output
-        type: string
+        type: SummaryStats
 
   'count_by_category':
     description: "Count rows per unique value in a categorical column of a CSV dataset. Returns sorted frequency table as JSON string."
@@ -53,7 +85,7 @@ actions:
         type: string
     output:
       - name: output
-        type: string
+        type: CorrelationResult
 
   'detect_outliers':
     description: "Detect outliers in a numeric column using IQR or z-score method. Returns JSON string with outlier rows and thresholds."

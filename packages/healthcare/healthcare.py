@@ -4,11 +4,11 @@ Healthcare Package for NLP-Brane-Translator
 
 Brane entrypoint: the action name is read from sys.argv[1] (set via
 container.yml command.args). Input arguments arrive as uppercase env vars
-whose values are JSON-serialised by branelet (e.g. DATASET, WEIGHT_KG).
+whose values are JSON-serialised by branelet (e.g. PATIENT, WEIGHT_KG).
 
 Function categories
 -------------------
-String-based (single patient, inline JSON via DATASET env var)
+Single-patient class-based (Patient via PATIENT env var)
   validate_patient_data  -- basic field + range validation
   analyze_heart_disease  -- cardiovascular risk scoring
   generate_report        -- full report combining validation + CVD analysis
@@ -109,6 +109,70 @@ def _out_class(class_name: str, fields: Dict[str, Any]) -> None:
     serde_yaml parses ["ClassName", {fields}] as Instance(name, map).
     """
     print(yaml.dump({'output': [class_name, fields]}), end='', flush=True)
+
+
+def _parse_patient_class() -> Dict[str, Any]:
+    """Parse a Patient class instance from the PATIENT env var.
+
+    Brane serializes class inputs as JSON: ["ClassName", {fields}]
+    Nested classes (VitalSigns, LabResults) use the same format.
+    Maps BraneScript field names to the internal dict format expected
+    by the analysis helpers.
+    """
+    raw = os.environ.get("PATIENT", "")
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+    if isinstance(parsed, list) and len(parsed) == 2:
+        _, fields = parsed
+    else:
+        fields = parsed if isinstance(parsed, dict) else {}
+
+    # Unwrap nested VitalSigns
+    vs = fields.get("vital_signs", {})
+    if isinstance(vs, list) and len(vs) == 2:
+        vs = vs[1]
+    if not isinstance(vs, dict):
+        vs = {}
+
+    # Unwrap nested LabResults
+    lr = fields.get("lab_results", {})
+    if isinstance(lr, list) and len(lr) == 2:
+        lr = lr[1]
+    if not isinstance(lr, dict):
+        lr = {}
+
+    # medical_history: stored as comma-separated string in BS, convert back to list
+    mh_raw = fields.get("medical_history", "")
+    if isinstance(mh_raw, str):
+        medical_history = [h.strip() for h in mh_raw.split(",") if h.strip()]
+    elif isinstance(mh_raw, list):
+        medical_history = mh_raw
+    else:
+        medical_history = []
+
+    return {
+        "patient_id": str(fields.get("patient_id", "unknown")),
+        "age": int(fields.get("age", 0)),
+        "gender": str(fields.get("gender", "")),
+        "vital_signs": {
+            "blood_pressure": int(vs.get("blood_pressure", 120)),
+            "heart_rate": int(vs.get("heart_rate", 70)),
+            "temperature": float(vs.get("temperature", 37.0)),
+            "spo2": float(vs.get("spo2", 98)),
+            # weight_kg and height_cm are on the Patient, not VitalSigns
+            "weight_kg": int(fields.get("weight", 0)),
+            "height_cm": int(fields.get("height", 0)),
+        },
+        "lab_results": {
+            "total_cholesterol": int(lr.get("cholesterol", 0)),
+            "glucose": int(lr.get("glucose", 0)),
+            "hba1c": float(lr.get("hba1c", 0)),
+        },
+        "medical_history": medical_history,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -326,32 +390,25 @@ def _triage(data: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def action_validate_patient_data() -> None:
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        data = {}
+    data = _parse_patient_class()
     is_valid, error = _validate(data)
     _out_str(json.dumps({'is_valid': is_valid, 'error': error}))
 
 
 def action_analyze_heart_disease() -> None:
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
-    _out_str(json.dumps(_analyze_cvd(data)))
+    data = _parse_patient_class()
+    result = _analyze_cvd(data)
+    factors = result.get('risk_factors', [])
+    _out_class('RiskAssessment', {
+        'patient_id': result.get('patient_id', 'unknown'),
+        'risk_score': result.get('risk_score', 0.0),
+        'risk_level': result.get('risk_level', 'unknown'),
+        'top_factor': factors[0] if factors else 'none',
+    })
 
 
 def action_generate_report() -> None:
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
+    data = _parse_patient_class()
     is_valid, error = _validate(data)
     if not is_valid:
         _out_str(json.dumps({'status': 'validation_failed', 'error': error}))
@@ -380,42 +437,40 @@ def action_compute_bmi() -> None:
 
 
 def action_assess_diabetes_risk() -> None:
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
-    _out_str(json.dumps(_analyze_diabetes(data)))
+    data = _parse_patient_class()
+    result = _analyze_diabetes(data)
+    factors = result.get('risk_factors', [])
+    _out_class('RiskAssessment', {
+        'patient_id': result.get('patient_id', 'unknown'),
+        'risk_score': result.get('risk_score', 0.0),
+        'risk_level': result.get('risk_level', 'unknown'),
+        'top_factor': factors[0] if factors else 'none',
+    })
 
 
 def action_triage_patient() -> None:
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
-    _out_str(json.dumps(_triage(data)))
+    data = _parse_patient_class()
+    result = _triage(data)
+    steps = result.get('next_steps', [])
+    _out_class('TriageResult', {
+        'patient_id': result.get('patient_id', 'unknown'),
+        'triage_level': result.get('triage_level', 'standard'),
+        'recommendation': steps[0] if steps else 'Monitor symptoms',
+    })
 
 
 def action_get_patient_summary() -> None:
     """Return a PatientSummary class instance.
 
     BraneScript workflow usage:
-        let p := get_patient_summary("{...}");
+        let p := get_patient_summary(patient);
         println(p.risk_level);
         println(p.risk_score);
 
     FullValue::Instance is serialised as ["ClassName", {fields}] by serde,
     so we print a YAML 2-element list that serde_yaml deserialises correctly.
     """
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
+    data = _parse_patient_class()
     assessment = _analyze_cvd(data)
     _out_class('PatientSummary', {
         'patient_id': str(data.get('patient_id', 'unknown')),
@@ -733,12 +788,7 @@ def action_compute_risk_distribution() -> None:
 
 def action_compute_mortality_risk() -> None:
     """Single patient: composite mortality risk combining CVD, diabetes, and triage scores."""
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
+    data = _parse_patient_class()
 
     cvd = _analyze_cvd(data)
     dia = _analyze_diabetes(data)
@@ -773,12 +823,7 @@ def action_compute_mortality_risk() -> None:
 
 def action_check_vital_signs() -> None:
     """Single patient: flag all abnormal vital signs with clinical interpretation."""
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
+    data = _parse_patient_class()
 
     vitals = data.get('vital_signs', {})
     findings: List[Dict[str, str]] = []
@@ -845,12 +890,7 @@ def action_check_vital_signs() -> None:
 
 def action_predict_readmission_risk() -> None:
     """Single patient: predict 30-day hospital readmission risk based on clinical factors."""
-    raw = _env_str('DATASET')
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        _out_str(json.dumps({'error': 'Invalid JSON', 'status': 'failed'}))
-        return
+    data = _parse_patient_class()
 
     score = 0.0
     factors: List[str] = []

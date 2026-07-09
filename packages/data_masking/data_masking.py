@@ -28,7 +28,7 @@ Function categories
 -------------------
 String-based (inline value/record via env vars)
   mask_value          -- apply a strategy to a single string value
-  detect_pii          -- scan text for PII patterns (regex-based)
+  detect_pii          -- return PIIResult for regex-based PII detection
   mask_json_record    -- apply per-field strategies to a JSON object string
 
 Class-returning
@@ -216,12 +216,11 @@ def action_detect_pii() -> None:
     text = _env_str('TEXT')
     findings = _detect_pii_in_text(text)
     total = sum(len(v) for v in findings.values())
-    result = {
+    _out_class('PIIResult', {
         'total_matches': total,
         'pattern_types_found': len(findings),
-        'findings': findings,
-    }
-    _out_str(json.dumps(result))
+        'pii_found': total > 0,
+    })
 
 
 def action_mask_json_record() -> None:

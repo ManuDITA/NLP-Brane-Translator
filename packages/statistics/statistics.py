@@ -21,6 +21,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import yaml
+
 
 # ---------------------------------------------------------------------------
 # Env var helpers
@@ -64,6 +66,11 @@ def _env_float(name: str, default: float = 0.0) -> float:
 
 def _out_str(value: str) -> None:
     print(f'output: {json.dumps(str(value))}', flush=True)
+
+
+def _out_class(class_name: str, fields: Dict[str, Any]) -> None:
+    """Print a class instance as a YAML 2-element list ["ClassName", {…}]."""
+    print(yaml.dump({'output': [class_name, fields]}), end='', flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +149,15 @@ def action_compute_summary_stats() -> None:
     result = _stats(values)
     result['column'] = column
     result['dataset'] = os.path.basename(path)
-    _out_str(json.dumps(result))
+    _out_class('SummaryStats', {
+        'column': result.get('column', column),
+        'count': result.get('count', 0),
+        'mean': result.get('mean') or 0.0,
+        'std_dev': result.get('std_dev') or 0.0,
+        'min_val': result.get('min') or 0.0,
+        'max_val': result.get('max') or 0.0,
+        'median': result.get('median') or 0.0,
+    })
 
 
 def action_count_by_category() -> None:
@@ -207,13 +222,13 @@ def action_compute_correlation() -> None:
         interpretation = 'weak'
     direction = 'positive' if r >= 0 else 'negative'
 
-    _out_str(json.dumps({
+    _out_class('CorrelationResult', {
         'col_a': col_a,
         'col_b': col_b,
         'pearson_r': r,
         'interpretation': f'{interpretation} {direction} correlation',
         'n_pairs': n,
-    }))
+    })
 
 
 def action_detect_outliers() -> None:

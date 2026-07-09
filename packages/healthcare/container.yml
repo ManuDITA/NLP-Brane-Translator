@@ -20,7 +20,7 @@ entrypoint:
 
 # ---------------------------------------------------------------------------
 # Custom classes exposed to BraneScript.
-# In BraneScript: let p := get_patient_summary(json); println(p.risk_level);
+# In BraneScript: let p := get_patient_summary(patient); println(p.risk_level);
 # Serialization: FullValue::Instance is ["ClassName", {fields}] in serde.
 # ---------------------------------------------------------------------------
 types:
@@ -48,42 +48,90 @@ types:
         type: string
       - name: top_factor
         type: string
+  VitalSigns:
+    name: VitalSigns
+    properties:
+      - name: blood_pressure
+        type: integer
+      - name: heart_rate
+        type: integer
+      - name: spo2
+        type: integer
+      - name: temperature
+        type: real
+  LabResults:
+    name: LabResults
+    properties:
+      - name: cholesterol
+        type: integer
+      - name: glucose
+        type: integer
+      - name: hba1c
+        type: real
+  Patient:
+    name: Patient
+    properties:
+      - name: patient_id
+        type: string
+      - name: age
+        type: integer
+      - name: gender
+        type: string
+      - name: weight
+        type: integer
+      - name: height
+        type: integer
+      - name: medical_history
+        type: string
+      - name: vital_signs
+        type: VitalSigns
+      - name: lab_results
+        type: LabResults
+  TriageResult:
+    name: TriageResult
+    properties:
+      - name: patient_id
+        type: string
+      - name: triage_level
+        type: string
+      - name: recommendation
+        type: string
 
 actions:
   # -----------------------------------------------------------------------
-  # String-based functions: single patient, inline JSON data.
-  # Input arrives via uppercase env var (e.g. DATASET).
+  # Single-patient functions: Patient class input.
+  # Input arrives via uppercase env var (e.g. PATIENT).
   # Output is written to stdout as: "output: <yaml-encoded-value>"
   # -----------------------------------------------------------------------
   'validate_patient_data':
-    description: "Validate a single patient JSON record. Returns a JSON string with is_valid and error fields."
+    description: "Validate a single Patient record. Returns a JSON string with is_valid and error fields."
     command:
       args: [validate_patient_data]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: string
 
   'analyze_heart_disease':
-    description: "Analyze heart disease risk for a single patient JSON record. Returns a JSON risk-assessment string."
+    description: "Analyze heart disease risk for a single Patient record. Returns a RiskAssessment class instance."
     command:
       args: [analyze_heart_disease]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
-        type: string
+        type: RiskAssessment
 
   'generate_report':
-    description: "Generate a full health report for a single patient JSON record. Returns a JSON report string."
+    description: "Generate a full health report for a single Patient record. Returns a JSON report string."
     command:
       args: [generate_report]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: string
@@ -102,38 +150,38 @@ actions:
         type: string
 
   'assess_diabetes_risk':
-    description: "Assess type-2 diabetes risk for a single patient JSON record. Returns a JSON risk-assessment string."
+    description: "Assess type-2 diabetes risk for a single Patient record. Returns a RiskAssessment class instance."
     command:
       args: [assess_diabetes_risk]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
-        type: string
+        type: RiskAssessment
 
   'triage_patient':
-    description: "Determine triage urgency level (immediate/urgent/standard) for a patient. Returns JSON with level and next_steps."
+    description: "Determine triage urgency level (immediate/urgent/standard) for a Patient record. Returns a TriageResult class instance."
     command:
       args: [triage_patient]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
-        type: string
+        type: TriageResult
 
   # -----------------------------------------------------------------------
   # Class-returning function: returns a PatientSummary instance.
-  # BraneScript usage: let p := get_patient_summary(json); println(p.risk_level);
+  # BraneScript usage: let p := get_patient_summary(patient); println(p.risk_level);
   # -----------------------------------------------------------------------
   'get_patient_summary':
-    description: "Return a PatientSummary class instance for a single patient JSON record."
+    description: "Return a PatientSummary class instance for a single Patient record."
     command:
       args: [get_patient_summary]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: PatientSummary
@@ -238,34 +286,34 @@ actions:
         type: string
 
   'compute_mortality_risk':
-    description: "Compute composite 30-day mortality risk for a single patient JSON record, combining CVD, diabetes, and triage scores. Returns a JSON string."
+    description: "Compute composite 30-day mortality risk for a single Patient record, combining CVD, diabetes, and triage scores. Returns a JSON string."
     command:
       args: [compute_mortality_risk]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: string
 
   'check_vital_signs':
-    description: "Flag all abnormal vital signs for a single patient JSON record with clinical interpretation. Returns a JSON string with per-sign findings."
+    description: "Flag all abnormal vital signs for a single Patient record with clinical interpretation. Returns a JSON string with per-sign findings."
     command:
       args: [check_vital_signs]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: string
 
   'predict_readmission_risk':
-    description: "Predict 30-day hospital readmission risk for a single patient JSON record based on age, comorbidities, and clinical indicators. Returns a JSON string."
+    description: "Predict 30-day hospital readmission risk for a single Patient record based on age, comorbidities, and clinical indicators. Returns a JSON string."
     command:
       args: [predict_readmission_risk]
     input:
-      - name: dataset
-        type: string
+      - name: patient
+        type: Patient
     output:
       - name: output
         type: string

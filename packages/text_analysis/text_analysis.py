@@ -14,8 +14,8 @@ String-based (inline text via TEXT env var)
   count_words         -- total word count (integer)
   count_sentences     -- total sentence count (integer)
   extract_keywords    -- top-N keywords by TF weight (JSON string)
-  compute_sentiment   -- polarity + score via lexicon matching (JSON string)
-  compute_readability -- Flesch Reading Ease + grade level (JSON string)
+  compute_sentiment   -- returns SentimentResult with polarity, score, word count
+  compute_readability -- returns ReadabilityScore with Flesch score and grade
 
 Class-returning
   get_text_stats      -- returns TextStats instance
@@ -277,14 +277,20 @@ def action_compute_sentiment() -> None:
     text = _env_str('TEXT')
     tokens = _tokenise(text)
     polarity, score = _sentiment(tokens)
-    _out_str(json.dumps({'polarity': polarity, 'score': score,
-                         'word_count': len(tokens)}))
+    _out_class('SentimentResult', {
+        'polarity': polarity,
+        'score': round(float(score), 4),
+        'word_count': len(tokens),
+    })
 
 
 def action_compute_readability() -> None:
     text = _env_str('TEXT')
     flesch, grade = _readability(text)
-    _out_str(json.dumps({'flesch_score': flesch, 'grade_level': grade}))
+    _out_class('ReadabilityScore', {
+        'flesch_score': round(float(flesch), 2),
+        'grade_level': str(grade),
+    })
 
 
 def action_get_text_stats() -> None:

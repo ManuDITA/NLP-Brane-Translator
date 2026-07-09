@@ -31,6 +31,15 @@ types:
         type: string
       - name: output_format
         type: string
+  PIIResult:
+    name: PIIResult
+    properties:
+      - name: total_matches
+        type: integer
+      - name: pattern_types_found
+        type: integer
+      - name: pii_found
+        type: bool
 
 actions:
   # -----------------------------------------------------------------------
@@ -57,7 +66,7 @@ actions:
     description: >
       Scan a text string for likely PII patterns: email addresses, phone numbers,
       date-like strings, SSN-like patterns, and credit-card-like numbers.
-      Returns a JSON string listing detected pattern types and example matches.
+      Returns a PIIResult class instance summarising whether PII was detected.
     command:
       args: [detect_pii]
     input:
@@ -65,7 +74,7 @@ actions:
         type: string
     output:
       - name: output
-        type: string
+        type: PIIResult
 
   'mask_json_record':
     description: >

@@ -42,6 +42,22 @@ types:
         type: integer
       - name: score
         type: real
+  SentimentResult:
+    name: SentimentResult
+    properties:
+      - name: polarity
+        type: string
+      - name: score
+        type: real
+      - name: word_count
+        type: integer
+  ReadabilityScore:
+    name: ReadabilityScore
+    properties:
+      - name: flesch_score
+        type: real
+      - name: grade_level
+        type: string
 
 actions:
   # -----------------------------------------------------------------------
@@ -84,7 +100,7 @@ actions:
         type: string
 
   'compute_sentiment':
-    description: "Classify text sentiment as positive, negative, or neutral with a score. Returns a JSON string."
+    description: "Classify text sentiment as positive, negative, or neutral with a score. Returns a SentimentResult class instance."
     command:
       args: [compute_sentiment]
     input:
@@ -92,10 +108,10 @@ actions:
         type: string
     output:
       - name: output
-        type: string
+        type: SentimentResult
 
   'compute_readability':
-    description: "Compute Flesch Reading Ease score and US grade level for a text string. Returns a JSON string."
+    description: "Compute Flesch Reading Ease score and US grade level for a text string. Returns a ReadabilityScore class instance."
     command:
       args: [compute_readability]
     input:
@@ -103,7 +119,7 @@ actions:
         type: string
     output:
       - name: output
-        type: string
+        type: ReadabilityScore
 
   # -----------------------------------------------------------------------
   # Class-returning function: returns a TextStats instance.

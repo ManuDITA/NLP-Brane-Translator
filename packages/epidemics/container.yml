@@ -38,6 +38,17 @@ types:
         type: integer
       - name: total_cases
         type: integer
+  AttackRate:
+    name: AttackRate
+    properties:
+      - name: attack_rate_pct
+        type: real
+      - name: severity
+        type: string
+      - name: exposed
+        type: integer
+      - name: cases
+        type: integer
 
 actions:
   # -----------------------------------------------------------------------
@@ -107,7 +118,7 @@ actions:
         type: integer
     output:
       - name: output
-        type: string
+        type: AttackRate
 
   # -----------------------------------------------------------------------
   # Cross-package functions: compatible with healthcare patients CSV.
