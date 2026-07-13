@@ -478,7 +478,7 @@ def api_eval_run_detail(slug):
 
 @app.route("/api/eval/ground-truth")
 def api_eval_ground_truth():
-    """GET /api/eval/ground-truth — intent-keyed reference data from execution_results.jsonl."""
+    """GET /api/eval/ground-truth — all execution_results entries keyed by id."""
     if not EXEC_RESULTS_FILE.exists():
         return jsonify({})
     refs = {}
@@ -487,13 +487,18 @@ def api_eval_ground_truth():
             continue
         try:
             r = json.loads(line)
-            if r.get("intent") and r.get("success"):
-                refs[r["intent"]] = {
-                    "branescript":     r.get("branescript", ""),
-                    "stdout":          (r.get("stdout") or "").strip(),
+            eid = r.get("id")
+            if eid:
+                refs[eid] = {
+                    "id":                eid,
+                    "intent":            r.get("intent", ""),
+                    "branescript":       r.get("branescript", ""),
+                    "stdout":            (r.get("stdout") or "").strip(),
+                    "stderr":            (r.get("stderr") or "").strip(),
+                    "exit_code":         r.get("exit_code"),
+                    "success":           r.get("success", False),
                     "committed_results": r.get("committed_results") or {},
-                    "id":              r.get("id", ""),
-                    "source_file":     r.get("source_file", ""),
+                    "source_file":       r.get("source_file", ""),
                 }
         except Exception:
             pass

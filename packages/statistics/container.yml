@@ -5,6 +5,11 @@ kind: ecu
 
 dependencies:
   - python3
+  - python3-pip
+  - python3-yaml
+
+install:
+  - pip3 install pyyaml --break-system-packages
 
 files:
   - statistics.py
