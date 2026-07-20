@@ -45,9 +45,38 @@ RANDOM_SEED = 42
 
 # Make src/ importable
 sys.path.insert(0, str(ROOT / "src"))
-from prompts import load_system_prompt  # noqa: E402
+from prompts import load_system_prompt, build_user_message  # noqa: E402
 
 SYSTEM_PROMPT = load_system_prompt()
+
+# ---------------------------------------------------------------------------
+# Package retriever — same RAG pipeline used at inference time
+# ---------------------------------------------------------------------------
+_PKG_RETRIEVER = None
+
+def _get_pkg_retriever():
+    global _PKG_RETRIEVER
+    if _PKG_RETRIEVER is not None:
+        return _PKG_RETRIEVER
+    try:
+        from langchain_chroma import Chroma
+        from langchain_huggingface import HuggingFaceEmbeddings
+        from pkg_retriever import PkgRetriever
+        db_path = ROOT / "brane_pkg_db"
+        if not db_path.exists():
+            print("  ⚠️  brane_pkg_db not found — run: python src/knowledgeBase.py")
+            return None
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+        )
+        db = Chroma(persist_directory=str(db_path), embedding_function=embeddings)
+        _PKG_RETRIEVER = PkgRetriever(pkg_db=db, k=4)
+        print("  ✅ PkgRetriever ready for dataset preparation")
+    except Exception as e:
+        print(f"  ⚠️  Could not load PkgRetriever: {e}")
+        _PKG_RETRIEVER = None
+    return _PKG_RETRIEVER
 
 # ---------------------------------------------------------------------------
 # Load execution results: intent -> success bool
@@ -120,13 +149,17 @@ def load_examples(examples_dir: Path, exec_results: dict[str, bool]) -> list[dic
 # ---------------------------------------------------------------------------
 
 def to_chat_format(entry: dict) -> dict:
+    retriever = _get_pkg_retriever()
+    intent = entry["intent"]
+    pkg_context = retriever.run([], intent) if retriever else "(No package context available.)"
     return {
         "id":          entry.get("id", ""),
         "source_file": entry.get("source_file", ""),
-        "intent":      entry["intent"],
+        "intent":      intent,
         "messages": [
             {"role": "system",    "content": SYSTEM_PROMPT},
-            {"role": "user",      "content": entry["intent"]},
+            {"role": "user",      "content": build_user_message(
+                question=intent, pkg_context=pkg_context)},
             {"role": "assistant", "content": entry["branescript"]},
         ]
     }

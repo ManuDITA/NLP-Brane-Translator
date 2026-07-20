@@ -49,7 +49,7 @@ from pathlib import Path
 
 # Make src/ importable from fine_tuning/
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from prompts import load_system_prompt, GENERATION_USER_DIRECT  # noqa: E402
+from prompts import load_system_prompt, build_user_message  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Config
@@ -72,6 +72,40 @@ TEMPERATURE    = 0.0   # greedy for reproducible evaluation
 
 # Built once at module load — includes full syntax_reference.md
 SYSTEM_PROMPT  = load_system_prompt()
+
+# ---------------------------------------------------------------------------
+# Package retriever — lazy-initialised once on first generate call
+# ---------------------------------------------------------------------------
+_PKG_RETRIEVER = None
+
+def _get_pkg_retriever():
+    """
+    Return a PkgRetriever backed by brane_pkg_db.
+    Initialised once; returns None if the DB is not present (Snellius without sync).
+    """
+    global _PKG_RETRIEVER
+    if _PKG_RETRIEVER is not None:
+        return _PKG_RETRIEVER
+    try:
+        from langchain_chroma import Chroma
+        from langchain_huggingface import HuggingFaceEmbeddings
+        from pkg_retriever import PkgRetriever
+        db_path = PROJECT_ROOT / "brane_pkg_db"
+        if not db_path.exists():
+            print("  ⚠️  brane_pkg_db not found — no package context will be injected.")
+            print("       Run: python src/knowledgeBase.py  (or sync brane_pkg_db/ from local)")
+            return None
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+            model_kwargs={"device": "cpu"},
+        )
+        db = Chroma(persist_directory=str(db_path), embedding_function=embeddings)
+        _PKG_RETRIEVER = PkgRetriever(pkg_db=db, k=4)
+        print("  ✅ PkgRetriever ready")
+    except Exception as e:
+        print(f"  ⚠️  Could not load PkgRetriever: {e}")
+        _PKG_RETRIEVER = None
+    return _PKG_RETRIEVER
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -225,15 +259,21 @@ GENERATION_TIMEOUT = 120
 def generate_branescript(model, tokenizer, intent: str) -> str:
     """
     Generate BraneScript for a given intent using greedy decoding.
+    Uses PkgRetriever to fetch only the relevant package context for this intent
+    (same RAG pipeline as the interactive pipeline.py).
     Runs inside a thread so it can be abandoned if it hangs past
     GENERATION_TIMEOUT seconds (returns empty string on timeout).
     """
     import torch
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+    retriever = _get_pkg_retriever()
+    pkg_context = retriever.run([], intent) if retriever else "(No package context available.)"
+
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user",   "content": GENERATION_USER_DIRECT.format(question=intent)},
+        {"role": "user",   "content": build_user_message(
+            question=intent, pkg_context=pkg_context)},
     ]
     try:
         prompt = tokenizer.apply_chat_template(

@@ -35,7 +35,7 @@ from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
 from training_collector import TrainingCollector
 from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, detect_json_string_assignment, load_hf_token
-from prompts import GENERATION_SYSTEM_TEMPLATE, GENERATION_USER_TEMPLATE, load_system_prompt
+from prompts import GENERATION_SYSTEM_TEMPLATE, build_user_message, load_system_prompt
 
 # Load HuggingFace token early so embeddings download authenticated
 load_hf_token()
@@ -480,10 +480,10 @@ def run_pipeline(user_query: str,
     while attempt <= MAX_RETRIES:
         print(f"\n⚙️  Generation attempt {attempt}/{MAX_RETRIES}...")
 
-        user_msg = GENERATION_USER_TEMPLATE.format(
+        user_msg = build_user_message(
             question=user_query,
-            subtasks=subtasks_str,
             pkg_context=pkg_context,
+            subtasks=subtasks_str,
             error_section=error_section,
         )
         print(f"   📏 Prompt length: {len(system_msg) + len(user_msg)} chars")

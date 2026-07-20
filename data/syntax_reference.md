@@ -156,43 +156,33 @@ println(obi_wan.name);
 
 For complex structured data, define a separate class for each nested type. **Never use a JSON string to represent structured data** — define a class instead.
 
+> **Note:** If an imported package already exports a class type, use it directly — do NOT redefine it here. Only write a `class` block for types that no imported package provides.
+
 ```bscript
-class VitalSigns {
-    blood_pressure: int;
-    heart_rate: int;
+class Address {
+    street: string;
+    city:   string;
 }
 
-class LabResults {
-    total_cholesterol: int;
+class Order {
+    order_id: string;
+    quantity: int;
+    shipping: Address;
 }
 
-class Patient {
-    patient_id: string;
-    age: int;
-    gender: string;
-    vital_signs: VitalSigns;
-    lab_results: LabResults;
-}
-
-let vitals := new VitalSigns {
-    blood_pressure := 150,
-    heart_rate     := 80,
+let addr := new Address {
+    street := "123 Main St",
+    city   := "Amsterdam",
 };
 
-let labs := new LabResults {
-    total_cholesterol := 220,
+let order := new Order {
+    order_id := "ORD-001",
+    quantity := 3,
+    shipping := addr,
 };
 
-let patient := new Patient {
-    patient_id  := "PAT001",
-    age         := 55,
-    gender      := "M",
-    vital_signs := vitals,
-    lab_results := labs,
-};
-
-println(patient.patient_id);
-println(patient.vital_signs.blood_pressure);
+println(order.order_id);
+println(order.shipping.city);
 ```
 
 Classes can also have methods (using `self`):
@@ -396,45 +386,41 @@ return commit_result("output", result);
 
 ## Complete Example — Healthcare Analysis
 
+The `healthcare` package exports `VitalSigns`, `LabResults`, and `Patient` as class types.
+Do NOT redefine them — just use them directly after `import healthcare;`.
+
 ```bscript
 import healthcare;
 
-class VitalSigns {
-    blood_pressure: int;
-    heart_rate: int;
-}
-
-class LabResults {
-    total_cholesterol: int;
-}
-
-class Patient {
-    patient_id: string;
-    age: int;
-    gender: string;
-    vital_signs: VitalSigns;
-    lab_results: LabResults;
-}
+// VitalSigns, LabResults, and Patient are exported by the healthcare package.
+// Do NOT write class definitions for them — use new ClassName { ... } directly.
 
 let vitals := new VitalSigns {
     blood_pressure := 150,
     heart_rate     := 80,
+    spo2           := 97,
+    temperature    := 37.2,
 };
 
 let labs := new LabResults {
-    total_cholesterol := 220,
+    cholesterol := 220,
+    glucose     := 105,
+    hba1c       := 6.1,
 };
 
 let patient := new Patient {
-    patient_id  := "PAT001",
-    age         := 55,
-    gender      := "M",
-    vital_signs := vitals,
-    lab_results := labs,
+    patient_id      := "PAT001",
+    age             := 55,
+    gender          := "M",
+    weight          := 85,
+    height          := 175,
+    medical_history := "hypertension",
+    vital_signs     := vitals,
+    lab_results     := labs,
 };
 
 let risk := analyze_heart_disease(patient);
-println(risk);
+println(risk.risk_level);
 
 let report := generate_report(patient);
 println(report);
