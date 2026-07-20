@@ -17,9 +17,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Model list ──────────────────────────────────────────────────────────────
 # Format: "HuggingFace/model-id|human label"
 MODELS=(
-    "Qwen/Qwen3-4B|qwen3-4b (base)"
-    "Qwen/Qwen3-8B|qwen3-8b (base)"
-    "Qwen/Qwen3-32B|qwen3-32b (base)"
+    "Qwen/Qwen3.5-4B|qwen3.5-4b (base)"
+    "Qwen/Qwen3.5-9B|qwen3.5-9b (base)"
+    "Qwen/Qwen3.6-27B|qwen3.6-27b (base)"
 )
 
 # ── Submit ───────────────────────────────────────────────────────────────────
