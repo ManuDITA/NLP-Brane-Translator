@@ -1,0 +1,163 @@
+# container.yml for the Genomics package
+name: genomics
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-pip
+  - python3-yaml
+
+install:
+  - pip3 install pyyaml --break-system-packages
+
+files:
+  - genomics_pkg.py
+
+entrypoint:
+  kind: task
+  exec: genomics_pkg.py
+
+types:
+  SequenceStats:
+    name: SequenceStats
+    properties:
+      - name: length
+        type: integer
+      - name: gc_content
+        type: real
+      - name: at_content
+        type: real
+      - name: gc_at_ratio
+        type: real
+      - name: has_start_codon
+        type: string
+      - name: has_stop_codon
+        type: string
+
+  AlignmentResult:
+    name: AlignmentResult
+    properties:
+      - name: query
+        type: string
+      - name: subject
+        type: string
+      - name: identity_pct
+        type: real
+      - name: length
+        type: integer
+      - name: mismatches
+        type: integer
+      - name: gaps
+        type: integer
+
+actions:
+
+  # Compute GC content (percentage) of a DNA sequence.
+  # Returns a formatted percentage string e.g. "55.56".
+  'compute_gc_content':
+    description: "Compute the GC content percentage of a DNA sequence string (e.g. 'ATGCGATCG'). Returns the percentage as a string (e.g. '55.56')."
+    input:
+      - name: sequence
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [compute_gc_content]
+
+  # Return the Watson-Crick complement of a DNA sequence (A↔T, G↔C).
+  # Case-preserving; N maps to N.
+  'get_complement':
+    description: "Return the Watson-Crick complement of a DNA sequence (A↔T, G↔C). Case-preserving; N stays N."
+    input:
+      - name: sequence
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_complement]
+
+  # Return the reverse complement of a DNA sequence (5'→3').
+  'get_reverse_complement':
+    description: "Return the reverse complement of a DNA sequence (complement read 3'→5', i.e. the standard reverse complement)."
+    input:
+      - name: sequence
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_reverse_complement]
+
+  # Count non-overlapping occurrences of a motif in a sequence.
+  'count_motif':
+    description: "Count non-overlapping occurrences of a short motif (e.g. 'ATG', 'CG') in a DNA sequence. Returns count as a string."
+    input:
+      - name: sequence
+        type: string
+      - name: motif
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [count_motif]
+
+  # Compute full statistics for a DNA sequence.
+  # Returns a SequenceStats class instance.
+  'analyze_sequence':
+    description: "Compute full statistics for a DNA sequence: length, gc_content (%), at_content (%), gc_at_ratio, has_start_codon ('true'/'false'), has_stop_codon ('true'/'false'). Returns a SequenceStats instance."
+    input:
+      - name: sequence
+        type: string
+    output:
+      - name: output
+        type: SequenceStats
+    command:
+      args: [analyze_sequence]
+
+  # Translate a DNA sequence to a protein sequence using the standard genetic code.
+  # Translation starts at position 0 and stops at the first in-frame stop codon.
+  # Returns single-letter amino acid codes.
+  'translate_dna':
+    description: "Translate a DNA sequence to a protein sequence using the standard genetic code. Starts at position 0, stops at first in-frame stop codon. Returns single-letter amino acid codes as a string."
+    input:
+      - name: sequence
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [translate_dna]
+
+  # Compute the Hamming distance (number of mismatching positions) between two
+  # same-length DNA sequences. Returns "-1" if lengths differ.
+  'compute_hamming_distance':
+    description: "Compute the Hamming distance (number of mismatching positions) between two DNA sequences of equal length. Returns the distance as a string, or '-1' if lengths differ."
+    input:
+      - name: seq_a
+        type: string
+      - name: seq_b
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [compute_hamming_distance]
+
+  # Align two DNA sequences and return alignment statistics.
+  # Shorter sequence is right-padded with gaps.
+  'align_sequences':
+    description: "Align two DNA sequences and return alignment statistics: identity_pct, length, mismatches, gaps. Shorter sequence is padded with gaps. Returns an AlignmentResult instance."
+    input:
+      - name: seq_a
+        type: string
+      - name: seq_b
+        type: string
+    output:
+      - name: output
+        type: AlignmentResult
+    command:
+      args: [align_sequences]
