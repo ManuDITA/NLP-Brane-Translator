@@ -123,9 +123,12 @@ def _run(code: str, timeout: int = BRANE_TIMEOUT) -> dict:
 # Reference output loading
 # ---------------------------------------------------------------------------
 
-def _load_refs() -> dict:
-    """id → {stdout, committed_results} from execution_results + test_results."""
+def _load_refs() -> tuple[dict, set]:
+    """id → {stdout, committed_results} from execution_results + test_results.
+    Also returns a set of time-dependent entry IDs (stdout must not be compared).
+    """
     refs: dict = {}
+    time_dependent: set[str] = set()
     for src in [EXEC_RESULTS, TEST_RESULTS]:
         if not src.exists():
             continue
@@ -140,9 +143,11 @@ def _load_refs() -> dict:
                         "stdout":            (r.get("stdout") or "").strip(),
                         "committed_results": r.get("committed_results") or {},
                     }
+                if r.get("time_dependent") and eid:
+                    time_dependent.add(eid)
             except Exception:
                 pass
-    return refs
+    return refs, time_dependent
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +166,8 @@ def _needs_execution(data: dict) -> bool:
     return False
 
 
-def execute_file(input_path: Path, refs: dict, force: bool = False,
+def execute_file(input_path: Path, refs: dict, time_dependent: set,
+                 force: bool = False,
                  workers: int = BRANE_WORKERS,
                  timeout: int = BRANE_TIMEOUT) -> Path | None:
     """Execute a generated file and save result. Returns output path, or None if skipped."""
@@ -207,9 +213,11 @@ def execute_file(input_path: Path, refs: dict, force: bool = False,
         ref            = refs.get(eid) or refs.get(ex.get("intent", ""), {})
         ref_stdout     = ref.get("stdout", "") if ref else ""
         ref_committed  = ref.get("committed_results", {}) if ref else {}
+        is_time_dep    = eid in time_dependent
 
         stdout_match = (execution["stdout"] == ref_stdout
-                        if execution["success"] and ref_stdout else None)
+                        if execution["success"] and ref_stdout and not is_time_dep
+                        else None)
         committed_match = (compare_committed(ref_committed,
                                              execution.get("committed_results", {}))
                            if execution["success"] and ref_committed else None)
@@ -384,8 +392,8 @@ def main() -> None:
     if not gen_files:
         sys.exit(0)
 
-    refs = _load_refs()
-    print(f"📚 Loaded {len(refs)} reference outputs")
+    refs, time_dependent = _load_refs()
+    print(f"📚 Loaded {len(refs)} reference outputs ({len(time_dependent)} time-dependent, stdout not compared)")
 
     out_paths = []
     for f in gen_files:
@@ -396,7 +404,7 @@ def main() -> None:
         except Exception:
             print(f"  ⚠️  {f.name}: not valid JSON — skipping")
             continue
-        out = execute_file(f, refs, force=args.force,
+        out = execute_file(f, refs, time_dependent, force=args.force,
                            workers=args.workers, timeout=args.timeout)
         if out:
             out_paths.append(out)

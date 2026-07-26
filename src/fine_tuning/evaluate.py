@@ -195,8 +195,10 @@ def _load_reference_outputs() -> dict[str, str]:
     Load intent → reference stdout.
     Checks execution_results.jsonl (full 607 suite) first, then test_results.jsonl.
     Both files are merged so coverage is maximised.
+    Returns: (refs dict, time_dependent set of intents)
     """
     refs = {}
+    time_dependent: set[str] = set()
     for src in [EXEC_RESULTS, TEST_RESULTS]:
         if not src.exists():
             continue
@@ -205,13 +207,16 @@ def _load_reference_outputs() -> dict[str, str]:
                 continue
             try:
                 r = json.loads(line)
-                if r.get("success") and r.get("intent") and r["intent"] not in refs:
-                    refs[r["intent"]] = (r.get("stdout") or "").strip()
+                intent = r.get("intent", "")
+                if r.get("success") and intent and intent not in refs:
+                    refs[intent] = (r.get("stdout") or "").strip()
+                if r.get("time_dependent") and intent:
+                    time_dependent.add(intent)
             except Exception:
                 pass
     if not refs:
         print("⚠️  No reference outputs found — output_match_rate will be skipped.")
-    return refs
+    return refs, time_dependent
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +349,10 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                           a timeout or OOM kill).
     """
     test_set    = _load_test_set(test_file)
-    ref_outs    = _load_reference_outputs() if not generate_only else {}
+    if not generate_only:
+        ref_outs, time_dep_intents = _load_reference_outputs()
+    else:
+        ref_outs, time_dep_intents = {}, set()
     model_label = label or Path(model_path).name
     suffix      = "_generated" if generate_only else ""
 
@@ -428,8 +436,10 @@ def evaluate(model_path: str, adapter_path: str | None = None,
                              "success": False, "error_type": "execution_error"}
 
             ref_stdout = ref_outs.get(intent, "")
+            is_time_dep = intent in time_dep_intents
             output_match = (execution["stdout"] == ref_stdout
-                            if execution["success"] and ref_stdout else None)
+                            if execution["success"] and ref_stdout and not is_time_dep
+                            else None)
 
             status    = "✅" if execution["success"] else ("🔶" if execution["error_type"] == "runtime" else "❌")
             match_str = (" match" if output_match else (" no-match" if output_match is False else ""))

@@ -10,7 +10,6 @@ brane_pkg_db/
 DYNAMOS/
 generated_branescripts/
 runs/*
-data/training/
 .env
 scripts/__pycache__/*
 *__pycache__/*
