@@ -654,7 +654,7 @@ def action_generate_epidemic_report() -> None:
     html = (
         '<!DOCTYPE html><html><head><title>Epidemic Report</title></head><body>'
         '<h1>Epidemic Surveillance Report</h1>'
-        f'<p>Generated: {ts} | Population: {population:,}</p>'
+        f'<p>Population: {population:,}</p>'
         f'<p>Total cases: {total_cases_all} | Deaths: {deaths_all} | '
         f'Active locations: {len(active_locs)}</p>'
         '<table border="1" cellpadding="4">'
