@@ -781,7 +781,6 @@ def action_compute_risk_distribution() -> None:
         'total_patients': total,
         'distribution': distribution,
         'percentages': percentages,
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
