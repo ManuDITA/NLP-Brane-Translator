@@ -21,3 +21,4 @@ outputs/slurm/
 outputs/models/
 outputs/eval/*.json
 outputs/pipeline/
+unsloth_compiled_cache/
