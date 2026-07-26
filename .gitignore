@@ -2,7 +2,7 @@
 submodules/manual/*
 submodules/languageSpec/*
 submodules/specification/*
-
+data/training/
 brane_knowledge_db/
 src/__pycache__/*
 brane_lang_db/
