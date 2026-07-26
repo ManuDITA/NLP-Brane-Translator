@@ -25,7 +25,6 @@ import json
 import math
 import os
 import sys
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -227,7 +226,6 @@ def action_compute_incidence_rate() -> None:
     _out_str(json.dumps({
         'locations': results,
         'period_days': len(set(r.get('date', '') for r in rows)),
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
@@ -276,7 +274,6 @@ def action_detect_outbreak() -> None:
 
     _out_str(json.dumps({
         'locations': results,
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
@@ -316,7 +313,6 @@ def action_estimate_reproduction_number() -> None:
 
     _out_str(json.dumps({
         'locations': results,
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
@@ -350,7 +346,6 @@ def action_classify_epidemic_stage() -> None:
 
     _out_str(json.dumps({
         'locations': results,
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
@@ -445,7 +440,6 @@ def action_compute_risk_factor_prevalence() -> None:
         'age_distribution': age_distribution,
         'gender_distribution': gender_counts,
         'high_cvd_risk_pct': round(high_cvd_markers / total * 100, 1),
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
     }))
 
 
@@ -512,7 +506,6 @@ def action_analyze_health_cohort() -> None:
             'population_at_risk_pct': population_at_risk_pct,
             'average_risk_score': avg_score,
             'public_health_alert': 'high' if high_pct >= 30 else ('moderate' if high_pct >= 15 else 'low'),
-            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         }))
 
     else:  # triage
@@ -525,7 +518,6 @@ def action_analyze_health_cohort() -> None:
             'triage_distribution': summary,
             'immediate_care_pct': immediate_pct,
             'public_health_alert': 'high' if immediate_pct >= 20 else ('moderate' if immediate_pct >= 5 else 'low'),
-            'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         }))
 
 
@@ -586,7 +578,6 @@ def action_generate_epidemic_report() -> None:
 
     _, rows = _load_cases_csv(path)
     groups = _group_by_location(rows)
-    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     locations_report = {}
     csv_rows = []
@@ -634,7 +625,6 @@ def action_generate_epidemic_report() -> None:
     active_locs = [loc for loc, v in locations_report.items() if v['epidemic_stage'] not in ('resolved',)]
 
     report = {
-        'generated_at': ts,
         'population': population,
         'total_cases_all_locations': total_cases_all,
         'total_deaths_all_locations': deaths_all,

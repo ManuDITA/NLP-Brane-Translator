@@ -417,7 +417,6 @@ def action_generate_report() -> None:
     report = {
         'status': 'success',
         'patient_id': data.get('patient_id', 'unknown'),
-        'timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'analysis': assessment,
         'overall_risk_level': assessment['risk_level'],
     }
