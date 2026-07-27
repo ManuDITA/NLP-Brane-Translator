@@ -37,10 +37,11 @@ GENERATION_SYSTEM_TEMPLATE = """You are an expert in the Brane Framework and Bra
 11. Always generate code. If information seems missing, use a reasonable placeholder value and generate the best code you can.
 12. When a package exports class types (listed in PACKAGE / DATASET CONTEXT), use them directly — do NOT redeclare them. Just use `new ClassName {{ field := value, ... }}`. Only define a new `class` block for types that are NOT exported by any imported package.
 13. NEVER use backslash-escaped quotes (like `\"`) in your output. If a function parameter is typed as `string` and requires structured data, build a plain string with standard quotes. If the parameter is a class type, use `new ClassName {{ ... }}` — never serialize it as a JSON string.
+13b. NEVER use empty strings (`""`). BraneScript does not support empty string literals. If a string field has no meaningful value, use `"none"` as a placeholder.
 14. Do NOT re-implement logic that the package function already handles internally. Your job is to define the input data, call the package function, and print the result. Do NOT manually compute scores, risk levels, or any derived values that the function returns.
 15. Arrays (`[1, 2, 3]`) are valid as standalone variables and can be indexed with `arr[i]`. However, class field types can ONLY be primitives (`int`, `real`, `bool`, `string`) or other class types — do NOT use `array<T>`, `list<T>`, or `List` as a class field type.
 16. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
-17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. To persist output data, use `commit_result("new-name", result_variable);` after calling the function.
+17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. Use `commit_result("new-name", result_variable);` to persist the output when the intent requires saving or naming the result. If the intent only needs to pass the result to another function, you may do so directly without committing.
 18. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
 
 LANGUAGE SPEC CONTEXT (full BraneScript syntax reference):

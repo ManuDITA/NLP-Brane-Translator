@@ -377,7 +377,7 @@ return commit_result("output", result);
 | `int`                | `42`, `-7`                                           |
 | `real`               | `3.14`, `-0.5`                                       |
 | `bool`               | `true`, `false`                                      |
-| `string`             | `"hello"`                                            |
+| `string`             | `"hello"` — **NEVER use empty strings `""`; use `"none"` as a placeholder** |
 | `Data`               | `new Data { name := "ds" }` — reference to a dataset |
 | `IntermediateResult` | returned by package functions; use `commit_result("name", result)` to persist |
 | Array                | `[1, 2, 3]`                                          |
