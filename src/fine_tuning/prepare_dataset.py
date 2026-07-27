@@ -112,7 +112,7 @@ def load_execution_results(path: Path) -> dict[str, bool]:
 def load_examples(examples_dir: Path, exec_results: dict[str, bool]) -> list[dict]:
     examples = []
     total = kept = filtered = 0
-    for jsonl_file in sorted(examples_dir.glob("*.jsonl")):
+    for jsonl_file in sorted(f for f in examples_dir.glob("*.jsonl") if f.name != "all_examples.jsonl"):
         file_total = file_kept = 0
         with open(jsonl_file, "r", encoding="utf-8") as f:
             for line in f:
