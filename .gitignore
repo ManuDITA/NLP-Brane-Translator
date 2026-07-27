@@ -2,7 +2,7 @@
 submodules/manual/*
 submodules/languageSpec/*
 submodules/specification/*
-
+data/training/
 brane_knowledge_db/
 src/__pycache__/*
 brane_lang_db/
@@ -20,3 +20,4 @@ outputs/slurm/
 outputs/models/
 outputs/eval/*.json
 outputs/pipeline/
+unsloth_compiled_cache/
