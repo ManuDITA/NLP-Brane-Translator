@@ -112,12 +112,33 @@ def _get_pkg_retriever():
 # ---------------------------------------------------------------------------
 
 def _extract_branescript(text: str) -> str:
-    """Strip thinking blocks and markdown fences from model output."""
+    """Strip thinking blocks and markdown fences from model output.
+
+    Handles three shapes:
+      1. Code wrapped in fences: ```branescript\\n...\\n```
+      2. Valid code followed by trailing ``` repetition garbage (SFT repetition loop)
+      3. Raw BraneScript with no fences at all
+    """
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+    # Case 1: code is properly wrapped in fences
     m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
-    if m:
+    if m and m.group(1).strip():
         return m.group(1).strip()
-    return text.strip()
+
+    # Case 2: valid code appears before trailing ``` garbage
+    # (common SFT degenerate pattern: code + \n``` ``` ``` ...)
+    first_fence = text.find("```")
+    if first_fence > 20:
+        return text[:first_fence].strip()
+
+    # Case 3: raw BraneScript, strip any leftover backtick noise at the end
+    code = text.rstrip("`\n ").strip()
+
+    # Strip leaked language specifier (e.g. "bscript\n" or "branescript\n")
+    code = re.sub(r"^b(?:rane)?script\s*\n", "", code, flags=re.IGNORECASE)
+
+    return code
 
 
 def _run_branescript(code: str) -> dict:
@@ -300,6 +321,7 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
                 do_sample=TEMPERATURE > 0,
                 temperature=TEMPERATURE if TEMPERATURE > 0 else None,
                 pad_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.3,   # prevents ``` ``` ``` repetition loops
             )
         new_tokens = output[0][inputs["input_ids"].shape[1]:]
         return tokenizer.decode(new_tokens, skip_special_tokens=True)
