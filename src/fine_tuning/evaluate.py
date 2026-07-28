@@ -111,34 +111,32 @@ def _get_pkg_retriever():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_branescript(text: str) -> str:
-    """Strip thinking blocks and markdown fences from model output.
+def _get_backtick_token_ids(tokenizer) -> list[int]:
+    """Return all vocab token IDs that contain a backtick character.
 
-    Handles three shapes:
-      1. Code wrapped in fences: ```branescript\\n...\\n```
-      2. Valid code followed by trailing ``` repetition garbage (SFT repetition loop)
-      3. Raw BraneScript with no fences at all
+    BraneScript has no backtick syntax so suppressing these tokens at
+    generation time prevents markdown code fences and the ``` repetition-loop
+    degenerate pattern that fine-tuned Qwen3 models exhibit.
     """
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    ids = []
+    for token_id in range(tokenizer.vocab_size):
+        try:
+            decoded = tokenizer.decode([token_id], skip_special_tokens=True)
+            if "`" in decoded:
+                ids.append(token_id)
+        except Exception:
+            pass
+    return ids
 
-    # Case 1: code is properly wrapped in fences
+
+def _extract_branescript(text: str) -> str:
+    """Strip thinking blocks and any residual markdown fences from model output."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    # Unwrap code fences if a model somehow still generates them
     m = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
     if m and m.group(1).strip():
         return m.group(1).strip()
-
-    # Case 2: valid code appears before trailing ``` garbage
-    # (common SFT degenerate pattern: code + \n``` ``` ``` ...)
-    first_fence = text.find("```")
-    if first_fence > 20:
-        return text[:first_fence].strip()
-
-    # Case 3: raw BraneScript, strip any leftover backtick noise at the end
-    code = text.rstrip("`\n ").strip()
-
-    # Strip leaked language specifier (e.g. "bscript\n" or "branescript\n")
-    code = re.sub(r"^b(?:rane)?script\s*\n", "", code, flags=re.IGNORECASE)
-
-    return code
+    return text.strip()
 
 
 def _run_branescript(code: str) -> dict:
@@ -313,6 +311,11 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
+    # BraneScript has no backtick syntax.  Suppressing all token IDs that
+    # decode to a backtick prevents the model from ever generating a markdown
+    # code fence and eliminates the ``` repetition-loop degenerate pattern.
+    _backtick_ids = _get_backtick_token_ids(tokenizer)
+
     def _generate():
         with torch.no_grad():
             output = model.generate(
@@ -321,7 +324,7 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
                 do_sample=TEMPERATURE > 0,
                 temperature=TEMPERATURE if TEMPERATURE > 0 else None,
                 pad_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.3,   # prevents ``` ``` ``` repetition loops
+                suppress_tokens=_backtick_ids,
             )
         new_tokens = output[0][inputs["input_ids"].shape[1]:]
         return tokenizer.decode(new_tokens, skip_special_tokens=True)
