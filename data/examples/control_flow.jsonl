@@ -1,4 +1,4 @@
-{"id": "control_flow-0001", "intent": "Check if the number 42 is positive or negative and print the result", "branescript": "let n := 42;\nif (n > 0) {\n    println(\"positive\");\n} else {\n    println(\"non-positive\");\n}"}
+{"id": "control_flow-0001", "intent": "Check if the number 42 is positive or non-positive and print either 'positive' or 'non-positive'", "branescript": "let n := 42;\nif (n > 0) {\n    println(\"positive\");\n} else {\n    println(\"non-positive\");\n}"}
 {"id": "control_flow-0002", "intent": "Use a while loop to count from 0 to 4 and print each value", "branescript": "let i := 0;\nwhile (i < 5) {\n    println(i);\n    i := i + 1;\n}"}
 {"id": "control_flow-0003", "intent": "Use a for loop to count from 0 to 9 and print each value", "branescript": "for (let i := 0; i < 10; i := i + 1) {\n    println(i);\n}"}
 {"id": "control_flow-0004", "intent": "For each number from 1 to 5, compute its double and print it", "branescript": "for (let i := 1; i <= 5; i := i + 1) {\n    let doubled := i * 2;\n    println(doubled);\n}"}
