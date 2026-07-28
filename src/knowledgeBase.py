@@ -167,11 +167,14 @@ def load_dataset_docs(datasets_path: Path) -> list:
             f"Do NOT pass the name as a plain string — always use `new Data{{ name := \"...\" }}`.\n\n"
             f"Full data.yml:\n{raw}"
         )
+        # dataset_folder matches the package name (data_masking, epidemics, etc.)
+        package_name = dataset_folder
         docs.append(Document(
             page_content=synthetic,
             metadata={
                 "source": str(data_yml),
                 "dataset": registered_name,
+                "package": package_name,
                 "doc_type": "dataset_registry",
             }
         ))
@@ -186,6 +189,7 @@ def load_dataset_docs(datasets_path: Path) -> list:
                     metadata={
                         "source": str(readme),
                         "dataset": registered_name,
+                        "package": package_name,
                         "doc_type": "dataset_readme",
                     }
                 ))
