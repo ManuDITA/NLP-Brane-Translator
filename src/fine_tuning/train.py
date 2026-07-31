@@ -374,6 +374,9 @@ def _build_sft_config(resume_from):
         greater_is_better=False,
         report_to="none",
         dataset_text_field="text",
+        # Do NOT set packing=True — responses are variable length and packing
+        # would concatenate multiple examples, breaking response masking.
+        packing=False,
     )
 
 
@@ -397,11 +400,27 @@ def _sft_unsloth(resume_from):
     val_ds   = Dataset.from_list(format_sft_samples(load_jsonl(VAL_FILE),   tokenizer))
     print(f"✅ Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
-    SFTTrainer(
+    trainer = SFTTrainer(
         model=model, tokenizer=tokenizer,
         train_dataset=train_ds, eval_dataset=val_ds,
         max_seq_length=MAX_SEQ_LEN, args=_build_sft_config(resume_from),
-    ).train(resume_from_checkpoint=resume_from)
+    )
+
+    # Response-only training: only compute loss on the assistant reply tokens,
+    # not on the system prompt or user message. This gives the model a much
+    # stronger signal to learn BraneScript AND to stop with <|im_end|>.
+    try:
+        from unsloth.chat_templates import train_on_responses_only
+        trainer = train_on_responses_only(
+            trainer,
+            instruction_part="<|im_start|>user\n",
+            response_part="<|im_start|>assistant\n",
+        )
+        print("✅ Response-only training enabled (unsloth)")
+    except Exception as exc:
+        print(f"⚠️  train_on_responses_only not available: {exc} — training on full sequence")
+
+    trainer.train(resume_from_checkpoint=resume_from)
 
     print(f"\n💾 Saving SFT adapter → {OUTPUT_DIR}")
     model.save_pretrained(str(OUTPUT_DIR))
@@ -442,10 +461,29 @@ def _sft_plain(resume_from):
     val_ds   = Dataset.from_list(format_sft_samples(load_jsonl(VAL_FILE),   tokenizer))
     print(f"✅ Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
+    # Response-only training: mask system+user tokens from the loss so the
+    # model only learns to predict the assistant (BraneScript) tokens.
+    # This gives a clean gradient signal on the code AND on <|im_end|> (stop).
+    try:
+        from trl import DataCollatorForCompletionOnlyLM
+        # <|im_start|>assistant\n marks the start of every assistant reply in ChatML
+        response_template_ids = tokenizer.encode(
+            "<|im_start|>assistant\n", add_special_tokens=False
+        )
+        collator = DataCollatorForCompletionOnlyLM(
+            response_template_ids, tokenizer=tokenizer
+        )
+        print("✅ Response-only training enabled (DataCollatorForCompletionOnlyLM)")
+    except Exception as exc:
+        print(f"⚠️  DataCollatorForCompletionOnlyLM not available: {exc} — training on full sequence")
+        collator = None
+
     SFTTrainer(
         model=model, tokenizer=tokenizer,
         train_dataset=train_ds, eval_dataset=val_ds,
-        max_seq_length=MAX_SEQ_LEN, args=_build_sft_config(resume_from),
+        max_seq_length=MAX_SEQ_LEN,
+        data_collator=collator,
+        args=_build_sft_config(resume_from),
     ).train(resume_from_checkpoint=resume_from)
 
     print(f"\n💾 Saving SFT adapter → {OUTPUT_DIR}")

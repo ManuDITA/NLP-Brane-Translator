@@ -1,0 +1,18 @@
+# Keyword aliases for the genomics package.
+genome
+genomics
+dna
+rna
+sequence
+nucleotide
+gc content
+mutation
+variant
+gene
+snp
+fasta
+complement
+reverse complement
+codon
+protein
+amino acid

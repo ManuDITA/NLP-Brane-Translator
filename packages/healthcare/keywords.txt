@@ -1,0 +1,30 @@
+# Keyword aliases for the healthcare package.
+# One term per line. Used by pkg_retriever to detect when this package is relevant
+# even if the user does not mention the package name explicitly.
+patient
+patients
+heart disease
+cardiovascular
+cvd
+blood pressure
+heart rate
+spo2
+oxygen saturation
+cholesterol
+glucose
+hba1c
+triage
+vital signs
+lab results
+medical history
+diabetes
+readmission
+mortality
+risk score
+risk level
+risk distribution
+cohort
+bmi
+body mass index
+clinical
+clinical report

@@ -111,24 +111,6 @@ def _get_pkg_retriever():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_backtick_token_ids(tokenizer) -> list[int]:
-    """Return all vocab token IDs that contain a backtick character.
-
-    BraneScript has no backtick syntax so suppressing these tokens at
-    generation time prevents markdown code fences and the ``` repetition-loop
-    degenerate pattern that fine-tuned Qwen3 models exhibit.
-    """
-    ids = []
-    for token_id in range(tokenizer.vocab_size):
-        try:
-            decoded = tokenizer.decode([token_id], skip_special_tokens=True)
-            if "`" in decoded:
-                ids.append(token_id)
-        except Exception:
-            pass
-    return ids
-
-
 def _extract_branescript(text: str) -> str:
     """Strip thinking blocks and any residual markdown fences from model output."""
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
@@ -311,10 +293,18 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
 
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
-    # BraneScript has no backtick syntax.  Suppressing all token IDs that
-    # decode to a backtick prevents the model from ever generating a markdown
-    # code fence and eliminates the ``` repetition-loop degenerate pattern.
-    _backtick_ids = _get_backtick_token_ids(tokenizer)
+    # Qwen3 models use both <|im_end|> and <|endoftext|> as stop tokens.
+    # Pass them explicitly so generation always stops at the end of the
+    # assistant turn regardless of what the merged model's generation_config
+    # happens to contain.
+    _eos_ids = list({
+        tokenizer.eos_token_id,
+        *( tokenizer.additional_special_tokens_ids or [] ),
+    } - {None})
+    # Ensure <|im_end|> is included if it's in the vocab
+    im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+    if isinstance(im_end, int) and im_end not in _eos_ids:
+        _eos_ids.append(im_end)
 
     def _generate():
         with torch.no_grad():
@@ -323,8 +313,8 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
                 max_new_tokens=MAX_NEW_TOKENS,
                 do_sample=TEMPERATURE > 0,
                 temperature=TEMPERATURE if TEMPERATURE > 0 else None,
+                eos_token_id=_eos_ids,
                 pad_token_id=tokenizer.eos_token_id,
-                suppress_tokens=_backtick_ids,
             )
         new_tokens = output[0][inputs["input_ids"].shape[1]:]
         return tokenizer.decode(new_tokens, skip_special_tokens=True)

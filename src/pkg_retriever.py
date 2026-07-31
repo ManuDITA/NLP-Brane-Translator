@@ -11,54 +11,15 @@ Two-stage retrieval:
      back to embedding similarity search across all packages/datasets.
 
 This scales to any number of packages — still one DB, constant query time.
-Adding a new package only requires rebuilding the DB, not changing this file.
+Adding a new package only requires:
+  1. Adding a keywords.txt file in the package folder.
+  2. Rebuilding the DB (python src/knowledgeBase.py).
+No changes to this file are needed.
 """
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from typing import List, Optional
-
-# ---------------------------------------------------------------------------
-# Keyword aliases — map domain terms to package names so that intents like
-# "analyze heart disease" or "compute GC content" resolve the right package
-# even when the package name isn't mentioned explicitly.
-# ---------------------------------------------------------------------------
-PACKAGE_ALIASES: dict[str, list[str]] = {
-    "healthcare": [
-        "patient", "patients", "heart disease", "blood pressure", "heart rate",
-        "spo2", "cholesterol", "glucose", "hba1c", "triage", "vital signs",
-        "lab results", "medical history", "diabetes", "readmission", "mortality",
-        "risk score", "risk level", "risk distribution", "cohort",
-    ],
-    "genomics": [
-        "genome", "genomics", "dna", "rna", "sequence", "nucleotide",
-        "gc content", "mutation", "variant", "gene", "snp", "fasta",
-        "complement", "reverse complement", "codon", "protein",
-    ],
-    "epidemics": [
-        "epidemic", "outbreak", "incidence", "reproduction number", "rt",
-        "epidemic stage", "attack rate", "cases", "epidemic report",
-        "surveillance", "epidemic status", "case fatality",
-    ],
-    "statistics": [
-        "summary statistics", "mean", "std dev", "standard deviation",
-        "percentile", "correlation", "regression", "histogram", "distribution",
-        "filter", "threshold", "statistical",
-    ],
-    "text_analysis": [
-        "text", "sentiment", "word count", "keyword", "readability",
-        "named entity", "language detection", "summarize", "text corpus",
-        "document", "corpus",
-    ],
-    "data_masking": [
-        "mask", "anonymize", "anonymise", "pseudonymize", "redact",
-        "privacy", "pii", "personal data", "sensitive",
-    ],
-    "datetime": [
-        "date", "time", "timestamp", "timezone", "format date",
-        "current time", "duration", "calendar",
-    ],
-}
 
 
 class PkgRetriever:
@@ -73,6 +34,7 @@ class PkgRetriever:
     def __init__(self, pkg_db: Chroma, k: int = 4):
         self.pkg_db = pkg_db
         self.k = k
+        self.package_aliases: dict[str, list[str]] = {}  # populated by _load_known_names
         self.known_packages, self.known_datasets = self._load_known_names()
 
     # ------------------------------------------------------------------
@@ -80,10 +42,15 @@ class PkgRetriever:
     # ------------------------------------------------------------------
 
     def _load_known_names(self) -> tuple[set[str], set[str]]:
-        """Scan DB metadata once at startup to discover all known package/dataset names."""
+        """
+        Scan DB metadata once at startup to discover all known package/dataset names
+        and load keyword aliases from package_keywords documents.
+        """
         result = self.pkg_db.get(include=["metadatas"])
         packages: set[str] = set()
         datasets: set[str] = set()
+        aliases: dict[str, list[str]] = {}
+
         for meta in (result.get("metadatas") or []):
             if not meta:
                 continue
@@ -91,8 +58,17 @@ class PkgRetriever:
                 packages.add(meta["package"])
             if "dataset" in meta:
                 datasets.add(meta["dataset"])
+            # Load aliases stored by knowledgeBase.py from keywords.txt
+            if meta.get("doc_type") == "package_keywords" and "keywords" in meta:
+                pkg = meta["package"]
+                kws = [k.strip() for k in meta["keywords"].split(",") if k.strip()]
+                aliases.setdefault(pkg, [])
+                aliases[pkg].extend(kws)
+
+        self.package_aliases = aliases
         print(f"📚 Known packages: {sorted(packages)}")
         print(f"📚 Known datasets: {sorted(datasets)}")
+        print(f"📚 Loaded aliases for: {sorted(aliases.keys())}")
         return packages, datasets
 
     def _detect_names(self, text: str) -> tuple[set[str], set[str]]:
@@ -111,7 +87,7 @@ class PkgRetriever:
                 found_ds.add(d)
 
         # Alias match — resolve domain terms to package names
-        for pkg, aliases in PACKAGE_ALIASES.items():
+        for pkg, aliases in self.package_aliases.items():
             if pkg in self.known_packages:
                 for alias in aliases:
                     if alias in text_lower:

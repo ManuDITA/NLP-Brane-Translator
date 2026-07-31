@@ -1,0 +1,14 @@
+# Keyword aliases for the data_masking package.
+mask
+anonymize
+anonymise
+pseudonymize
+pseudonymise
+redact
+privacy
+pii
+personal data
+sensitive
+de-identify
+deidentify
+gdpr

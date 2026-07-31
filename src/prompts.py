@@ -43,6 +43,8 @@ GENERATION_SYSTEM_TEMPLATE = """You are an expert in the Brane Framework and Bra
 16. To reference a registered dataset, use `let ds := new Data {{ name := "dataset-name" }};` and pass `ds` to the package function. Do NOT pass the dataset name as a plain string.
 17. Package functions that output data/files return an `IntermediateResult`. You CANNOT create an `IntermediateResult` yourself. Use `commit_result("new-name", result_variable);` to persist the output when the intent requires saving or naming the result. If the intent only needs to pass the result to another function, you may do so directly without committing.
 18. Do NOT attempt to access fields or inspect the content of a `Data` or `IntermediateResult` value in BraneScript — they are opaque references handled by the framework.
+19. Match function to intent scope: dataset/batch → use the Data-accepting variant; single inline object → use that object's function. The correct variant is listed in PACKAGE / DATASET CONTEXT.
+20. Use ONLY the exact function names listed in the PACKAGE / DATASET CONTEXT. If a function name you need is not listed there, you are hallucinating it — pick the closest listed function or leave a comment explaining what is missing.
 
 LANGUAGE SPEC CONTEXT (full BraneScript syntax reference):
 {lang_context}"""

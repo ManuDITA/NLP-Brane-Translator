@@ -1,0 +1,16 @@
+# Keyword aliases for the epidemics package.
+epidemic
+outbreak
+incidence
+reproduction number
+rt
+r0
+epidemic stage
+attack rate
+cases
+epidemic report
+surveillance
+epidemic status
+case fatality
+spread
+infection rate
