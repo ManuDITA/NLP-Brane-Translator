@@ -105,6 +105,52 @@ BRANE_INSTANCE  = os.environ.get("BRANE_INSTANCE", "local-instance")
 BRANE_TIMEOUT   = 30          # seconds per script execution
 BRANE_WORKERS   = 8           # parallel execution threads
 
+METRICS_DIR = _ROOT / "outputs" / "metrics"
+
+
+# ---------------------------------------------------------------------------
+# Metrics callback — saves train/eval loss to JSONL for plotting
+# ---------------------------------------------------------------------------
+
+class MetricsCallback:
+    """
+    HuggingFace TrainerCallback that appends every logged metric to a JSONL
+    file so train/eval loss curves are persisted and plottable across runs.
+
+    Each line is one log event:
+      {"run_id": "...", "model": "...", "mode": "sft", "step": 25,
+       "epoch": 0.5, "loss": 1.23, "eval_loss": null, "timestamp": "..."}
+    """
+    def __new__(cls, *args, **kwargs):
+        # Import at instantiation time so the module loads without transformers
+        from transformers import TrainerCallback
+        class _Impl(TrainerCallback):
+            def __init__(self, run_id, model_name, mode, metrics_file):
+                self.run_id       = run_id
+                self.model_name   = model_name
+                self.mode         = mode
+                self.metrics_file = metrics_file
+                metrics_file.parent.mkdir(parents=True, exist_ok=True)
+            def on_log(self, args, state, control, logs=None, **kwargs2):
+                if not logs:
+                    return
+                from datetime import datetime, timezone
+                entry = {
+                    "run_id":    self.run_id,
+                    "model":     self.model_name,
+                    "mode":      self.mode,
+                    "step":      state.global_step,
+                    "epoch":     round(state.epoch or 0, 4),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                for key in ("loss", "eval_loss", "grad_norm", "learning_rate",
+                            "rewards/mean", "rewards/std"):
+                    if key in logs:
+                        entry[key] = logs[key]
+                with open(self.metrics_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
+        return _Impl(*args, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Brane reward function
@@ -313,6 +359,79 @@ def latest_checkpoint(output_dir: Path):
     return str(checkpoints[-1]) if checkpoints else None
 
 
+def _save_training_config(mode: str) -> str:
+    """
+    Write training_config.json to the output directory so every run is
+    fully reproducible and the output files are self-documenting.
+    Returns the run_id string (used by MetricsCallback).
+    """
+    from datetime import datetime, timezone
+    ts     = datetime.now(timezone.utc)
+    run_id = f"{MODEL_SLUG}_{mode}_{ts.strftime('%Y%m%d_%H%M%S')}"
+    out_dir = OUTPUT_DIR if mode == "sft" else GRPO_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    n_train = sum(1 for _ in open(TRAIN_FILE)) if TRAIN_FILE.exists() else 0
+    n_val   = sum(1 for _ in open(VAL_FILE))   if VAL_FILE.exists()   else 0
+
+    if mode == "sft":
+        config = {
+            "run_id":           run_id,
+            "mode":             "sft",
+            "base_model":       BASE_MODEL,
+            "timestamp":        ts.isoformat(),
+            "output_dir":       str(out_dir),
+            "train_examples":   n_train,
+            "val_examples":     n_val,
+            "max_seq_len":      MAX_SEQ_LEN,
+            "lora_rank":        LORA_RANK,
+            "lora_alpha":       LORA_RANK * 2,
+            "epochs":           SFT_EPOCHS,
+            "batch_size":       BATCH_SIZE,
+            "grad_accum":       GRAD_ACCUM,
+            "effective_batch":  BATCH_SIZE * GRAD_ACCUM,
+            "learning_rate":    SFT_LR,
+            "warmup_steps":     WARMUP_STEPS,
+            "save_steps":       SAVE_STEPS,
+            "lr_scheduler":     "cosine",
+        }
+    else:
+        config = {
+            "run_id":           run_id,
+            "mode":             "grpo",
+            "base_model":       BASE_MODEL,
+            "timestamp":        ts.isoformat(),
+            "output_dir":       str(out_dir),
+            "train_examples":   n_train,
+            "lora_rank":        LORA_RANK,
+            "lora_alpha":       LORA_RANK * 2,
+            "epochs":           GRPO_EPOCHS,
+            "batch_size":       GRPO_BATCH_SIZE,
+            "grad_accum":       GRPO_GRAD_ACCUM,
+            "effective_batch":  GRPO_BATCH_SIZE * GRPO_GRAD_ACCUM,
+            "learning_rate":    GRPO_LR,
+            "warmup_steps":     GRPO_WARMUP_STEPS,
+            "num_generations":  GRPO_NUM_GENERATIONS,
+            "max_new_tokens":   GRPO_MAX_NEW_TOKENS,
+            "temperature":      GRPO_TEMPERATURE,
+            "top_p":            GRPO_TOP_P,
+        }
+
+    cfg_path = out_dir / "training_config.json"
+    with open(cfg_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"\n{'─'*50}")
+    print(f"  Training configuration")
+    print(f"{'─'*50}")
+    for k, v in config.items():
+        print(f"  {k:<22} {v}")
+    print(f"{'─'*50}")
+    print(f"  📄 Config saved → {cfg_path}")
+    print(f"{'─'*50}\n")
+    return run_id
+
+
 # ---------------------------------------------------------------------------
 # SFT training
 # ---------------------------------------------------------------------------
@@ -327,6 +446,7 @@ def train_sft(restart: bool = False):
         print(f"❌ {TRAIN_FILE} not found — run prepare_dataset.py first.")
         sys.exit(1)
 
+    run_id = _save_training_config("sft")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     resume_from = None
@@ -341,14 +461,14 @@ def train_sft(restart: bool = False):
 
     try:
         from unsloth import FastLanguageModel
-        _sft_unsloth(resume_from)
+        _sft_unsloth(resume_from, run_id)
         return
     except ImportError:
         print("ℹ️  unsloth not available — using plain trl + peft + bitsandbytes")
     except Exception as exc:
         print(f"⚠️  unsloth failed ({exc}) — falling back to plain HF")
 
-    _sft_plain(resume_from)
+    _sft_plain(resume_from, run_id)
 
 
 def _build_sft_config(resume_from):
@@ -380,7 +500,7 @@ def _build_sft_config(resume_from):
     )
 
 
-def _sft_unsloth(resume_from):
+def _sft_unsloth(resume_from, run_id: str):
     from unsloth import FastLanguageModel
     from trl import SFTTrainer
     from datasets import Dataset
@@ -400,10 +520,16 @@ def _sft_unsloth(resume_from):
     val_ds   = Dataset.from_list(format_sft_samples(load_jsonl(VAL_FILE),   tokenizer))
     print(f"✅ Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
+    metrics_cb = MetricsCallback(
+        run_id, BASE_MODEL, "sft",
+        METRICS_DIR / f"{MODEL_SLUG}_training_metrics.jsonl",
+    )
+
     trainer = SFTTrainer(
         model=model, tokenizer=tokenizer,
         train_dataset=train_ds, eval_dataset=val_ds,
         max_seq_length=MAX_SEQ_LEN, args=_build_sft_config(resume_from),
+        callbacks=[metrics_cb],
     )
 
     # Response-only training: only compute loss on the assistant reply tokens,
@@ -428,7 +554,7 @@ def _sft_unsloth(resume_from):
     print("✅ Done.")
 
 
-def _sft_plain(resume_from):
+def _sft_plain(resume_from, run_id: str):
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -478,12 +604,18 @@ def _sft_plain(resume_from):
         print(f"⚠️  DataCollatorForCompletionOnlyLM not available: {exc} — training on full sequence")
         collator = None
 
+    metrics_cb = MetricsCallback(
+        run_id, BASE_MODEL, "sft",
+        METRICS_DIR / f"{MODEL_SLUG}_training_metrics.jsonl",
+    )
+
     SFTTrainer(
         model=model, tokenizer=tokenizer,
         train_dataset=train_ds, eval_dataset=val_ds,
         max_seq_length=MAX_SEQ_LEN,
         data_collator=collator,
         args=_build_sft_config(resume_from),
+        callbacks=[metrics_cb],
     ).train(resume_from_checkpoint=resume_from)
 
     print(f"\n💾 Saving SFT adapter → {OUTPUT_DIR}")
@@ -532,6 +664,7 @@ def train_grpo(restart: bool = False, warm_start: bool = False,
         print(f"❌ {TRAIN_FILE} not found — run prepare_dataset.py first.")
         sys.exit(1)
 
+    run_id = _save_training_config("grpo")
     GRPO_DIR.mkdir(parents=True, exist_ok=True)
 
     resume_from = None
@@ -544,7 +677,7 @@ def train_grpo(restart: bool = False, warm_start: bool = False,
     else:
         print("🔁 --restart: ignoring existing checkpoints")
 
-    _grpo_plain(base, reward_fn, resume_from)
+    _grpo_plain(base, reward_fn, resume_from, run_id)
 
 
 def _build_grpo_config(resume_from):
@@ -574,7 +707,7 @@ def _build_grpo_config(resume_from):
     )
 
 
-def _grpo_plain(base_model: str, reward_fn, resume_from):
+def _grpo_plain(base_model: str, reward_fn, resume_from, run_id: str):
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -610,12 +743,18 @@ def _grpo_plain(base_model: str, reward_fn, resume_from):
     train_ds = Dataset.from_list(format_grpo_prompts(load_jsonl(TRAIN_FILE)))
     print(f"✅ GRPO train prompts: {len(train_ds)}")
 
+    metrics_cb = MetricsCallback(
+        run_id, base_model, "grpo",
+        METRICS_DIR / f"{MODEL_SLUG}_training_metrics.jsonl",
+    )
+
     trainer = GRPOTrainer(
         model=model,
         reward_funcs=reward_fn,
         args=_build_grpo_config(resume_from),
         train_dataset=train_ds,
         processing_class=tokenizer,
+        callbacks=[metrics_cb],
     )
 
     print("\n🏋️  GRPO training…")

@@ -50,11 +50,11 @@ _stop_service() {
         pid=$(cat "${pid_file}")
         if kill -0 "${pid}" 2>/dev/null; then
             echo "  Stopping ${name} (PID ${pid})…"
-            kill "${pid}"
+            kill "${pid}" 2>/dev/null || true
             # Wait up to 5 seconds for it to exit
             local i=0
             while kill -0 "${pid}" 2>/dev/null && (( i < 10 )); do
-                sleep 0.5; (( i++ ))
+                sleep 0.5; i=$(( i + 1 ))
             done
             kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" || true
         fi
