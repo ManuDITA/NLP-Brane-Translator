@@ -329,6 +329,33 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
             )
 
 
+def _auto_label(model_path: str) -> str:
+    """
+    Derive a human-readable label from a model path so you never have to
+    specify it manually.
+
+    Examples:
+      outputs/models/output_merged_qwen3.6-27b        → Qwen3.6-27B (SFT)
+      outputs/models/output_merged_qwen3.6-27b_grpo   → Qwen3.6-27B (GRPO)
+      Qwen/Qwen3.6-27B                                → Qwen3.6-27B (base)
+      /some/local/dir                                  → dir (local)
+    """
+    p = Path(model_path)
+    name = p.name  # last path component
+
+    if name.startswith("output_merged_"):
+        slug = name[len("output_merged_"):]
+        if slug.endswith("_grpo"):
+            return f"{slug[:-5].upper().replace('-', '.', 1)} (GRPO)"
+        return f"{slug.upper().replace('-', '.', 1)} (SFT)"
+
+    if "/" in model_path and not model_path.startswith("/"):
+        # HuggingFace model ID  e.g. Qwen/Qwen3.6-27B
+        return f"{model_path.split('/')[-1]} (base)"
+
+    return f"{name} (local)"
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint helper
 # ---------------------------------------------------------------------------
@@ -368,7 +395,7 @@ def evaluate(model_path: str, adapter_path: str | None = None,
         ref_outs, time_dep_intents = _load_reference_outputs()
     else:
         ref_outs, time_dep_intents = {}, set()
-    model_label = label or Path(model_path).name
+    model_label = label or _auto_label(model_path)
     suffix      = "_generated" if generate_only else ""
 
     EVAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -546,14 +573,14 @@ def compare_all(base_model: str, test_file: Path | None = None,
     sft_merged  = str(models_dir / f"output_merged_{slug}")
     grpo_merged = str(models_dir / f"output_merged_{slug}_grpo")
 
-    variants = [(base_model, None, f"{slug} (base)")]
+    variants = [(base_model, None, _auto_label(base_model))]
     if Path(sft_merged).exists():
-        variants.append((sft_merged, None, f"{slug} (SFT)"))
+        variants.append((sft_merged, None, _auto_label(sft_merged)))
     else:
         print(f"⚠️  SFT merged model not found at {sft_merged} — skipping.")
 
     if Path(grpo_merged).exists():
-        variants.append((grpo_merged, None, f"{slug} (GRPO)"))
+        variants.append((grpo_merged, None, _auto_label(grpo_merged)))
     else:
         print(f"⚠️  GRPO merged model not found at {grpo_merged} — skipping.")
 

@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SNELLIUS_DIR = PROJECT_ROOT / "output_snellius"
+SNELLIUS_DIR = PROJECT_ROOT / "outputs" / "snellius"
 EVAL_DIR     = PROJECT_ROOT / "outputs" / "eval"
 EXEC_RESULTS = PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
 TEST_RESULTS = PROJECT_ROOT / "outputs" / "eval" / "test_results.jsonl"

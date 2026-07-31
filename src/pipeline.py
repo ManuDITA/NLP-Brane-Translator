@@ -48,7 +48,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
-BRANESCRIPT_OUTPUT_DIR = (PROJECT_ROOT / "generated_branescripts").resolve()
+BRANESCRIPT_OUTPUT_DIR = (PROJECT_ROOT / "outputs" / "branescripts").resolve()
 PKG_DB_PATH = PROJECT_ROOT / "brane_pkg_db"
 SYNTAX_REFERENCE_PATH = PROJECT_ROOT / "data" / "syntax_reference.md"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
