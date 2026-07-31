@@ -646,6 +646,88 @@
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       background: #4299e1; margin-right: 1px; vertical-align: middle;
     }
+
+    /* ── Generate page ───────────────────────────────────────────── */
+    .gen-wrap { padding: 24px; max-width: 900px; }
+    .gen-form {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .gen-form label {
+      display: block; font-size: 12px; font-weight: 600;
+      text-transform: uppercase; color: var(--muted); letter-spacing: 0.4px;
+      margin-bottom: 6px;
+    }
+    .gen-form textarea {
+      width: 100%; min-height: 80px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      padding: 10px 12px; font-size: 14px; resize: vertical;
+      font-family: inherit;
+    }
+    .gen-form textarea:focus { outline: none; border-color: var(--accent); }
+    .gen-form select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      padding: 8px 12px; font-size: 14px;
+    }
+    .gen-form select:focus { outline: none; border-color: var(--accent); }
+    .gen-form .row { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; }
+    .gen-form .row .field { flex: 1; }
+    .gen-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--radius); padding: 9px 20px;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      white-space: nowrap;
+    }
+    .gen-btn:hover { background: #3a7de8; }
+    .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .gen-status {
+      font-size: 13px; color: var(--muted);
+      margin-bottom: 16px; min-height: 20px;
+    }
+    .gen-status.running { color: var(--warn); }
+    .gen-status.done    { color: var(--pass); }
+    .gen-status.error   { color: var(--fail); }
+    .gen-result {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .gen-result-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px; font-weight: 600;
+    }
+    .gen-result-header .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    }
+    .gen-result-header .badge.pass { background: rgba(72,187,120,.15); color: var(--pass); }
+    .gen-result-header .badge.fail { background: rgba(245,101,101,.15); color: var(--fail); }
+    .gen-result-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .gen-result-section:last-child { border-bottom: none; }
+    .gen-result-section .section-label {
+      font-size: 11px; text-transform: uppercase; color: var(--muted);
+      letter-spacing: 0.4px; margin-bottom: 8px;
+    }
+    .gen-result-section pre {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 12px; font-family: var(--font-mono); font-size: 12px;
+      overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+      margin: 0; max-height: 400px; overflow-y: auto;
+    }
+    .gen-spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--muted); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      margin-right: 6px; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -664,6 +746,7 @@
   <button class="page-nav-btn" data-page="datasets">🗄️ Datasets</button>
   <button class="page-nav-btn" data-page="execresults">🧪 Exec Results</button>
   <button class="page-nav-btn" data-page="evaluation">📊 Evaluation</button>
+  <button class="page-nav-btn" data-page="generate">🚀 Generate</button>
 </nav>
 
 <!-- ── RUNS PAGE ──────────────────────────────────────────────── -->
@@ -801,6 +884,50 @@
     </div>
 
   </div>
+</div>
+
+<!-- ── GENERATE PAGE ─────────────────────────────────────────── -->
+<div class="page" id="page-generate">
+<div class="gen-wrap">
+
+  <div class="gen-form">
+    <div>
+      <label>Intent</label>
+      <textarea id="gen-intent" placeholder="e.g. analyze diabetes risk for all patients in heal_pa_2 and commit results as 'diabetes_report'"></textarea>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Model</label>
+        <select id="gen-model">
+          <option value="">Loading models…</option>
+        </select>
+      </div>
+      <button class="gen-btn" id="gen-submit-btn" onclick="submitGenerate()">Generate &amp; Run</button>
+    </div>
+  </div>
+
+  <div class="gen-status" id="gen-status"></div>
+
+  <div class="gen-result" id="gen-result" style="display:none">
+    <div class="gen-result-header">
+      <span id="gen-result-title">Result</span>
+      <span class="badge" id="gen-result-badge"></span>
+    </div>
+    <div class="gen-result-section">
+      <div class="section-label">Generated BraneScript</div>
+      <pre><code class="language-javascript" id="gen-script"></code></pre>
+    </div>
+    <div class="gen-result-section" id="gen-stdout-section" style="display:none">
+      <div class="section-label">Output</div>
+      <pre id="gen-stdout"></pre>
+    </div>
+    <div class="gen-result-section" id="gen-stderr-section" style="display:none">
+      <div class="section-label">Errors</div>
+      <pre id="gen-stderr" style="color:var(--fail)"></pre>
+    </div>
+  </div>
+
+</div>
 </div>
 
 <!-- ── Catalog detail panel (packages + datasets) ────────────── -->
@@ -1148,6 +1275,7 @@ function switchPage(name) {
   if (name === 'datasets'    && !datasetsLoaded)    loadDatasets();
   if (name === 'execresults' && !erLoaded)          loadExecResults();
   if (name === 'evaluation'  && !evalLoaded)        loadEvaluation();
+  if (name === 'generate'    && !genModelsLoaded)   loadGenModels();
 }
 document.querySelectorAll('.page-nav-btn').forEach(btn =>
   btn.addEventListener('click', () => switchPage(btn.dataset.page))
@@ -1874,6 +2002,123 @@ document.getElementById('eval-intent-search').addEventListener('input', e => {
   evalIntentSearch = e.target.value.trim();
   renderEvalIntentList();
 });
+
+// ── Generate page ──────────────────────────────────────────────────────────
+let genModelsLoaded = false;
+let genPollTimer = null;
+
+async function loadGenModels() {
+  genModelsLoaded = true;
+  const sel = document.getElementById('gen-model');
+  try {
+    const models = await (await fetch('/api/models')).json();
+    if (!models.length) {
+      sel.innerHTML = '<option value="">No models found — check outputs/models/ or FRONTEND_MODELS env var</option>';
+      return;
+    }
+    sel.innerHTML = models.map(m =>
+      `<option value="${escHtml(m.id)}">${escHtml(m.label)}</option>`
+    ).join('');
+  } catch (e) {
+    sel.innerHTML = `<option value="">Error loading models: ${escHtml(String(e))}</option>`;
+  }
+}
+
+function setGenStatus(msg, cls = '') {
+  const el = document.getElementById('gen-status');
+  el.className = 'gen-status' + (cls ? ' ' + cls : '');
+  el.innerHTML = msg;
+}
+
+async function submitGenerate() {
+  const intent = document.getElementById('gen-intent').value.trim();
+  const model  = document.getElementById('gen-model').value;
+  if (!intent) { setGenStatus('Please enter an intent.', 'error'); return; }
+  if (!model)  { setGenStatus('Please select a model.', 'error'); return; }
+
+  document.getElementById('gen-submit-btn').disabled = true;
+  document.getElementById('gen-result').style.display = 'none';
+  setGenStatus('<span class="gen-spinner"></span>Submitting job to Snellius…', 'running');
+
+  if (genPollTimer) { clearInterval(genPollTimer); genPollTimer = null; }
+
+  let reqId;
+  try {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({intent, model}),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      setGenStatus('Error: ' + (data.error || resp.statusText), 'error');
+      document.getElementById('gen-submit-btn').disabled = false;
+      return;
+    }
+    reqId = data.req_id;
+    setGenStatus(`<span class="gen-spinner"></span>Job submitted (SLURM ${data.slurm_id || '?'}) — waiting for model to generate…`, 'running');
+  } catch (e) {
+    setGenStatus('Network error: ' + e, 'error');
+    document.getElementById('gen-submit-btn').disabled = false;
+    return;
+  }
+
+  // Poll for result
+  genPollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/generate/${reqId}`);
+      const data = await resp.json();
+      if (data.status === 'done') {
+        clearInterval(genPollTimer);
+        genPollTimer = null;
+        document.getElementById('gen-submit-btn').disabled = false;
+        showGenResult(data);
+      } else if (data.status === 'error') {
+        clearInterval(genPollTimer);
+        genPollTimer = null;
+        document.getElementById('gen-submit-btn').disabled = false;
+        setGenStatus('Error: ' + (data.error || 'unknown'), 'error');
+      } else {
+        const statusMap = {submitted: 'Job submitted, waiting in SLURM queue…', generating: 'Model is generating BraneScript…', executing: 'Executing BraneScript on Brane…'};
+        setGenStatus(`<span class="gen-spinner"></span>${statusMap[data.status] || 'Processing…'}`, 'running');
+      }
+    } catch (e) { /* ignore transient errors */ }
+  }, 4000);
+}
+
+function showGenResult(data) {
+  const pass = data.success;
+  setGenStatus(pass ? '✅ Done — script executed successfully.' : '❌ Done — execution failed.', pass ? 'done' : 'error');
+
+  document.getElementById('gen-result-title').textContent = data.intent || 'Result';
+  const badge = document.getElementById('gen-result-badge');
+  badge.textContent = pass ? 'PASS' : 'FAIL';
+  badge.className = 'badge ' + (pass ? 'pass' : 'fail');
+
+  const scriptEl = document.getElementById('gen-script');
+  scriptEl.textContent = data.script || '(empty)';
+  Prism.highlightElement(scriptEl);
+
+  const stdoutSec = document.getElementById('gen-stdout-section');
+  const stdout    = (data.stdout || '').trim();
+  if (stdout) {
+    document.getElementById('gen-stdout').textContent = stdout;
+    stdoutSec.style.display = 'block';
+  } else {
+    stdoutSec.style.display = 'none';
+  }
+
+  const stderrSec = document.getElementById('gen-stderr-section');
+  const stderr    = (data.stderr || '').trim();
+  if (stderr) {
+    document.getElementById('gen-stderr').textContent = stderr;
+    stderrSec.style.display = 'block';
+  } else {
+    stderrSec.style.display = 'none';
+  }
+
+  document.getElementById('gen-result').style.display = 'block';
+}
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
 fetchResults();

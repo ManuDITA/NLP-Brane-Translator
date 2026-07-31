@@ -19,6 +19,8 @@ Env vars:
 import json
 import os
 import re
+import subprocess
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -503,6 +505,169 @@ def api_eval_ground_truth():
         except Exception:
             pass
     return jsonify(refs)
+
+
+# ---------------------------------------------------------------------------
+# Generate API — submit intent → Snellius SLURM job → BraneScript → execute
+# ---------------------------------------------------------------------------
+
+# In-memory store: req_id → {status, slurm_id, intent, model, submitted_at}
+_generate_jobs: dict[str, dict] = {}
+
+
+def _ssh_args() -> list[str]:
+    """Build base SSH args from env vars."""
+    user = os.environ.get("SNELLIUS_USER", "")
+    host = os.environ.get("SNELLIUS_HOST", "snellius.surf.nl")
+    key  = os.environ.get("SNELLIUS_SSH_KEY", "")
+    remote = f"{user}@{host}" if user else host
+    args = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+    if key:
+        args += ["-i", key]
+    args.append(remote)
+    return args
+
+
+def _auto_label(model_path: str) -> str:
+    """Derive a human-readable label from a model path or HF ID."""
+    p = model_path.rstrip("/")
+    name = Path(p).name
+    if "output_merged_" in name:
+        slug = name.replace("output_merged_", "")
+        if slug.endswith("_grpo"):
+            slug = slug[:-5]
+            suffix = "GRPO"
+        else:
+            suffix = "SFT"
+        label = slug.replace("-", ".").replace("_", ".").title()
+        return f"{label} ({suffix})"
+    if "/" in p and not p.startswith("/"):
+        return f"{p.split('/')[-1]} (base)"
+    return f"{name} (local)"
+
+
+@app.route("/api/models")
+def api_models():
+    """GET /api/models — list available models (merged SFT/GRPO + env-configured HF IDs)."""
+    models = []
+
+    models_dir = _PROJECT_ROOT / "outputs" / "models"
+    if models_dir.exists():
+        for d in sorted(models_dir.iterdir()):
+            if d.is_dir() and "output_merged_" in d.name:
+                models.append({
+                    "id":    str(d.relative_to(_PROJECT_ROOT)),
+                    "label": _auto_label(d.name),
+                    "type":  "local",
+                })
+
+    hf_models_str = os.environ.get("FRONTEND_MODELS", "")
+    for m in (m.strip() for m in hf_models_str.split(",") if m.strip()):
+        models.append({
+            "id":    m,
+            "label": f"{m.split('/')[-1]} (base)",
+            "type":  "hf",
+        })
+
+    return jsonify(models)
+
+
+@app.route("/api/generate", methods=["POST"])
+def api_generate():
+    """POST /api/generate — submit an intent + model to Snellius for generation."""
+    body = request.get_json(silent=True) or {}
+    intent = (body.get("intent") or "").strip()
+    model  = (body.get("model")  or "").strip()
+
+    if not intent:
+        return jsonify({"error": "intent is required"}), 400
+    if not model:
+        return jsonify({"error": "model is required"}), 400
+
+    req_id = str(uuid.uuid4())
+
+    user         = os.environ.get("SNELLIUS_USER", "")
+    host         = os.environ.get("SNELLIUS_HOST", "snellius.surf.nl")
+    project_dir  = os.environ.get("SNELLIUS_PROJECT_DIR", "")
+
+    if not user or not host or not project_dir:
+        return jsonify({
+            "error": "SNELLIUS_USER, SNELLIUS_HOST, SNELLIUS_PROJECT_DIR must be set in .env"
+        }), 500
+
+    # Escape intent for single-quoted shell argument
+    intent_esc = intent.replace("'", "'\\''")
+    model_esc  = model.replace("'", "'\\''")
+
+    cmd = (
+        f"cd '{project_dir}' && "
+        f"sbatch --export=ALL,"
+        f"INTENT='{intent_esc}',"
+        f"EVAL_MODEL='{model_esc}',"
+        f"REQ_ID='{req_id}' "
+        f"sbatch_generate.sh"
+    )
+
+    try:
+        result = subprocess.run(
+            _ssh_args() + [cmd],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception as e:
+        return jsonify({"error": f"SSH failed: {e}"}), 500
+
+    if result.returncode != 0:
+        return jsonify({"error": result.stderr.strip() or "sbatch failed"}), 500
+
+    m = re.search(r"Submitted batch job (\d+)", result.stdout)
+    slurm_id = m.group(1) if m else None
+
+    _generate_jobs[req_id] = {
+        "status":       "submitted",
+        "slurm_id":     slurm_id,
+        "intent":       intent,
+        "model":        model,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return jsonify({"req_id": req_id, "slurm_id": slurm_id, "status": "submitted"})
+
+
+@app.route("/api/generate/<req_id>")
+def api_generate_status(req_id):
+    """GET /api/generate/<req_id> — poll for generation + execution result."""
+    job = _generate_jobs.get(req_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+
+    # job_watcher.py writes the result to DASHBOARD_DATA_DIR/<req_id>.json
+    result_path = DASHBOARD_DATA_DIR / f"{req_id}.json"
+    if result_path.exists():
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+            return jsonify({
+                "status":         "done",
+                "req_id":         req_id,
+                "intent":         job["intent"],
+                "model":          job["model"],
+                "script":         data.get("generated_code", ""),
+                "success":        data.get("verdict") == "pass",
+                "stdout":         (data.get("stdout") or "").strip(),
+                "stderr":         (data.get("stderr") or "").strip(),
+                "exit_code":      data.get("exit_code"),
+                "error_type":     data.get("error_type"),
+                "committed_data": data.get("committed_results") or {},
+            })
+        except Exception as e:
+            return jsonify({"status": "error", "error": str(e), "req_id": req_id})
+
+    return jsonify({
+        "status":   job.get("status", "submitted"),
+        "req_id":   req_id,
+        "slurm_id": job.get("slurm_id"),
+        "intent":   job["intent"],
+        "model":    job["model"],
+    })
 
 
 # ---------------------------------------------------------------------------
