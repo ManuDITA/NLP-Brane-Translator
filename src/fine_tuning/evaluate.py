@@ -297,9 +297,14 @@ def generate_branescript(model, tokenizer, intent: str) -> str:
     # Pass them explicitly so generation always stops at the end of the
     # assistant turn regardless of what the merged model's generation_config
     # happens to contain.
+    # Build EOS token list — tokenizers<0.21 may lack additional_special_tokens_ids
+    try:
+        _extra_ids = tokenizer.additional_special_tokens_ids or []
+    except AttributeError:
+        _extra_ids = []
     _eos_ids = list({
         tokenizer.eos_token_id,
-        *( tokenizer.additional_special_tokens_ids or [] ),
+        *_extra_ids,
     } - {None})
     # Ensure <|im_end|> is included if it's in the vocab
     im_end = tokenizer.convert_tokens_to_ids("<|im_end|>")
