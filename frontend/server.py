@@ -58,7 +58,7 @@ _PROJECT_ROOT = _HERE.parent
 DASHBOARD_DATA_DIR = Path(
     os.environ.get("DASHBOARD_DATA_DIR", str(_PROJECT_ROOT / "outputs" / "pipeline"))
 )
-RESULTS_DIR          = DASHBOARD_DATA_DIR
+RESULTS_DIR          = DASHBOARD_DATA_DIR / "results"
 PACKAGES_DIR         = _PROJECT_ROOT / "packages"
 DATASETS_DIR         = _PROJECT_ROOT / "datasets"
 EXEC_RESULTS_FILE    = _PROJECT_ROOT / "data" / "training" / "execution_results.jsonl"
@@ -528,6 +528,19 @@ def _ssh_args() -> list[str]:
     return args
 
 
+def _check_slurm_status(slurm_id: str) -> str:
+    """Query squeue for SLURM job state. Returns 'PENDING','RUNNING','COMPLETED','FAILED', or ''."""
+    try:
+        result = subprocess.run(
+            _ssh_args() + [f"squeue -j {slurm_id} -h -o '%T' 2>/dev/null"],
+            capture_output=True, text=True, timeout=10,
+        )
+        state = result.stdout.strip()
+        return state if state else "COMPLETED"
+    except Exception:
+        return ""
+
+
 def _auto_label(model_path: str) -> str:
     """Derive a human-readable label from a model path or HF ID."""
     p = model_path.rstrip("/")
@@ -572,39 +585,61 @@ def api_models():
     return jsonify(models)
 
 
-@app.route("/api/generate", methods=["POST"])
-def api_generate():
-    """POST /api/generate — submit an intent + model to Snellius for generation."""
-    body = request.get_json(silent=True) or {}
-    intent = (body.get("intent") or "").strip()
-    model  = (body.get("model")  or "").strip()
+@app.route("/api/generate", methods=["GET"])
+def api_generate_list():
+    """GET /api/generate — return only currently active (in-memory) jobs.
+    Completed historical jobs are visible in the Runs tab via /api/results.
+    """
+    items = []
+    for req_id, job in _generate_jobs.items():
+        items.append({
+            "req_id":       req_id,
+            "intent":       job["intent"],
+            "model":        job["model"],
+            "status":       job.get("status", "submitted"),
+            "slurm_id":     job.get("slurm_id"),
+            "attempt":      job.get("attempt", 1),
+            "max_attempts": job.get("max_attempts", MAX_GENERATE_RETRIES),
+            "submitted_at": job.get("submitted_at", ""),
+            "history":      job.get("history", []),
+            "success":      None,
+            "script":       "",
+            "stdout":       "",
+            "stderr":       "",
+        })
+    # Newest first
+    items.sort(key=lambda x: x["submitted_at"], reverse=True)
+    return jsonify(items)
 
-    if not intent:
-        return jsonify({"error": "intent is required"}), 400
-    if not model:
-        return jsonify({"error": "model is required"}), 400
 
-    req_id = str(uuid.uuid4())
+MAX_GENERATE_RETRIES = 3   # max LLM attempts per intent (initial + retries)
 
-    user         = os.environ.get("SNELLIUS_USER", "")
-    host         = os.environ.get("SNELLIUS_HOST", "snellius.surf.nl")
-    project_dir  = os.environ.get("SNELLIUS_PROJECT_DIR", "")
+
+def _submit_snellius_generate(req_id: str, intent: str, model: str,
+                               context_file: str = "") -> tuple[str | None, str | None]:
+    """
+    SSH to Snellius and submit sbatch_generate.sh.
+    context_file: optional remote path to a JSON file with {prev_script, error_feedback, attempt}.
+    Returns (slurm_id, error_message).
+    """
+    user        = os.environ.get("SNELLIUS_USER", "")
+    host        = os.environ.get("SNELLIUS_HOST", "snellius.surf.nl")
+    project_dir = os.environ.get("SNELLIUS_PROJECT_DIR", "")
 
     if not user or not host or not project_dir:
-        return jsonify({
-            "error": "SNELLIUS_USER, SNELLIUS_HOST, SNELLIUS_PROJECT_DIR must be set in .env"
-        }), 500
+        return None, "SNELLIUS_USER, SNELLIUS_HOST, SNELLIUS_PROJECT_DIR must be set in .env"
 
-    # Escape intent for single-quoted shell argument
     intent_esc = intent.replace("'", "'\\''")
     model_esc  = model.replace("'", "'\\''")
+    ctx_export = f",CONTEXT_FILE='{context_file}'" if context_file else ""
 
     cmd = (
         f"cd '{project_dir}' && "
         f"sbatch --export=ALL,"
         f"INTENT='{intent_esc}',"
         f"EVAL_MODEL='{model_esc}',"
-        f"REQ_ID='{req_id}' "
+        f"REQ_ID='{req_id}'"
+        f"{ctx_export} "
         f"sbatch_generate.sh"
     )
 
@@ -614,57 +649,160 @@ def api_generate():
             capture_output=True, text=True, timeout=30,
         )
     except Exception as e:
-        return jsonify({"error": f"SSH failed: {e}"}), 500
+        return None, f"SSH failed: {e}"
 
     if result.returncode != 0:
-        return jsonify({"error": result.stderr.strip() or "sbatch failed"}), 500
+        return None, result.stderr.strip() or "sbatch failed"
 
     m = re.search(r"Submitted batch job (\d+)", result.stdout)
-    slurm_id = m.group(1) if m else None
+    return (m.group(1) if m else None), None
+
+
+@app.route("/api/generate", methods=["POST"])
+def api_generate():
+    """POST /api/generate — submit an intent + model to Snellius for generation."""
+    body   = request.get_json(silent=True) or {}
+    intent = (body.get("intent") or "").strip()
+    model  = (body.get("model")  or "").strip()
+
+    if not intent:
+        return jsonify({"error": "intent is required"}), 400
+    if not model:
+        return jsonify({"error": "model is required"}), 400
+
+    req_id = str(uuid.uuid4())
+    slurm_id, err = _submit_snellius_generate(req_id, intent, model)
+    if err:
+        return jsonify({"error": err}), 500
 
     _generate_jobs[req_id] = {
         "status":       "submitted",
         "slurm_id":     slurm_id,
         "intent":       intent,
         "model":        model,
+        "attempt":      1,
+        "max_attempts": MAX_GENERATE_RETRIES,
+        "history":      [],
         "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    return jsonify({"req_id": req_id, "slurm_id": slurm_id, "status": "submitted"})
+    return jsonify({"req_id": req_id, "slurm_id": slurm_id, "status": "submitted",
+                    "attempt": 1, "max_attempts": MAX_GENERATE_RETRIES})
 
 
 @app.route("/api/generate/<req_id>")
 def api_generate_status(req_id):
-    """GET /api/generate/<req_id> — poll for generation + execution result."""
-    job = _generate_jobs.get(req_id)
-    if not job:
-        return jsonify({"error": "job not found"}), 404
+    """GET /api/generate/<req_id> — poll for generation + execution result (with auto-retry)."""
+    result_path = DASHBOARD_DATA_DIR / "results" / f"{req_id}.json"
+    job = _generate_jobs.get(req_id, {})
 
-    # job_watcher.py writes the result to DASHBOARD_DATA_DIR/<req_id>.json
-    result_path = DASHBOARD_DATA_DIR / f"{req_id}.json"
     if result_path.exists():
         try:
             data = json.loads(result_path.read_text(encoding="utf-8"))
+            attempt      = job.get("attempt", 1)
+            max_attempts = job.get("max_attempts", MAX_GENERATE_RETRIES)
+            verdict_pass = data.get("verdict") == "pass"
+
+            # Auto-retry on failure if attempts remain
+            if not verdict_pass and attempt < max_attempts and req_id in _generate_jobs:
+                prev_script    = data.get("generated_code", "")
+                error_feedback = (data.get("stderr") or "").strip()
+                error_type     = data.get("error_type", "")
+
+                # Record this failed attempt in history
+                job["history"] = job.get("history", [])
+                job["history"].append({
+                    "attempt":    attempt,
+                    "script":     prev_script,
+                    "error":      error_feedback,
+                    "error_type": error_type,
+                })
+
+                # Write retry context file to Snellius so generate_single.py can read it
+                jobs_dir   = os.environ.get("SNELLIUS_JOBS_DIR", "~/brane_jobs")
+                ctx_remote = f"{jobs_dir}/context/{req_id}.json"
+                ctx_json   = json.dumps({
+                    "prev_script":    prev_script,
+                    "error_feedback": error_feedback,
+                    "attempt":        attempt + 1,
+                }, ensure_ascii=False).replace("'", "'\\''")
+
+                try:
+                    subprocess.run(
+                        _ssh_args() + [
+                            f"mkdir -p {jobs_dir}/context && "
+                            f"printf '%s' '{ctx_json}' > {ctx_remote}"
+                        ],
+                        capture_output=True, timeout=15,
+                    )
+                except Exception:
+                    pass  # retry submission will still work without context
+
+                # Delete failed result so the next poll won't re-trigger another retry
+                result_path.unlink(missing_ok=True)
+
+                # Submit new SLURM job (same req_id, with context)
+                slurm_id, err = _submit_snellius_generate(
+                    req_id, job["intent"], job["model"], context_file=ctx_remote
+                )
+
+                job["attempt"]  = attempt + 1
+                job["slurm_id"] = slurm_id
+                job["status"]   = "retrying"
+
+                return jsonify({
+                    "status":       "retrying",
+                    "req_id":       req_id,
+                    "attempt":      attempt + 1,
+                    "max_attempts": max_attempts,
+                    "slurm_id":     slurm_id,
+                    "intent":       job["intent"],
+                    "model":        job["model"],
+                    "history":      job["history"],
+                    "prev_error":   error_feedback[:300],
+                })
+
+            # Final result (pass or max retries exhausted)
             return jsonify({
                 "status":         "done",
                 "req_id":         req_id,
-                "intent":         job["intent"],
-                "model":          job["model"],
+                "attempt":        attempt,
+                "max_attempts":   max_attempts,
+                "intent":         data.get("intent") or job.get("intent", ""),
+                "model":          data.get("model")  or job.get("model", ""),
                 "script":         data.get("generated_code", ""),
-                "success":        data.get("verdict") == "pass",
+                "success":        verdict_pass,
                 "stdout":         (data.get("stdout") or "").strip(),
                 "stderr":         (data.get("stderr") or "").strip(),
                 "exit_code":      data.get("exit_code"),
                 "error_type":     data.get("error_type"),
-                "committed_data": data.get("committed_results") or {},
+                "committed_data": data.get("committed_data") or {},
+                "history":        job.get("history", []),
             })
         except Exception as e:
             return jsonify({"status": "error", "error": str(e), "req_id": req_id})
 
+    job = _generate_jobs.get(req_id)
+    if not job:
+        return jsonify({"error": "job not found"}), 404
+
+    # Query SLURM for a more precise status while we wait for the result
+    slurm_id = job.get("slurm_id")
+    if slurm_id:
+        slurm_state = _check_slurm_status(slurm_id)
+        if slurm_state == "PENDING":
+            job["status"] = "queued"
+        elif slurm_state == "RUNNING":
+            job["status"] = "generating"
+        elif slurm_state in ("COMPLETED", ""):
+            job["status"] = "executing"   # job done on Snellius; job_watcher picking up
+        elif slurm_state in ("FAILED", "CANCELLED", "TIMEOUT"):
+            job["status"] = "slurm_failed"
+
     return jsonify({
         "status":   job.get("status", "submitted"),
         "req_id":   req_id,
-        "slurm_id": job.get("slurm_id"),
+        "slurm_id": slurm_id,
         "intent":   job["intent"],
         "model":    job["model"],
     })

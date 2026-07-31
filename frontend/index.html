@@ -648,31 +648,25 @@
     }
 
     /* ── Generate page ───────────────────────────────────────────── */
-    .gen-wrap { padding: 24px; max-width: 900px; }
+    .gen-wrap { padding: 24px 32px; width: 100%; }
     .gen-form {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      margin-bottom: 20px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
     }
     .gen-form label {
       display: block; font-size: 12px; font-weight: 600;
-      text-transform: uppercase; color: var(--muted); letter-spacing: 0.4px;
-      margin-bottom: 6px;
+      text-transform: uppercase; color: var(--muted); letter-spacing: 0.4px; margin-bottom: 6px;
     }
     .gen-form textarea {
-      width: 100%; min-height: 80px;
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: var(--radius); color: var(--text);
-      padding: 10px 12px; font-size: 14px; resize: vertical;
-      font-family: inherit;
+      width: 100%; min-height: 80px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); padding: 10px 12px; font-size: 14px;
+      resize: vertical; font-family: inherit; box-sizing: border-box;
     }
     .gen-form textarea:focus { outline: none; border-color: var(--accent); }
     .gen-form select {
       width: 100%; background: var(--bg); border: 1px solid var(--border);
-      border-radius: var(--radius); color: var(--text);
-      padding: 8px 12px; font-size: 14px;
+      border-radius: var(--radius); color: var(--text); padding: 8px 12px; font-size: 14px;
     }
     .gen-form select:focus { outline: none; border-color: var(--accent); }
     .gen-form .row { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; }
@@ -680,52 +674,124 @@
     .gen-btn {
       background: var(--accent); color: #fff; border: none;
       border-radius: var(--radius); padding: 9px 20px;
-      font-size: 14px; font-weight: 600; cursor: pointer;
-      white-space: nowrap;
+      font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
     }
     .gen-btn:hover { background: #3a7de8; }
     .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .gen-status {
-      font-size: 13px; color: var(--muted);
-      margin-bottom: 16px; min-height: 20px;
+    /* queue */
+    .gen-queue { display: flex; flex-direction: column; gap: 14px; }
+    .gen-queue-empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+    /* card */
+    .gen-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
     }
-    .gen-status.running { color: var(--warn); }
-    .gen-status.done    { color: var(--pass); }
-    .gen-status.error   { color: var(--fail); }
-    .gen-result {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-    .gen-result-header {
+    .gen-card.pass { border-left: 3px solid var(--pass); }
+    .gen-card.fail { border-left: 3px solid var(--fail); }
+    .gen-card.pending { border-left: 3px solid var(--warn); }
+    .gen-card-header {
       display: flex; align-items: center; gap: 10px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      font-size: 13px; font-weight: 600;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      user-select: none;
     }
-    .gen-result-header .badge {
-      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+    .gen-card-header:hover { background: rgba(255,255,255,.03); }
+    .gen-card-icon { font-size: 16px; flex-shrink: 0; }
+    .gen-card-intent {
+      flex: 1; font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .gen-result-header .badge.pass { background: rgba(72,187,120,.15); color: var(--pass); }
-    .gen-result-header .badge.fail { background: rgba(245,101,101,.15); color: var(--fail); }
-    .gen-result-section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-    .gen-result-section:last-child { border-bottom: none; }
-    .gen-result-section .section-label {
+    .gen-card-meta {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11px; color: var(--muted); flex-shrink: 0;
+    }
+    .gen-card-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px;
+      border-radius: 3px; flex-shrink: 0;
+    }
+    .gen-card-badge.pass { background: rgba(72,187,120,.15); color: var(--pass); }
+    .gen-card-badge.fail { background: rgba(245,101,101,.15); color: var(--fail); }
+    .gen-card-badge.pending { background: rgba(246,173,85,.12); color: var(--warn); }
+    /* progress bar */
+    .gen-progress {
+      display: flex; align-items: center; gap: 0;
+      padding: 8px 16px; border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,.15);
+    }
+    .gen-step {
+      font-size: 11px; color: var(--muted);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .gen-step::before {
+      content: ''; display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--border); flex-shrink: 0;
+    }
+    .gen-step.done::before  { background: var(--pass); }
+    .gen-step.active::before { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+    .gen-step-sep { flex: 1; height: 1px; background: var(--border); min-width: 12px; max-width: 32px; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    /* body */
+    .gen-card-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    /* card tabs */
+    .gen-tab-bar {
+      display: flex; border-bottom: 1px solid var(--border);
+      padding: 0 16px; background: rgba(0,0,0,.1);
+    }
+    .gen-tab {
+      padding: 8px 14px; font-size: 12px; font-weight: 600;
+      color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; user-select: none; display: flex; align-items: center; gap: 5px;
+    }
+    .gen-tab:hover  { color: var(--text); }
+    .gen-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .gen-tab .tab-dot {
+      width: 6px; height: 6px; border-radius: 50%; display: none;
+    }
+    .gen-tab.has-error .tab-dot { display: inline-block; background: var(--fail); }
+    .gen-tab-panel { display: none; }
+    .gen-tab-panel.active { display: block; }
+    /* attempt badge */
+    .gen-attempt-badge {
+      font-size: 10px; padding: 2px 6px; border-radius: 3px;
+      background: rgba(79,142,247,.15); color: var(--accent);
+      font-weight: 700; flex-shrink: 0;
+    }
+    .gen-section-label {
       font-size: 11px; text-transform: uppercase; color: var(--muted);
-      letter-spacing: 0.4px; margin-bottom: 8px;
+      letter-spacing: 0.4px; margin-bottom: 6px;
     }
-    .gen-result-section pre {
+    .gen-code-box {
       background: var(--code-bg); border-radius: var(--radius);
       padding: 12px; font-family: var(--font-mono); font-size: 12px;
-      overflow-x: auto; white-space: pre-wrap; word-break: break-word;
-      margin: 0; max-height: 400px; overflow-y: auto;
+      overflow-x: auto; white-space: pre; word-break: normal;
+      margin: 0; max-height: 320px; overflow-y: auto; display: block;
+    }
+    .gen-error-banner {
+      background: rgba(245,101,101,.12); border: 1px solid rgba(245,101,101,.35);
+      border-radius: var(--radius); padding: 12px 14px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .gen-error-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .gen-error-body { flex: 1; min-width: 0; }
+    .gen-error-type {
+      font-size: 12px; font-weight: 700; color: var(--fail);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .gen-error-detail {
+      font-family: var(--font-mono); font-size: 11px; color: #f56565;
+      white-space: pre-wrap; word-break: break-all; margin: 0;
+      max-height: 200px; overflow-y: auto;
+    }
+    .gen-output-box {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 10px 12px; font-family: var(--font-mono); font-size: 12px;
+      white-space: pre-wrap; word-break: break-word;
+      margin: 0; max-height: 250px; overflow-y: auto;
     }
     .gen-spinner {
-      display: inline-block; width: 12px; height: 12px;
+      display: inline-block; width: 10px; height: 10px;
       border: 2px solid var(--muted); border-top-color: var(--accent);
       border-radius: 50%; animation: spin 0.8s linear infinite;
-      margin-right: 6px; vertical-align: middle;
+      margin-right: 5px; vertical-align: middle;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
@@ -906,25 +972,8 @@
     </div>
   </div>
 
-  <div class="gen-status" id="gen-status"></div>
-
-  <div class="gen-result" id="gen-result" style="display:none">
-    <div class="gen-result-header">
-      <span id="gen-result-title">Result</span>
-      <span class="badge" id="gen-result-badge"></span>
-    </div>
-    <div class="gen-result-section">
-      <div class="section-label">Generated BraneScript</div>
-      <pre><code class="language-javascript" id="gen-script"></code></pre>
-    </div>
-    <div class="gen-result-section" id="gen-stdout-section" style="display:none">
-      <div class="section-label">Output</div>
-      <pre id="gen-stdout"></pre>
-    </div>
-    <div class="gen-result-section" id="gen-stderr-section" style="display:none">
-      <div class="section-label">Errors</div>
-      <pre id="gen-stderr" style="color:var(--fail)"></pre>
-    </div>
+  <div class="gen-queue" id="gen-queue">
+    <div class="gen-queue-empty" id="gen-queue-empty">No jobs yet — enter an intent and click Generate &amp; Run.</div>
   </div>
 
 </div>
@@ -2005,7 +2054,23 @@ document.getElementById('eval-intent-search').addEventListener('input', e => {
 
 // ── Generate page ──────────────────────────────────────────────────────────
 let genModelsLoaded = false;
-let genPollTimer = null;
+const _genJobs    = {};   // req_id → job object
+const _genTimers  = {};   // req_id → setInterval id
+
+const STATUS_LABELS = {
+  submitted:    'Submitted to SLURM',
+  queued:       'Waiting in SLURM queue…',
+  generating:   'Model generating BraneScript…',
+  executing:    'Executing on Brane…',
+  done:         'Done',
+  slurm_failed: 'SLURM job failed',
+  error:        'Error',
+};
+const ERROR_TYPE_LABELS = {
+  compile: 'Compile Error',
+  runtime: 'Runtime Error',
+  timeout: 'Timeout',
+};
 
 async function loadGenModels() {
   genModelsLoaded = true;
@@ -2013,36 +2078,234 @@ async function loadGenModels() {
   try {
     const models = await (await fetch('/api/models')).json();
     if (!models.length) {
-      sel.innerHTML = '<option value="">No models found — check outputs/models/ or FRONTEND_MODELS env var</option>';
+      sel.innerHTML = '<option value="">No models found — check outputs/models/ or FRONTEND_MODELS</option>';
       return;
     }
     sel.innerHTML = models.map(m =>
       `<option value="${escHtml(m.id)}">${escHtml(m.label)}</option>`
     ).join('');
   } catch (e) {
-    sel.innerHTML = `<option value="">Error loading models: ${escHtml(String(e))}</option>`;
+    sel.innerHTML = `<option value="">Error: ${escHtml(String(e))}</option>`;
+  }
+  await loadGenQueue();
+}
+
+async function loadGenQueue() {
+  try {
+    const items = await (await fetch('/api/generate')).json();
+    for (const item of items.reverse()) {   // oldest first so newest ends on top
+      _genJobs[item.req_id] = item;
+      _upsertCard(item);
+      if (!['done', 'slurm_failed', 'error'].includes(item.status)) _startPolling(item.req_id);
+    }
+  } catch (e) { /* silent — queue may be empty */ }
+}
+
+function _shortModel(m) {
+  if (!m) return '';
+  const p = m.replace(/\/$/, '');
+  return p.split('/').pop().replace('output_merged_', '');
+}
+
+function _fmtTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  } catch { return ''; }
+}
+
+function _stepHtml(steps, activeIdx) {
+  return steps.map((s, i) => {
+    const cls = i < activeIdx ? 'gen-step done' : i === activeIdx ? 'gen-step active' : 'gen-step';
+    const sep = i < steps.length - 1 ? '<span class="gen-step-sep"></span>' : '';
+    return `<span class="${cls}">${escHtml(s)}</span>${sep}`;
+  }).join('');
+}
+
+const _SVG = {
+  check: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pass)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>`,
+  cross: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fail)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+  clock: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  retry: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.79"/></svg>`,
+};
+
+function _buildCard(job) {
+  const id = job.req_id;
+  const isDone    = job.status === 'done';
+  const isPass    = isDone && job.success;
+  const isFail    = isDone && !job.success;
+  const isRetry   = job.status === 'retrying';
+  const isPending = !isDone;
+  const cardCls   = isPass ? 'pass' : isFail ? 'fail' : 'pending';
+  const icon      = isPass ? _SVG.check : isFail ? _SVG.cross : isRetry ? _SVG.retry : _SVG.clock;
+  const badgeText = isPass ? 'PASS' : isFail ? 'FAIL' : (job.status || 'PENDING').toUpperCase().replace('_',' ');
+  const badgeCls  = isPass ? 'pass' : isFail ? 'fail' : 'pending';
+
+  const slurmTag  = job.slurm_id ? `<span>SLURM #${escHtml(job.slurm_id)}</span>` : '';
+  const timeTag   = `<span>${_fmtTime(job.submitted_at || job.executed_at)}</span>`;
+  const attemptN  = job.attempt || 1;
+  const maxAtt    = job.max_attempts || 3;
+  const attBadge  = (attemptN > 1 || isRetry)
+    ? `<span class="gen-attempt-badge">Attempt ${escHtml(String(attemptN))}/${maxAtt}</span>` : '';
+
+  // Progress bar (only while running/retrying)
+  const STEPS = ['Submitted', 'SLURM queue', 'Generating', 'Executing'];
+  const stepIdx = {submitted:0, queued:1, generating:2, executing:3, retrying:2};
+  const activeStep = stepIdx[job.status] ?? 0;
+  const progressHtml = isPending
+    ? `<div class="gen-progress" id="gen-progress-${id}">${_stepHtml(STEPS, activeStep)}</div>` : '';
+
+  // Tabs
+  const hasScript = !!job.script;
+  const hasError  = isFail && !!job.stderr;
+  const hasOutput = !!job.stdout;
+  const hasHistory = job.history && job.history.length > 0;
+
+  let tabs = [], panels = [];
+  if (hasScript) {
+    tabs.push(`<span class="gen-tab active" onclick="_switchTab('${id}','script',this)">Code</span>`);
+    panels.push(`<div class="gen-tab-panel active" id="gen-panel-script-${id}">
+      <div class="gen-card-body">
+        <pre class="gen-code-box"><code class="language-javascript" id="gen-script-${id}">${escHtml(job.script)}</code></pre>
+      </div>
+    </div>`);
+  }
+  if (hasError) {
+    const typeLabel = ERROR_TYPE_LABELS[job.error_type] || 'Execution Error';
+    const firstTab = !hasScript;
+    tabs.push(`<span class="gen-tab${firstTab?' active':''} has-error" onclick="_switchTab('${id}','error',this)">Error <span class="tab-dot"></span></span>`);
+    panels.push(`<div class="gen-tab-panel${firstTab?' active':''}" id="gen-panel-error-${id}">
+      <div class="gen-card-body">
+        <div class="gen-error-banner">
+          <span class="gen-error-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fail)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <div class="gen-error-body">
+            <div class="gen-error-type">${escHtml(typeLabel)}</div>
+            <pre class="gen-error-detail">${escHtml(job.stderr)}</pre>
+          </div>
+        </div>
+      </div>
+    </div>`);
+  }
+  if (hasOutput) {
+    const firstTab = !hasScript && !hasError;
+    tabs.push(`<span class="gen-tab${firstTab?' active':''}" onclick="_switchTab('${id}','output',this)">Output</span>`);
+    panels.push(`<div class="gen-tab-panel${firstTab?' active':''}" id="gen-panel-output-${id}">
+      <div class="gen-card-body">
+        <pre class="gen-output-box">${escHtml(job.stdout)}</pre>
+      </div>
+    </div>`);
+  }
+  if (hasHistory) {
+    tabs.push(`<span class="gen-tab" onclick="_switchTab('${id}','history',this)">History (${job.history.length})</span>`);
+    const histRows = job.history.map(h => `
+      <div style="margin-bottom:14px">
+        <div class="gen-section-label" style="margin-bottom:4px">Attempt ${h.attempt} — ${ERROR_TYPE_LABELS[h.error_type]||'Error'}</div>
+        <pre class="gen-code-box" style="max-height:150px">${escHtml(h.script||'')}</pre>
+        <pre class="gen-error-detail" style="margin-top:6px;max-height:80px;padding:8px;background:var(--code-bg);border-radius:var(--radius)">${escHtml(h.error||'')}</pre>
+      </div>`).join('');
+    panels.push(`<div class="gen-tab-panel" id="gen-panel-history-${id}">
+      <div class="gen-card-body">${histRows}</div>
+    </div>`);
+  }
+
+  const tabBarHtml = tabs.length > 0
+    ? `<div class="gen-tab-bar" id="gen-tabs-${id}">${tabs.join('')}</div>` : '';
+  const panelsHtml = panels.join('');
+
+  return `<div class="gen-card ${cardCls}" id="gen-card-${id}">
+  <div class="gen-card-header">
+    <span class="gen-card-icon">${icon}</span>
+    <span class="gen-card-intent" title="${escHtml(job.intent)}">${escHtml(job.intent)}</span>
+    <span class="gen-card-meta">
+      ${slurmTag}
+      <span>${escHtml(_shortModel(job.model))}</span>
+      ${timeTag}
+    </span>
+    ${attBadge}
+    <span class="gen-card-badge ${badgeCls}" id="gen-badge-${id}">${badgeText}</span>
+  </div>
+  ${progressHtml}
+  ${tabBarHtml}
+  <div id="gen-panels-${id}">${panelsHtml}</div>
+</div>`;
+}
+
+function _switchTab(cardId, panelName, clickedTab) {
+  // Deactivate all tabs and panels for this card
+  document.querySelectorAll(`#gen-tabs-${cardId} .gen-tab`).forEach(t => t.classList.remove('active'));
+  document.querySelectorAll(`#gen-panels-${cardId} .gen-tab-panel`).forEach(p => p.classList.remove('active'));
+  // Activate selected
+  clickedTab.classList.add('active');
+  const panel = document.getElementById(`gen-panel-${panelName}-${cardId}`);
+  if (panel) panel.classList.add('active');
+  // Highlight code if switching to script tab
+  if (panelName === 'script') {
+    const codeEl = document.getElementById(`gen-script-${cardId}`);
+    if (codeEl && window.Prism) Prism.highlightElement(codeEl);
   }
 }
 
-function setGenStatus(msg, cls = '') {
-  const el = document.getElementById('gen-status');
-  el.className = 'gen-status' + (cls ? ' ' + cls : '');
-  el.innerHTML = msg;
+function _upsertCard(job) {
+  const id = job.req_id;
+  const queue = document.getElementById('gen-queue');
+  const empty = document.getElementById('gen-queue-empty');
+  if (empty) empty.style.display = 'none';
+
+  const existing = document.getElementById(`gen-card-${id}`);
+  if (existing) {
+    existing.outerHTML = _buildCard(job);
+    // Highlight code tab
+    const codeEl2 = document.getElementById(`gen-script-${id}`);
+    if (codeEl2 && window.Prism) Prism.highlightElement(codeEl2);
+  } else {
+    // Prepend (newest on top)
+    queue.insertAdjacentHTML('afterbegin', _buildCard(job));
+    const codeEl2 = document.getElementById(`gen-script-${id}`);
+    if (codeEl2 && window.Prism) Prism.highlightElement(codeEl2);
+  }
+}
+
+function _toggleCard(id) {
+  const body = document.getElementById(`gen-body-${id}`);
+  if (body) body.style.display = body.style.display === 'none' ? '' : 'none';
+}
+
+function _startPolling(reqId) {
+  if (_genTimers[reqId]) return;
+  _genTimers[reqId] = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/generate/${reqId}`);
+      const data = await resp.json();
+      if (!_genJobs[reqId]) return;
+
+      _genJobs[reqId] = Object.assign({}, _genJobs[reqId], data);
+      _upsertCard(_genJobs[reqId]);
+
+      if (data.status === 'done' || data.status === 'slurm_failed' || data.status === 'error') {
+        clearInterval(_genTimers[reqId]);
+        delete _genTimers[reqId];
+        document.getElementById('gen-submit-btn').disabled = false;
+        // After 8s fade the completed card out — user can see it in Runs tab
+        setTimeout(() => {
+          const card = document.getElementById(`gen-card-${reqId}`);
+          if (card) { card.style.transition = 'opacity 1s'; card.style.opacity = '0.35'; }
+        }, 8000);
+      }
+    } catch (e) { /* transient */ }
+  }, 4000);
 }
 
 async function submitGenerate() {
   const intent = document.getElementById('gen-intent').value.trim();
   const model  = document.getElementById('gen-model').value;
-  if (!intent) { setGenStatus('Please enter an intent.', 'error'); return; }
-  if (!model)  { setGenStatus('Please select a model.', 'error'); return; }
+  if (!intent) { alert('Please enter an intent.'); return; }
+  if (!model)  { alert('Please select a model.');  return; }
 
   document.getElementById('gen-submit-btn').disabled = true;
-  document.getElementById('gen-result').style.display = 'none';
-  setGenStatus('<span class="gen-spinner"></span>Submitting job to Snellius…', 'running');
 
-  if (genPollTimer) { clearInterval(genPollTimer); genPollTimer = null; }
-
-  let reqId;
+  let reqId, slurmId;
   try {
     const resp = await fetch('/api/generate', {
       method: 'POST',
@@ -2051,73 +2314,38 @@ async function submitGenerate() {
     });
     const data = await resp.json();
     if (!resp.ok || data.error) {
-      setGenStatus('Error: ' + (data.error || resp.statusText), 'error');
+      alert('Submission failed: ' + (data.error || resp.statusText));
       document.getElementById('gen-submit-btn').disabled = false;
       return;
     }
-    reqId = data.req_id;
-    setGenStatus(`<span class="gen-spinner"></span>Job submitted (SLURM ${data.slurm_id || '?'}) — waiting for model to generate…`, 'running');
+    reqId   = data.req_id;
+    slurmId = data.slurm_id;
   } catch (e) {
-    setGenStatus('Network error: ' + e, 'error');
+    alert('Network error: ' + e);
     document.getElementById('gen-submit-btn').disabled = false;
     return;
   }
 
-  // Poll for result
-  genPollTimer = setInterval(async () => {
-    try {
-      const resp = await fetch(`/api/generate/${reqId}`);
-      const data = await resp.json();
-      if (data.status === 'done') {
-        clearInterval(genPollTimer);
-        genPollTimer = null;
-        document.getElementById('gen-submit-btn').disabled = false;
-        showGenResult(data);
-      } else if (data.status === 'error') {
-        clearInterval(genPollTimer);
-        genPollTimer = null;
-        document.getElementById('gen-submit-btn').disabled = false;
-        setGenStatus('Error: ' + (data.error || 'unknown'), 'error');
-      } else {
-        const statusMap = {submitted: 'Job submitted, waiting in SLURM queue…', generating: 'Model is generating BraneScript…', executing: 'Executing BraneScript on Brane…'};
-        setGenStatus(`<span class="gen-spinner"></span>${statusMap[data.status] || 'Processing…'}`, 'running');
-      }
-    } catch (e) { /* ignore transient errors */ }
-  }, 4000);
-}
+  // Add card immediately
+  const job = {
+    req_id:       reqId,
+    intent,
+    model,
+    status:       'submitted',
+    slurm_id:     slurmId,
+    submitted_at: new Date().toISOString(),
+    success:      null,
+    script:       '',
+    stdout:       '',
+    stderr:       '',
+  };
+  _genJobs[reqId] = job;
+  _upsertCard(job);
 
-function showGenResult(data) {
-  const pass = data.success;
-  setGenStatus(pass ? '✅ Done — script executed successfully.' : '❌ Done — execution failed.', pass ? 'done' : 'error');
+  // Clear input
+  document.getElementById('gen-intent').value = '';
 
-  document.getElementById('gen-result-title').textContent = data.intent || 'Result';
-  const badge = document.getElementById('gen-result-badge');
-  badge.textContent = pass ? 'PASS' : 'FAIL';
-  badge.className = 'badge ' + (pass ? 'pass' : 'fail');
-
-  const scriptEl = document.getElementById('gen-script');
-  scriptEl.textContent = data.script || '(empty)';
-  Prism.highlightElement(scriptEl);
-
-  const stdoutSec = document.getElementById('gen-stdout-section');
-  const stdout    = (data.stdout || '').trim();
-  if (stdout) {
-    document.getElementById('gen-stdout').textContent = stdout;
-    stdoutSec.style.display = 'block';
-  } else {
-    stdoutSec.style.display = 'none';
-  }
-
-  const stderrSec = document.getElementById('gen-stderr-section');
-  const stderr    = (data.stderr || '').trim();
-  if (stderr) {
-    document.getElementById('gen-stderr').textContent = stderr;
-    stderrSec.style.display = 'block';
-  } else {
-    stderrSec.style.display = 'none';
-  }
-
-  document.getElementById('gen-result').style.display = 'block';
+  _startPolling(reqId);
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────

@@ -70,7 +70,8 @@ def _get_pkg_context(intent: str) -> str:
         return ""
 
 
-def generate(intent: str, model_path: str) -> str:
+def generate(intent: str, model_path: str,
+             prev_script: str = "", error_feedback: str = "", attempt: int = 1) -> str:
     """Load model, generate BraneScript for intent, return cleaned script."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -87,9 +88,23 @@ def generate(intent: str, model_path: str) -> str:
     print("  ✅ Model loaded")
 
     pkg_context = _get_pkg_context(intent)
+
+    # Build error_section for retry attempts
+    error_section = ""
+    if prev_script and error_feedback:
+        error_section = (
+            f"PREVIOUS ATTEMPT (attempt {attempt - 1}) FAILED.\n"
+            f"The BraneScript below produced an error — fix it:\n\n"
+            f"Previous script:\n```\n{prev_script}\n```\n\n"
+            f"Error:\n{error_feedback}"
+        )
+        print(f"  🔄 Retry attempt {attempt} — injecting error feedback into prompt")
+
     system_prompt = load_system_prompt()
-    user_message = build_user_message(
-        intent, pkg_context or "(no package context available)"
+    user_message  = build_user_message(
+        intent,
+        pkg_context or "(no package context available)",
+        error_section=error_section,
     )
 
     messages = [
@@ -138,19 +153,39 @@ def generate(intent: str, model_path: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate a single BraneScript and enqueue it for execution.")
-    parser.add_argument("--intent",  required=True, help="Natural-language intent to translate")
-    parser.add_argument("--model",   required=True, help="Model path or HuggingFace ID")
-    parser.add_argument("--req-id",  required=True, dest="req_id",
+    parser.add_argument("--intent",       required=True, help="Natural-language intent to translate")
+    parser.add_argument("--model",        required=True, help="Model path or HuggingFace ID")
+    parser.add_argument("--req-id",       required=True, dest="req_id",
                         help="Request UUID — used as job ID in the file queue")
+    parser.add_argument("--context-file", default="",    dest="context_file",
+                        help="Optional path to JSON file with {prev_script, error_feedback, attempt}")
     args = parser.parse_args()
+
+    # Load retry context if provided
+    prev_script = error_feedback = ""
+    attempt = 1
+    if args.context_file:
+        ctx_path = Path(os.path.expanduser(args.context_file))
+        if ctx_path.exists():
+            try:
+                ctx = json.loads(ctx_path.read_text(encoding="utf-8"))
+                prev_script    = ctx.get("prev_script", "")
+                error_feedback = ctx.get("error_feedback", "")
+                attempt        = ctx.get("attempt", 2)
+                print(f"  📋 Loaded retry context (attempt {attempt})")
+            except Exception as e:
+                print(f"  ⚠️  Could not load context file: {e}")
 
     print(f"\n{'='*60}")
     print(f"  Intent  : {args.intent[:80]}")
     print(f"  Model   : {args.model}")
     print(f"  Req ID  : {args.req_id}")
+    if attempt > 1:
+        print(f"  Attempt : {attempt}")
     print(f"{'='*60}")
 
-    script = generate(args.intent, args.model)
+    script = generate(args.intent, args.model,
+                      prev_script=prev_script, error_feedback=error_feedback, attempt=attempt)
 
     print(f"\n✅ Generated BraneScript ({len(script)} chars):")
     print(script[:400] + ("..." if len(script) > 400 else ""))

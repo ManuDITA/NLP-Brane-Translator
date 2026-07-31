@@ -81,7 +81,8 @@ echo "────────────────────────�
 python "${PROJECT_DIR}/src/fine_tuning/generate_single.py" \
     --intent  "${INTENT}" \
     --model   "${EVAL_MODEL}" \
-    --req-id  "${REQ_ID}"
+    --req-id  "${REQ_ID}" \
+    ${CONTEXT_FILE:+--context-file "${CONTEXT_FILE}"}
 
 echo ""
 echo "✅ generate_single.py finished at $(date)"
