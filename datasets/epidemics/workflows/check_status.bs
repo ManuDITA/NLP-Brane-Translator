@@ -1,0 +1,7 @@
+import epidemics;
+
+let cases := new Data{ name := "epidemic_cases" };
+let status := get_epidemic_status(cases);
+println(status.stage);
+println(status.alert_level);
+println(status.reproduction_number);

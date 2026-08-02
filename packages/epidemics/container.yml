@@ -1,0 +1,177 @@
+# container.yml for the Epidemics package
+name: epidemics
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-pip
+  - python3-yaml
+
+install:
+  - pip3 install pyyaml --break-system-packages
+
+files:
+  - epidemics.py
+
+entrypoint:
+  kind: task
+  exec: epidemics.py
+
+# ---------------------------------------------------------------------------
+# Custom classes exposed to BraneScript.
+# BraneScript usage: let s := get_epidemic_status(cases); println(s.stage);
+# ---------------------------------------------------------------------------
+types:
+  EpidemicStatus:
+    name: EpidemicStatus
+    properties:
+      - name: location
+        type: string
+      - name: stage
+        type: string
+      - name: alert_level
+        type: string
+      - name: reproduction_number
+        type: real
+      - name: peak_daily_cases
+        type: integer
+      - name: total_cases
+        type: integer
+  AttackRate:
+    name: AttackRate
+    properties:
+      - name: attack_rate_pct
+        type: real
+      - name: severity
+        type: string
+      - name: exposed
+        type: integer
+      - name: cases
+        type: integer
+
+actions:
+  # -----------------------------------------------------------------------
+  # Cases-based functions: operate on a time-series CSV dataset.
+  # Columns: date, location, new_cases, total_cases, deaths, recovered,
+  #          hospitalizations
+  # -----------------------------------------------------------------------
+  'compute_incidence_rate':
+    description: "Compute cumulative incidence rate per 100,000 population and case-fatality rate for each location in a cases CSV dataset."
+    command:
+      args: [compute_incidence_rate]
+    input:
+      - name: cases_file
+        type: Data
+      - name: population
+        type: integer
+    output:
+      - name: output
+        type: string
+
+  'detect_outbreak':
+    description: "Detect outbreaks by comparing recent case counts against a rolling baseline. Returns alert level (green/yellow/orange/red) and outbreak flag per location."
+    command:
+      args: [detect_outbreak]
+    input:
+      - name: cases_file
+        type: Data
+      - name: threshold
+        type: real
+    output:
+      - name: output
+        type: string
+
+  'estimate_reproduction_number':
+    description: "Estimate the instantaneous reproduction number Rt for each location from a cases CSV. Rt > 1 means epidemic is growing."
+    command:
+      args: [estimate_reproduction_number]
+    input:
+      - name: cases_file
+        type: Data
+    output:
+      - name: output
+        type: string
+
+  'classify_epidemic_stage':
+    description: "Classify the epidemic stage for each location as emerging, growing, plateau, declining, or resolved."
+    command:
+      args: [classify_epidemic_stage]
+    input:
+      - name: cases_file
+        type: Data
+    output:
+      - name: output
+        type: string
+
+  # -----------------------------------------------------------------------
+  # Scalar functions: simple epidemiological calculations.
+  # -----------------------------------------------------------------------
+  'compute_attack_rate':
+    description: "Compute the attack rate (proportion of exposed population that got infected) given exposed count and case count. Returns attack rate % and severity."
+    command:
+      args: [compute_attack_rate]
+    input:
+      - name: exposed
+        type: integer
+      - name: cases
+        type: integer
+    output:
+      - name: output
+        type: AttackRate
+
+  # -----------------------------------------------------------------------
+  # Cross-package functions: compatible with healthcare patients CSV.
+  # -----------------------------------------------------------------------
+  'compute_risk_factor_prevalence':
+    description: "Compute prevalence of each condition (diabetes, hypertension, smoking) and demographic breakdown in a patients CSV dataset. Compatible with the healthcare package CSV format."
+    command:
+      args: [compute_risk_factor_prevalence]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: string
+
+  'analyze_health_cohort':
+    description: "Cross-package: reads an IntermediateResult from healthcare.analyze_patients_file(), batch_diabetes_from_file(), or batch_triage_from_file() and produces population-level epidemiological indicators and a public health alert level."
+    command:
+      args: [analyze_health_cohort]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: string
+
+  # -----------------------------------------------------------------------
+  # Class-returning function.
+  # -----------------------------------------------------------------------
+  'get_epidemic_status':
+    description: "Return an EpidemicStatus class instance for the most active location in a cases CSV. Fields: location, stage, alert_level, reproduction_number, peak_daily_cases, total_cases."
+    command:
+      args: [get_epidemic_status]
+    input:
+      - name: cases_file
+        type: Data
+    output:
+      - name: output
+        type: EpidemicStatus
+
+  # -----------------------------------------------------------------------
+  # Full report: writes epidemic_report.json, location_summary.csv (usable
+  # by the statistics package), and summary.html to /result/.
+  # -----------------------------------------------------------------------
+  'generate_epidemic_report':
+    description: "Generate a full epidemic surveillance report for all locations: incidence, Rt, stage, outbreak flags. Writes epidemic_report.json, location_summary.csv, and summary.html to /result/."
+    command:
+      args: [generate_epidemic_report]
+    input:
+      - name: cases_file
+        type: Data
+      - name: population
+        type: integer
+    output:
+      - name: output
+        type: IntermediateResult

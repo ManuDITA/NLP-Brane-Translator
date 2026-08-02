@@ -1,0 +1,5 @@
+import statistics;
+
+let patients := new Data{ name := "heal_pa_2" };
+let outliers := detect_outliers(patients, "glucose", "iqr");
+println(outliers);

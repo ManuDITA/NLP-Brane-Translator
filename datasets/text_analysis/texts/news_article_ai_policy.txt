@@ -1,0 +1,17 @@
+European Commission Announces New Framework for Artificial Intelligence Governance
+
+BRUSSELS — The European Commission unveiled a comprehensive new framework for the governance of artificial intelligence systems on Tuesday, establishing mandatory risk assessments, transparency requirements, and human oversight obligations for high-risk applications deployed across the European Union.
+
+The framework, which follows years of negotiation among member states, technology industry representatives, and civil society organisations, creates a tiered classification system for AI applications based on their potential impact on fundamental rights, public safety, and democratic institutions. Systems classified as high-risk will be subject to the most stringent requirements, including mandatory conformity assessments, detailed technical documentation, and ongoing monitoring after deployment.
+
+Applications in the highest risk category include AI systems used in critical infrastructure management, educational assessment, employment decisions, credit scoring, and law enforcement. Developers of these systems will be required to demonstrate that their models are sufficiently accurate, robust, and unbiased before bringing them to market. Third-party auditors will be empowered to inspect AI systems and their training data.
+
+The framework explicitly prohibits certain applications of artificial intelligence that the Commission considers incompatible with fundamental rights. These include real-time biometric surveillance in public spaces by law enforcement agencies, social scoring systems that assign ratings to citizens based on their behaviour, and AI systems that exploit psychological vulnerabilities to manipulate behaviour.
+
+Technology industry representatives expressed mixed reactions to the announcement. Several large technology companies expressed support for a harmonised regulatory framework that creates clear expectations across the European single market, replacing the current patchwork of national regulations. Smaller companies raised concerns about compliance costs and the potential for large companies to use regulatory requirements as barriers to entry for competitors.
+
+Academic researchers and civil society organisations generally welcomed the framework but noted several areas where they believed stronger protections were needed. Particular concern was expressed about the scope of exceptions for national security applications and the enforcement mechanisms available to national supervisory authorities.
+
+The framework will enter into force following a transitional period of twenty-four months, giving companies time to adapt their products and processes to the new requirements. Member states will designate national competent authorities responsible for oversight and enforcement, with cross-border coordination managed through a new European Artificial Intelligence Board.
+
+Officials said the framework represents a significant step toward ensuring that artificial intelligence technology develops in a manner consistent with European values and fundamental rights. They emphasised that the goal is not to impede innovation but to build public trust in AI systems and ensure that the benefits of the technology are shared broadly and equitably.

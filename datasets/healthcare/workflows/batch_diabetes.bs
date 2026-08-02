@@ -1,0 +1,5 @@
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_2" };
+let diabetes_results := batch_diabetes_from_file(patients);
+commit_result("diabetes_batch", diabetes_results);

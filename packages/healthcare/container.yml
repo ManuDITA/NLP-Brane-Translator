@@ -1,0 +1,319 @@
+# container.yml for the Healthcare package
+name: healthcare
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-pip
+  - python3-yaml
+
+install:
+  - pip3 install pyyaml --break-system-packages
+
+files:
+  - healthcare.py
+
+entrypoint:
+  kind: task
+  exec: healthcare.py
+
+# ---------------------------------------------------------------------------
+# Custom classes exposed to BraneScript.
+# In BraneScript: let p := get_patient_summary(patient); println(p.risk_level);
+# Serialization: FullValue::Instance is ["ClassName", {fields}] in serde.
+# ---------------------------------------------------------------------------
+types:
+  PatientSummary:
+    name: PatientSummary
+    properties:
+      - name: patient_id
+        type: string
+      - name: age
+        type: integer
+      - name: gender
+        type: string
+      - name: risk_level
+        type: string
+      - name: risk_score
+        type: real
+  RiskAssessment:
+    name: RiskAssessment
+    properties:
+      - name: patient_id
+        type: string
+      - name: risk_score
+        type: real
+      - name: risk_level
+        type: string
+      - name: top_factor
+        type: string
+  VitalSigns:
+    name: VitalSigns
+    properties:
+      - name: blood_pressure
+        type: integer
+      - name: heart_rate
+        type: integer
+      - name: spo2
+        type: integer
+      - name: temperature
+        type: real
+  LabResults:
+    name: LabResults
+    properties:
+      - name: cholesterol
+        type: integer
+      - name: glucose
+        type: integer
+      - name: hba1c
+        type: real
+  Patient:
+    name: Patient
+    properties:
+      - name: patient_id
+        type: string
+      - name: age
+        type: integer
+      - name: gender
+        type: string
+      - name: weight
+        type: integer
+      - name: height
+        type: integer
+      - name: medical_history
+        type: string
+      - name: vital_signs
+        type: VitalSigns
+      - name: lab_results
+        type: LabResults
+  TriageResult:
+    name: TriageResult
+    properties:
+      - name: patient_id
+        type: string
+      - name: triage_level
+        type: string
+      - name: recommendation
+        type: string
+
+actions:
+  # -----------------------------------------------------------------------
+  # Single-patient functions: Patient class input.
+  # Input arrives via uppercase env var (e.g. PATIENT).
+  # Output is written to stdout as: "output: <yaml-encoded-value>"
+  # -----------------------------------------------------------------------
+  'validate_patient_data':
+    description: "Validate a single Patient record. Returns a JSON string with is_valid and error fields."
+    command:
+      args: [validate_patient_data]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: string
+
+  'analyze_heart_disease':
+    description: "Analyze heart disease risk for a single Patient record. Returns a RiskAssessment class instance."
+    command:
+      args: [analyze_heart_disease]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: RiskAssessment
+
+  'generate_report':
+    description: "Generate a full health report for a single Patient record. Returns a JSON report string."
+    command:
+      args: [generate_report]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: string
+
+  'compute_bmi':
+    description: "Compute BMI from weight (kg) and height (cm). Returns a JSON string with bmi and category fields."
+    command:
+      args: [compute_bmi]
+    input:
+      - name: weight_kg
+        type: real
+      - name: height_cm
+        type: real
+    output:
+      - name: output
+        type: string
+
+  'assess_diabetes_risk':
+    description: "Assess type-2 diabetes risk for a single Patient record. Returns a RiskAssessment class instance."
+    command:
+      args: [assess_diabetes_risk]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: RiskAssessment
+
+  'triage_patient':
+    description: "Determine triage urgency level (immediate/urgent/standard) for a Patient record. Returns a TriageResult class instance."
+    command:
+      args: [triage_patient]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: TriageResult
+
+  # -----------------------------------------------------------------------
+  # Class-returning function: returns a PatientSummary instance.
+  # BraneScript usage: let p := get_patient_summary(patient); println(p.risk_level);
+  # -----------------------------------------------------------------------
+  'get_patient_summary':
+    description: "Return a PatientSummary class instance for a single Patient record."
+    command:
+      args: [get_patient_summary]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: PatientSummary
+
+  # -----------------------------------------------------------------------
+  # Data function: operates on a registered Brane dataset (file on disk).
+  # Brane mounts the file and passes its path via PATIENTS_FILE env var.
+  # Output is written to /result/ — Brane wraps this as IntermediateResult.
+  # -----------------------------------------------------------------------
+  'analyze_patients_file':
+    description: "Read a patients CSV dataset, analyze all records, write analysis_report.json to /result/."
+    command:
+      args: [analyze_patients_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'filter_high_risk_patients':
+    description: "Read a patients CSV dataset and write only high-risk records to /result/high_risk.csv."
+    command:
+      args: [filter_high_risk_patients]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  # -----------------------------------------------------------------------
+  # IntermediateResult chaining: reads the output of analyze_patients_file,
+  # generates formatted HTML + summary reports, writes them to /result/.
+  # -----------------------------------------------------------------------
+  'generate_reports_from_results':
+    description: "Read an analysis IntermediateResult and produce per-patient JSON + HTML summary in /result/."
+    command:
+      args: [generate_reports_from_results]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'batch_diabetes_from_file':
+    description: "Run diabetes risk assessment on all patients in a CSV dataset. Writes diabetes_report.json to /result/."
+    command:
+      args: [batch_diabetes_from_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'batch_triage_from_file':
+    description: "Triage all patients in a CSV dataset sorted by urgency level. Writes triage_report.json to /result/."
+    command:
+      args: [batch_triage_from_file]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'compute_cohort_statistics':
+    description: "Compute descriptive statistics (mean/std/min/max/median) for all numeric fields in a patient CSV. Writes cohort_stats.json to /result/."
+    command:
+      args: [compute_cohort_statistics]
+    input:
+      - name: patients_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'filter_by_condition':
+    description: "Filter a patients CSV to those with a given condition in medical_history (e.g. diabetes, hypertension, smoking). Writes condition_patients.csv and filter_summary.json to /result/."
+    command:
+      args: [filter_by_condition]
+    input:
+      - name: patients_file
+        type: Data
+      - name: condition
+        type: string
+    output:
+      - name: output
+        type: IntermediateResult
+
+  'compute_risk_distribution':
+    description: "Read a CVD or diabetes analysis IntermediateResult and return a JSON string with patient counts and percentages per risk level."
+    command:
+      args: [compute_risk_distribution]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: string
+
+  'compute_mortality_risk':
+    description: "Compute composite 30-day mortality risk for a single Patient record, combining CVD, diabetes, and triage scores. Returns a JSON string."
+    command:
+      args: [compute_mortality_risk]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: string
+
+  'check_vital_signs':
+    description: "Flag all abnormal vital signs for a single Patient record with clinical interpretation. Returns a JSON string with per-sign findings."
+    command:
+      args: [check_vital_signs]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: string
+
+  'predict_readmission_risk':
+    description: "Predict 30-day hospital readmission risk for a single Patient record based on age, comorbidities, and clinical indicators. Returns a JSON string."
+    command:
+      args: [predict_readmission_risk]
+    input:
+      - name: patient
+        type: Patient
+    output:
+      - name: output
+        type: string

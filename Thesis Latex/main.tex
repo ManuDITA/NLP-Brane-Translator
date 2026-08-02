@@ -1,0 +1,149 @@
+% ----------------------------------------------------------------------
+%           MASTER THESIS — VU Amsterdam / University of Amsterdam
+% ----------------------------------------------------------------------
+\documentclass[twoside,11pt]{Latex/Classes/PhDthesisPSnPDF}
+
+%: --- Packages ---
+\usepackage[T1]{fontenc}
+\usepackage{array}
+\usepackage{pdfpages}
+\usepackage{xspace}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+\graphicspath{{images/}}
+
+%: --- Layout ---
+\textwidth 15cm
+\textheight 22cm
+\parindent 10pt
+\oddsidemargin 0.85cm
+\evensidemargin 0.37cm
+
+%: --- Macros ---
+\newcommand{\ie}{\emph{i.e.,}\xspace}
+\newcommand{\eg}{\emph{e.g.,}\xspace}
+\newcommand{\etc}{etc.\xspace}
+\newcommand{\etal}{\emph{et~al.}\xspace}
+\newcommand{\todo}[1]{\textcolor{blue}{#1}}
+
+\begin{document}
+
+%: ---------------------------------------------------------------
+%:                  TITLE PAGE
+%: ---------------------------------------------------------------
+
+\thispagestyle{empty}
+
+\begin{center}
+
+Vrije Universiteit Amsterdam \hspace*{2cm} Universiteit van Amsterdam
+
+\vspace{1mm}
+
+\hspace*{-6.5cm}\includegraphics[height=20mm]{logos/vu-griffioen.pdf}
+
+\vspace*{-2cm}\hspace*{7.5cm}\includegraphics[height=15mm]{logos/uva_logo.jpg}
+
+\vspace{2cm}
+
+{\Large Master Thesis}
+
+\vspace*{1.5cm}
+
+\rule{.9\linewidth}{.6pt}\\[0.4cm]
+{\huge \bfseries NLP-to-BraneScript Translation for Distributed Scientific Workflows\par}\vspace{0.4cm}
+\rule{.9\linewidth}{.6pt}\\[1.5cm]
+
+{\Large
+\begin{tabular}{l}
+{\bf Author:} ~~Emanuele Simeone ~~~~ (student number)
+\end{tabular}
+}
+
+\vspace*{2cm}
+
+\begin{tabular}{ll}
+{\it 1st supervisor:}   & ~~VU supervisor name \\
+{\it daily supervisor:} & ~~supervisor name \\
+{\it 2nd reader:}       & ~~supervisor name
+\end{tabular}
+
+\vspace*{2.5cm}
+
+\textit{A thesis submitted in fulfillment of the requirements for\\ the joint VU-UvA Master of Science degree in Computer Science}
+
+\vspace*{1.8cm}
+
+\today
+
+\end{center}
+
+\newpage
+
+%: ---------------------------------------------------------------
+%:                  FRONT MATTER
+%: ---------------------------------------------------------------
+
+\hbadness=10000
+\hfuzz=50pt
+
+\renewcommand\baselinestretch{1.2}
+\baselineskip=18pt plus1pt
+
+%: --- Declarations and Acknowledgements ---
+\input{sections/AI_declaration}
+\input{sections/Acknowledgements}
+
+%: --- Abstract ---
+\input{0_frontmatter/abstract}
+
+\frontmatter
+\input{0_frontmatter/dedication}
+\input{0_frontmatter/acknowledgement}
+
+%: --- Table of Contents / Lists ---
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+\tableofcontents
+\listoffigures
+\listoftables
+
+%: ---------------------------------------------------------------
+%:                  MAIN MATTER
+%: ---------------------------------------------------------------
+
+\mainmatter
+
+\renewcommand{\chaptername}{}
+
+\input{sections/01_intro}
+\input{sections/02_background}
+\input{sections/03_overview}
+\input{sections/04_design}
+\input{sections/05_implementation}
+\input{sections/06_evaluation}
+\input{sections/07_discussion}
+\input{sections/08_threats}
+\input{sections/09_related}
+\input{sections/10_conclusion}
+
+%: ---------------------------------------------------------------
+%:                  BACK MATTER
+%: ---------------------------------------------------------------
+
+\bibliographystyle{Latex/Classes/PhDbiblio-url2}
+\renewcommand{\bibname}{References}
+\bibliography{references}
+
+\input{sections/11_appendix}
+
+\end{document}

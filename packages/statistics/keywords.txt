@@ -1,0 +1,17 @@
+# Keyword aliases for the statistics package.
+summary statistics
+mean
+std dev
+standard deviation
+percentile
+correlation
+regression
+histogram
+distribution
+filter
+threshold
+statistical
+aggregate
+average
+variance
+median

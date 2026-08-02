@@ -1,0 +1,168 @@
+# container.yml for the Text Analysis package
+name: text_analysis
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+  - python3-yaml
+
+files:
+  - text_analysis.py
+
+entrypoint:
+  kind: task
+  exec: text_analysis.py
+
+# ---------------------------------------------------------------------------
+# Custom classes exposed to BraneScript.
+# In BraneScript: let s := get_text_stats(text); println(s.word_count);
+# Serialisation: FullValue::Instance is ["ClassName", {fields}] in serde.
+# ---------------------------------------------------------------------------
+types:
+  TextStats:
+    name: TextStats
+    properties:
+      - name: word_count
+        type: integer
+      - name: sentence_count
+        type: integer
+      - name: avg_word_length
+        type: real
+      - name: readability_score
+        type: real
+      - name: sentiment
+        type: string
+  KeywordResult:
+    name: KeywordResult
+    properties:
+      - name: keyword
+        type: string
+      - name: frequency
+        type: integer
+      - name: score
+        type: real
+  SentimentResult:
+    name: SentimentResult
+    properties:
+      - name: polarity
+        type: string
+      - name: score
+        type: real
+      - name: word_count
+        type: integer
+  ReadabilityScore:
+    name: ReadabilityScore
+    properties:
+      - name: flesch_score
+        type: real
+      - name: grade_level
+        type: string
+
+actions:
+  # -----------------------------------------------------------------------
+  # String-based functions: operate on an inline text string via TEXT env var.
+  # Output is printed to stdout as: "output: <yaml-encoded-value>"
+  # -----------------------------------------------------------------------
+  'count_words':
+    description: "Count the number of words in a text string. Returns an integer."
+    command:
+      args: [count_words]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: integer
+
+  'count_sentences':
+    description: "Count the number of sentences in a text string. Returns an integer."
+    command:
+      args: [count_sentences]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: integer
+
+  'extract_keywords':
+    description: "Extract the top N keywords from a text string by TF weight. Returns a JSON array string."
+    command:
+      args: [extract_keywords]
+    input:
+      - name: text
+        type: string
+      - name: top_n
+        type: integer
+    output:
+      - name: output
+        type: string
+
+  'compute_sentiment':
+    description: "Classify text sentiment as positive, negative, or neutral with a score. Returns a SentimentResult class instance."
+    command:
+      args: [compute_sentiment]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: SentimentResult
+
+  'compute_readability':
+    description: "Compute Flesch Reading Ease score and US grade level for a text string. Returns a ReadabilityScore class instance."
+    command:
+      args: [compute_readability]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: ReadabilityScore
+
+  # -----------------------------------------------------------------------
+  # Class-returning function: returns a TextStats instance.
+  # BraneScript: let s := get_text_stats(text); println(s.word_count);
+  # -----------------------------------------------------------------------
+  'get_text_stats':
+    description: "Return a TextStats class instance summarising word count, sentence count, readability, and sentiment."
+    command:
+      args: [get_text_stats]
+    input:
+      - name: text
+        type: string
+    output:
+      - name: output
+        type: TextStats
+
+  # -----------------------------------------------------------------------
+  # Data function: operates on a registered Brane dataset (plain-text file).
+  # Brane mounts the file and passes its path via TEXT_FILE env var.
+  # Output is written to /result/ — Brane wraps this as IntermediateResult.
+  # -----------------------------------------------------------------------
+  'analyze_text_file':
+    description: "Analyse a plain-text file dataset: full stats, keywords, sentiment, readability. Writes JSON to /result/."
+    command:
+      args: [analyze_text_file]
+    input:
+      - name: text_file
+        type: Data
+    output:
+      - name: output
+        type: IntermediateResult
+
+  # -----------------------------------------------------------------------
+  # IntermediateResult chaining: reads the output of analyze_text_file and
+  # generates a word-frequency CSV + HTML visualisation in /result/.
+  # -----------------------------------------------------------------------
+  'generate_frequency_report':
+    description: "Read a text analysis IntermediateResult and write word_frequencies.csv + report.html to /result/."
+    command:
+      args: [generate_frequency_report]
+    input:
+      - name: analysis
+        type: IntermediateResult
+    output:
+      - name: output
+        type: IntermediateResult

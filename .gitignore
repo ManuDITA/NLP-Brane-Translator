@@ -1,7 +1,43 @@
 .venv/
-submodules/*
+submodules/manual/*
+submodules/languageSpec/*
+submodules/specification/*
 brane_knowledge_db/
 src/__pycache__/*
 brane_lang_db/
 brane_pkg_db/
 DYNAMOS/
+generated_branescripts/
+runs/*
+data/training/runs/
+outputs/runs/
+.env
+scripts/__pycache__/*
+*__pycache__/*
+*.log
+*.out
+outputs/snellius/
+outputs/logs/
+outputs/slurm/
+outputs/models/
+outputs/eval/*.json
+outputs/pipeline/
+unsloth_compiled_cache/
+# LaTeX build output (Thesis Latex/)
+Thesis Latex/build/
+Thesis Latex/*.aux
+Thesis Latex/*.log
+Thesis Latex/*.out
+Thesis Latex/*.toc
+Thesis Latex/*.bbl
+Thesis Latex/*.blg
+Thesis Latex/*.bcf
+Thesis Latex/*.run.xml
+Thesis Latex/*.fls
+Thesis Latex/*.fdb_latexmk
+Thesis Latex/*.synctex.gz
+Thesis Latex/*.brf
+Thesis Latex/*.lof
+Thesis Latex/*.lot
+Thesis Latex/*.nlo
+Thesis Latex/*.pdf

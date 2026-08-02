@@ -1,0 +1,5 @@
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_2" };
+let stats := compute_cohort_statistics(patients);
+commit_result("cohort_statistics", stats);

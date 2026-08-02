@@ -1,0 +1,5 @@
+import epidemics;
+
+let cases := new Data{ name := "epidemic_cases" };
+let report := generate_epidemic_report(cases, 100000);
+commit_result("epidemic_report", report);

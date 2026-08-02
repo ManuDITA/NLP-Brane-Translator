@@ -1,42 +1,53 @@
 """
-Responsibility: HIGH LEVEL TASK BREAKDOWN + LANGUAGE SPEC RETRIEVAL
+Responsibility: HIGH LEVEL TASK BREAKDOWN
 
-Two jobs:
-  1. Break the user's intent into concrete BraneScript sub-tasks (plain English).
-  2. Retrieve only the relevant language spec chunks for those sub-tasks,
-     capped at a token budget to avoid overflowing llama3 context window.
+Breaks the user's intent into concrete BraneScript sub-tasks (plain English).
+Language spec context is no longer retrieved here — syntax_reference.md is
+always injected directly into the prompt by pipeline.py.
 """
 
-from langchain_community.llms import Ollama
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import PromptTemplate
-from langchain_chroma import Chroma
-
-MAX_LANG_CONTEXT_CHARS = 1500 * 4    # ~6000 chars ≈ 1500 tokens
+from utils import strip_thinking_tokens
 
 # ---------------------------------------------------------------------------
 # Prompt 1: Decomposition: breaks user intent into sub-tasks in plain English, no code is generated at this stage
 # ---------------------------------------------------------------------------
-DECOMPOSE_TEMPLATE = """You are a BraneScript expert. Break the user's intent
+DECOMPOSE_SYSTEM = """You are a BraneScript expert. Break the user's intent
 into a short numbered list of concrete BraneScript sub-tasks.
 
-Each sub-task maps to ONE primitive:
+Each sub-task maps to ONE primitive operation:
 - Defining a function (func keyword, parameters, return type)
-- Importing / calling a package
-- Reading or referencing a dataset
-- Defining a workflow (top-level orchestration)
-- Variable assignment or type usage (let, :=, unit)
-- Control flow (if/else, loops)
+- Importing a package (import keyword)
+- Calling a package function or external function
+- Defining a workflow (top-level statements)
+- Variable assignment and declaration (let, :=)
+- If/else conditional branches
+- For-loops and while-loops
+- Parallel execution blocks with merge strategies
+- Return statements (returning values or early exit)
+- Arrays (creation, indexing, operations)
+- Classes (class definition, properties, methods)
+- Object instantiation (new keyword)
+- Routing execution to a named node, site, or location using #[on("name")] attribute
+  (trigger this whenever the user says: "on node X", "on site X", "at location X", "run on X", "execute on X")
+- Projections and property access (dot notation, e.g., obj.property)
+- Expression statements (calling functions for side-effects)
+- Block statements for scoping
+- Break and continue for loop control
 
 Rules:
 - Output ONLY a numbered list, one sub-task per line.
 - Each line: 5-15 words, phrased as a BraneScript manual search query.
-- No code. No explanations. Max 10 sub-tasks.
-
-USER INTENT:
-{intent}
+- No code. No explanations. Max 12 sub-tasks.
+- Focus ONLY on BraneScript constructs needed to pass data to the package function.
+  Do NOT generate subtasks for logic that the package function handles internally
+  (e.g. do not say "compute risk score", "validate input", "handle edge cases" --
+  those are inside the package, not in the BraneScript workflow).
+- If the user mentions a node, site, or location name, always include a sub-task:
+  "Route execution to node <name> using on attribute #[on]"
 
 SUB-TASKS:"""
+
+DECOMPOSE_USER = "USER INTENT:\n{intent}"
 
 # ---------------------------------------------------------------------------
 # Prompt 2: Query rewriter: translates English sub-tasks into BraneScript-vocabulary search terms.
@@ -45,74 +56,42 @@ SUB-TASKS:"""
 
 class IntentDecomposer:
     """
-    High level task breakdown + language spec retrieval.
+    Breaks the user's intent into a list of concrete BraneScript sub-tasks.
 
     Usage:
-        decomposer = IntentDecomposer(llm, lang_db)
-        lang_context, subtasks = decomposer.run("I want to analyze heart-disease data")
+        decomposer = IntentDecomposer(text_gen_pipeline=pipe, tokenizer=tok)
+        subtasks = decomposer.decompose("I want to analyze heart-disease data")
     """
 
-    def __init__(self, llm: Ollama, lang_db: Chroma, k_per_subtask: int = 3):
-        self.llm = llm
-        self.lang_db = lang_db
-        self.k = k_per_subtask
-
-        self.decompose_chain = (
-            PromptTemplate.from_template(DECOMPOSE_TEMPLATE)
-            | llm
-            | StrOutputParser()
-        )
-
+    def __init__(self, text_gen_pipeline, tokenizer):
+        self.text_gen_pipeline = text_gen_pipeline
+        self.tokenizer = tokenizer
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _parse_subtasks(self, raw: str) -> list[str]:
+        # Strip Qwen3 <think>...</think> blocks before parsing
+        raw = strip_thinking_tokens(raw)
+
         subtasks = []
         for line in raw.strip().splitlines():
             line = line.strip()
             if not line:
                 continue
-            for prefix in ["1.", "2.", "3.", "4.", "5.", "6.",
-                           "1)", "2)", "3)", "4)", "5)", "6)",
+            for prefix in ["1.", "2.", "3.", "4.", "5.", "6.", "7.", "8.", "9.", "10.", "11.", "12.",
+                           "1)", "2)", "3)", "4)", "5)", "6)", "7)", "8)", "9)", "10)", "11)", "12)",
                            "-", "*"]:
                 if line.startswith(prefix):
                     line = line[len(prefix):].strip()
                     break
             if line:
                 subtasks.append(line)
-            
-            subtasks = [s for s in subtasks if len(s) < 80 and not s.endswith(":")]
-        return subtasks[:6]
 
-    def _rewrite(self, subtask: str) -> str:
-        """Rewrite one sub-task into a BraneScript-vocabulary search query."""
-        q = self.rewrite_chain.invoke({"subtask": subtask}).strip()
-        return q if len(q) > 5 else subtask    # fallback to original if garbage
-
-    def _retrieve(self, query: str) -> list:
-        return self.lang_db.similarity_search(query, k=self.k)
-
-    def _deduplicate(self, docs: list) -> list:
-        seen, unique = set(), []
-        for doc in docs:
-            key = doc.page_content[:120]
-            if key not in seen:
-                seen.add(key)
-                unique.append(doc)
-        return unique
-
-    def _apply_token_budget(self, docs: list) -> list:
-        """Keep chunks until we hit the character budget."""
-        total, kept = 0, []
-        for doc in docs:
-            size = len(doc.page_content)
-            if total + size > MAX_LANG_CONTEXT_CHARS:
-                break
-            kept.append(doc)
-            total += size
-        return kept
+        # Filter runs ONCE after all lines are collected, not inside the loop
+        subtasks = [s for s in subtasks if len(s) < 80 and not s.endswith(":")]
+        return subtasks[:12]
 
     # ------------------------------------------------------------------
     # Public API
@@ -120,34 +99,26 @@ class IntentDecomposer:
 
     def decompose(self, intent: str) -> list[str]:
         """Break the intent into a list of plain-English sub-tasks."""
-        raw = self.decompose_chain.invoke({"intent": intent})
+        messages = [
+            {"role": "system", "content": DECOMPOSE_SYSTEM},
+            {"role": "user",   "content": DECOMPOSE_USER.format(intent=intent)},
+        ]
+        try:
+            prompt_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            prompt_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        raw = self.text_gen_pipeline(prompt_text)[0]["generated_text"]
         subtasks = self._parse_subtasks(raw)
         print(f"\n📋 Task breakdown ({len(subtasks)} sub-tasks):")
         for i, s in enumerate(subtasks, 1):
             print(f"   {i}. {s}")
         return subtasks
-
-    def retrieve_lang_context(self, subtasks: list[str]) -> str:
-        """Rewrite sub-tasks into search queries, then it retrieves lang spec chunks."""
-        print("\n🔍 Language spec retrieval:")
-        all_docs = []
-        for st in subtasks:
-            
-            print(f"   • {st}")
-            all_docs.extend(self._retrieve(st))
-
-        docs = self._apply_token_budget(self._deduplicate(all_docs))
-        print(f"   → {len(docs)} unique chunks within token budget")
-        return "\n\n---\n\n".join(doc.page_content for doc in docs)
-
-    def run(self, intent: str) -> tuple[str, list[str]]:
-        """
-        Full flow: intent → sub-tasks → lang spec context.
-
-        Returns:
-            lang_context  (str)       : syntax docs for the prompt
-            subtasks      (list[str]) : sub-tasks for prompt structure + pkg retrieval
-        """
-        subtasks = self.decompose(intent)
-        lang_context = self.retrieve_lang_context(subtasks)
-        return lang_context, subtasks

@@ -1,0 +1,5 @@
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_2" };
+let diabetics := filter_by_condition(patients, "diabetes");
+commit_result("diabetic_patients", diabetics);

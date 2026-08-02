@@ -1,0 +1,16 @@
+patient_id,age,gender,blood_pressure,heart_rate,total_cholesterol,glucose,hba1c,temperature,spo2,weight_kg,height_cm,medical_history
+PAT001,67,M,165,88,245,112,6.1,37.2,96,92,175,hypertension|smoking
+PAT002,45,F,135,72,210,95,5.5,36.8,98,68,165,
+PAT003,32,M,118,65,175,88,5.2,37.0,99,75,180,
+PAT004,71,F,155,90,260,130,7.2,37.5,95,80,162,diabetes|hypertension
+PAT005,58,M,145,105,235,108,5.9,38.1,94,95,178,smoking
+PAT006,29,F,112,68,168,82,5.0,36.9,99,55,158,
+PAT007,63,M,172,115,255,140,7.8,37.8,91,110,182,diabetes|hypertension|smoking
+PAT008,48,F,128,75,195,97,5.4,36.7,98,72,170,
+PAT009,55,M,138,82,215,105,5.8,37.1,97,88,176,hypertension
+PAT010,41,F,122,70,188,92,5.3,36.8,98,63,165,
+PAT011,77,M,185,95,270,145,8.1,38.2,89,98,168,diabetes|hypertension|smoking
+PAT012,34,F,115,64,172,85,5.1,36.6,99,58,162,
+PAT013,52,M,142,88,228,102,5.7,37.3,96,82,174,hypertension
+PAT014,69,F,158,93,248,125,6.8,37.6,94,78,160,diabetes|hypertension
+PAT015,43,M,125,72,192,91,5.3,37.0,98,74,179,

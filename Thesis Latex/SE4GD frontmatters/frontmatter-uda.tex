@@ -1,0 +1,55 @@
+% Create a custom paragraph with newline at the end
+\newcommand{\myparagraph}[1]{\paragraph*{\normalfont#1}\mbox{}\\}
+
+% frontmatter
+\newpage
+\thispagestyle{empty}
+% Univaq and DISIM logos
+\begin{figure}[h]
+    \begin{minipage}[t]{0.2\textwidth}
+        \includegraphics[width=\textwidth]{./figures/univaq_logo.png}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.40\textwidth}
+        \includegraphics[width=\textwidth]{./figures/logo_disim.png}
+    \end{minipage}
+\end{figure}
+
+\vspace{1cm}
+
+% University and department
+\begin{center}
+    {\Huge Università degli Studi dell'Aquila}
+    \myparagraph{\Large Dipartimento di Ingegneria e Scienze dell'Informazione e Matematica}
+    \myparagraph{Corso di Laurea in Informatica}
+    \vspace{.7cm}
+    \myparagraph{\textbf{Tesi di Laurea Magistrale}}
+    \vspace{2cm}
+    \large{{\textbf{\emph{
+               This is the Title of the Thesis
+            }}}
+    }
+    
+    \vspace{2cm}
+
+    % Tab
+        \begin{tabular}[t]{c}
+            \normalsize\textbf{Relatore}\\\\
+            \normalsize{Prof. Henry Muccini}\\\\\\
+            \normalsize\textbf{Correlatore}\\\\
+            \normalsize{Title Name Surname}\\
+        \end{tabular}
+        \hfill
+        \begin{tabular}[t]{c}
+            \normalsize\textbf{Laureando}\\\\
+            \normalsize{Name Surname}
+        \end{tabular}
+
+    \vspace{1cm}
+
+    % Academic year
+    \rule{10cm}{.1mm}\\ {\large Anno Accademico 2024-2025}
+\end{center}
+
+\clearpage
+% END frontmatter

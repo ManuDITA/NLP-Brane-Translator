@@ -1,0 +1,81 @@
+# container.yml for the Datetime package
+name: datetime
+version: 1.0.0
+kind: ecu
+
+dependencies:
+  - python3
+
+files:
+  - datetime_pkg.py
+
+entrypoint:
+  kind: task
+  exec: datetime_pkg.py
+
+actions:
+
+  # Returns the current datetime in ISO 8601 format with UTC offset.
+  # Example: "2026-06-14T22:58:17+02:00"
+  'get_iso':
+    description: "Return the current local datetime in ISO 8601 format (e.g. 2026-06-14T22:58:17+02:00)."
+    input: []
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_iso]
+
+  # Returns today's date as YYYY-MM-DD.
+  'get_date':
+    description: "Return today's date as YYYY-MM-DD."
+    input: []
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_date]
+
+  # Returns the current time as HH:MM:SS.
+  'get_time':
+    description: "Return the current local time as HH:MM:SS."
+    input: []
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_time]
+
+  # Returns current datetime in a human-readable format.
+  # Example: "Saturday, June 14 2026 10:58 PM"
+  'get_human':
+    description: "Return the current datetime in a human-readable format (e.g. Saturday, June 14 2026 10:58 PM)."
+    input: []
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_human]
+
+  # Returns the current UTC Unix timestamp as a string.
+  'get_unix':
+    description: "Return the current UTC Unix timestamp as a decimal string."
+    input: []
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_unix]
+
+  # Returns the current datetime using a caller-supplied strftime format string.
+  # Example: format_str="%d/%m/%Y %I:%M %p"  →  "14/06/2026 10:58 PM"
+  'get_formatted':
+    description: "Return the current local datetime using a custom strftime format string."
+    input:
+      - name: format_str
+        type: string
+    output:
+      - name: output
+        type: string
+    command:
+      args: [get_formatted]

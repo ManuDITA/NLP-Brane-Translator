@@ -1,0 +1,15 @@
+# Keyword aliases for the text_analysis package.
+text
+sentiment
+word count
+keyword
+readability
+named entity
+ner
+language detection
+summarize
+text corpus
+document
+corpus
+nlp
+natural language

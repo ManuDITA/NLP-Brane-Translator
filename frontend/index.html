@@ -1,0 +1,2438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Brane Pipeline Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --border:    #2a2d3a;
+      --text:      #e2e8f0;
+      --muted:     #718096;
+      --accent:    #4f8ef7;
+      --pass:      #48bb78;
+      --fail:      #f56565;
+      --warn:      #ed8936;
+      --row-hover: #222535;
+      --selected:  #1e2a45;
+      --code-bg:   #161b22;
+      --radius:    6px;
+      --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    header h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
+    header h1 span { color: var(--accent); }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--pass); margin-left: auto;
+      animation: pulse 2s infinite;
+    }
+    .live-dot.offline { background: var(--muted); animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    #last-refresh { color: var(--muted); font-size: 12px; }
+
+    /* ── Page-level navigation ──────────────────────────────────── */
+    .page-nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex; gap: 0;
+    }
+    .page-nav-btn {
+      background: none; border: none;
+      color: var(--muted);
+      padding: 11px 18px;
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .page-nav-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .page-nav-btn:not(.active):hover { color: var(--text); }
+
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Package / dataset cards ─────────────────────────────────── */
+    .catalog-wrap { padding: 20px 24px; }
+    .catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 14px;
+    }
+    .catalog-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      overflow: hidden;
+    }
+    .catalog-card:hover { border-color: var(--accent); background: var(--row-hover); }
+    .catalog-card-header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .catalog-card-header .name {
+      font-weight: 600; font-size: 15px;
+    }
+    .catalog-card-header .version {
+      font-size: 11px; color: var(--muted);
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 1px 6px;
+    }
+    .catalog-card-body { padding: 10px 16px 14px; }
+    .catalog-card-body .fn-list {
+      margin-top: 6px; display: flex; flex-wrap: wrap; gap: 5px;
+    }
+    .fn-chip {
+      font-size: 11px; font-family: var(--font-mono);
+      background: rgba(79,142,247,.1); color: var(--accent);
+      border: 1px solid rgba(79,142,247,.2);
+      border-radius: 4px; padding: 2px 7px;
+    }
+    .ds-chip {
+      font-size: 11px; font-family: var(--font-mono);
+      background: rgba(72,187,120,.1); color: var(--pass);
+      border: 1px solid rgba(72,187,120,.2);
+      border-radius: 4px; padding: 2px 7px;
+    }
+    .catalog-card-body .section-label {
+      font-size: 11px; text-transform: uppercase; color: var(--muted);
+      letter-spacing: 0.4px; margin-top: 10px;
+    }
+    .catalog-card-body .section-label:first-child { margin-top: 0; }
+
+    /* Catalog detail panel (slide-in from right) */
+    .detail-panel {
+      position: fixed; top: 0; right: 0;
+      width: min(700px, 100vw);
+      height: 100vh;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      z-index: 300;
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      overflow: hidden;
+    }
+    .detail-panel.open { transform: translateX(0); }
+    .detail-panel-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 299;
+      display: none;
+    }
+    .detail-panel-overlay.open { display: block; }
+    .detail-panel-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .detail-panel-header h2 { font-size: 16px; font-weight: 600; flex: 1; }
+    .detail-panel-header .close-btn {
+      background: none; border: none; color: var(--muted);
+      font-size: 20px; cursor: pointer; padding: 2px 4px;
+    }
+    .detail-panel-header .close-btn:hover { color: var(--text); }
+    .detail-panel-body {
+      overflow-y: auto;
+      flex: 1;
+      padding: 20px;
+    }
+
+    /* Function signature block */
+    .fn-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .fn-block-header {
+      padding: 9px 14px;
+      display: flex; align-items: flex-start; gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .fn-block-name {
+      font-family: var(--font-mono); font-size: 13px; font-weight: 600;
+      color: var(--accent); flex-shrink: 0;
+    }
+    .fn-block-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .fn-block-body { padding: 8px 14px; font-size: 12px; }
+    .fn-sig-row { display: flex; gap: 8px; margin-bottom: 3px; }
+    .fn-sig-label { color: var(--muted); width: 50px; flex-shrink: 0; }
+    .fn-sig-params { font-family: var(--font-mono); color: var(--text); }
+    .fn-sig-params .param-type { color: var(--warn); }
+
+    /* Type block */
+    .type-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 10px; padding: 10px 14px;
+    }
+    .type-block-name {
+      font-family: var(--font-mono); font-size: 13px;
+      font-weight: 600; color: var(--pass); margin-bottom: 6px;
+    }
+    .type-prop {
+      font-size: 12px; font-family: var(--font-mono);
+      display: flex; gap: 8px; padding: 2px 0;
+    }
+    .type-prop .prop-name { color: var(--text); }
+    .type-prop .prop-type { color: var(--warn); }
+
+    /* Section heading inside detail panel */
+    .dp-section {
+      font-size: 12px; text-transform: uppercase;
+      color: var(--muted); letter-spacing: 0.5px;
+      margin: 18px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .dp-section:first-child { margin-top: 0; }
+
+    /* File list in dataset panel */
+    .file-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .file-row:last-child { border-bottom: none; }
+    .file-row .file-path { font-family: var(--font-mono); color: var(--text); }
+    .file-row .file-size { color: var(--muted); flex-shrink: 0; }
+
+    /* Readme inside panel */
+    .readme-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #a8b2c2;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* Workflow code block in datasets */
+    .wf-block { margin-bottom: 14px; }
+    .wf-name {
+      font-size: 11px; font-family: var(--font-mono);
+      color: var(--muted); margin-bottom: 4px;
+    }
+    .stats-bar {
+      display: flex; gap: 12px; padding: 16px 24px; flex-wrap: wrap;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 20px;
+      min-width: 130px;
+      flex: 1;
+    }
+    .stat-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+    .stat-card.pass .value  { color: var(--pass); }
+    .stat-card.fail .value  { color: var(--fail); }
+    .stat-card.rate .value  { color: var(--accent); }
+    .stat-card.time .value  { color: var(--warn); }
+
+    /* ── Toolbar ─────────────────────────────────────────────────── */
+    .toolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 24px 12px;
+      flex-wrap: wrap;
+    }
+    .toolbar input[type=text] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 7px 12px;
+      font-size: 13px;
+      width: 280px;
+      outline: none;
+    }
+    .toolbar input[type=text]:focus { border-color: var(--accent); }
+    .toolbar input[type=text]::placeholder { color: var(--muted); }
+    .btn-group { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .btn-group button {
+      background: var(--surface);
+      border: none;
+      color: var(--muted);
+      padding: 7px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-group button.active { background: var(--accent); color: #fff; }
+    .btn-group button:not(.active):hover { background: var(--row-hover); color: var(--text); }
+    .toolbar .count { color: var(--muted); font-size: 12px; margin-left: auto; }
+
+    /* ── Table ──────────────────────────────────────────────────── */
+    .table-wrap {
+      padding: 0 24px 24px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%; border-collapse: collapse;
+      table-layout: fixed;
+    }
+    thead th {
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    thead th:hover { color: var(--text); }
+    thead th .sort-icon { opacity: 0.4; margin-left: 4px; }
+    thead th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    tbody tr:hover { background: var(--row-hover); }
+    tbody tr.selected { background: var(--selected); }
+    tbody td {
+      padding: 9px 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .col-time   { width: 120px; color: var(--muted); font-size: 12px; }
+    .col-intent { width: auto; }
+    .col-model  { width: 130px; color: var(--muted); font-size: 12px; }
+    .col-verdict{ width: 80px; text-align: center; }
+    .col-error  { width: 110px; color: var(--muted); font-size: 12px; }
+    .col-dur    { width: 80px; text-align: right; font-size: 12px; font-family: var(--font-mono); }
+    .col-att    { width: 60px; text-align: center; font-size: 12px; color: var(--muted); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.pass { background: rgba(72,187,120,.15); color: var(--pass); }
+    .badge.fail { background: rgba(245,101,101,.15); color: var(--fail); }
+    .badge.error-type {
+      background: rgba(237,137,54,.12); color: var(--warn);
+      font-weight: 400; text-transform: none; font-size: 11px;
+    }
+
+    .empty-state {
+      text-align: center; padding: 60px 24px; color: var(--muted);
+    }
+    .empty-state p { margin-top: 8px; font-size: 13px; }
+
+    /* ── Detail modal ───────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.65);
+      z-index: 200;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px;
+      overflow-y: auto;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 960px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .modal-header {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .modal-header .intent-text {
+      flex: 1; font-size: 14px; line-height: 1.5; color: var(--text);
+    }
+    .modal-header .meta {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;
+    }
+    .meta-tag {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 2px 8px;
+      font-size: 11px; color: var(--muted);
+    }
+    .modal-header .close-btn {
+      background: none; border: none; color: var(--muted);
+      font-size: 20px; cursor: pointer; flex-shrink: 0; line-height: 1;
+      padding: 2px 4px;
+    }
+    .modal-header .close-btn:hover { color: var(--text); }
+
+    /* Tabs */
+    .tabs {
+      display: flex; gap: 0;
+      border-bottom: 1px solid var(--border);
+      padding: 0 20px;
+    }
+    .tab-btn {
+      background: none; border: none; color: var(--muted);
+      padding: 10px 16px; cursor: pointer; font-size: 13px;
+      border-bottom: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-btn:not(.active):hover { color: var(--text); }
+
+    .tab-content { display: none; padding: 16px 20px 20px; }
+    .tab-content.active { display: block; }
+
+    /* Code block inside modal */
+    pre[class*="language-"] {
+      margin: 0 !important;
+      border-radius: var(--radius) !important;
+      font-size: 13px !important;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    /* Stdout / Stderr */
+    .output-block {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+      color: #a8b2c2;
+    }
+    .output-block.stderr { color: #fc8181; }
+    .output-label {
+      font-size: 11px; text-transform: uppercase;
+      color: var(--muted); letter-spacing: 0.5px;
+      margin-bottom: 6px; margin-top: 14px;
+    }
+    .output-label:first-child { margin-top: 0; }
+
+    /* Timing table */
+    .timing-table { width: 100%; border-collapse: collapse; }
+    .timing-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .timing-table td:first-child { color: var(--muted); width: 150px; }
+    .timing-table td:last-child { font-family: var(--font-mono); text-align: right; }
+    .timing-table tr:last-child td { border-bottom: none; font-weight: 600; }
+
+    /* Datasets */
+    .dataset-block { margin-bottom: 16px; }
+    .dataset-name {
+      font-size: 12px; font-weight: 600; color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .dataset-file { margin-bottom: 10px; }
+    .dataset-file-name {
+      font-size: 11px; color: var(--muted);
+      font-family: var(--font-mono); margin-bottom: 4px;
+    }
+
+    /* Empty panel message */
+    .no-data { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+    /* ── Evaluation Page ─────────────────────────────────────── */
+    .eval-wrap { padding: 20px 24px; }
+    .eval-section { margin-bottom: 28px; }
+    .eval-section-hdr {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.6px; color: var(--muted);
+      padding-bottom: 8px; margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Comparison table */
+    .cmp-table { width: 100%; border-collapse: collapse; }
+    .cmp-table th {
+      text-align: left; padding: 8px 12px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--muted); border-bottom: 1px solid var(--border);
+    }
+    .cmp-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+    .cmp-table tbody tr:last-child td { border-bottom: none; }
+    .metric-val { font-family: var(--font-mono); font-weight: 700; font-size: 14px; }
+    .metric-val.high { color: var(--pass); }
+    .metric-val.mid  { color: var(--warn); }
+    .metric-val.low  { color: var(--fail); }
+    .metric-val.none { color: var(--muted); font-weight: 400; font-size: 13px; }
+    .model-label-tag {
+      display: inline-block; padding: 2px 9px; border-radius: 10px;
+      font-size: 12px; font-weight: 600;
+    }
+    .model-label-tag.base  { background: rgba(79,142,247,.15); color: var(--accent); }
+    .model-label-tag.sft   { background: rgba(237,137,54,.15);  color: var(--warn);   }
+    .model-label-tag.grpo  { background: rgba(72,187,120,.15);  color: var(--pass);   }
+    .model-label-tag.other { background: rgba(160,160,200,.1);  color: #a8b2c2;       }
+    .model-label-tag.tc-clickable {
+      cursor: pointer; padding-right: 6px;
+    }
+    .model-label-tag.tc-clickable:hover { filter: brightness(1.25); }
+    .tc-info-icon {
+      display: inline-block; margin-left: 5px; font-size: 11px;
+      opacity: 0.7; vertical-align: middle;
+    }
+
+    /* Browser two-pane layout */
+    .eval-browser {
+      display: flex; border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden; height: 580px;
+    }
+    .eval-intent-sidebar {
+      width: 320px; flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .eval-intent-search-wrap {
+      padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .eval-intent-search-wrap input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text);
+      padding: 6px 10px; font-size: 13px; outline: none;
+    }
+    .eval-intent-search-wrap input:focus { border-color: var(--accent); }
+    .eval-intent-search-wrap input::placeholder { color: var(--muted); }
+    .eval-intent-list-inner { overflow-y: auto; flex: 1; }
+    .eval-intent-item {
+      padding: 8px 14px; border-bottom: 1px solid var(--border);
+      cursor: pointer; font-size: 12px; line-height: 1.5;
+      transition: background 0.1s;
+    }
+    .eval-intent-item:hover { background: var(--row-hover); }
+    .eval-intent-item.selected { background: var(--selected); border-left: 2px solid var(--accent) !important; padding-left: 12px; }
+    .eval-intent-badges { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; }
+    .eval-intent-item-id {
+      font-weight: 600; font-size: 11px; color: var(--accent);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+    }
+    .eval-intent-item-desc {
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.4; margin-top: 2px;
+    }
+
+    /* Detail pane */
+    .eval-detail-area { flex: 1; overflow-y: auto; padding: 16px 20px; }
+    .eval-detail-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; color: var(--muted); font-size: 13px;
+    }
+
+    /* Model output cards */
+    .model-out-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      margin-bottom: 10px; overflow: hidden;
+    }
+    .model-out-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border); cursor: pointer;
+      user-select: none;
+    }
+    .model-out-header:hover { background: var(--row-hover); }
+    .model-out-body { padding: 12px 14px; }
+    .model-out-body.hidden { display: none; }
+    .toggle-arrow { margin-left: auto; color: var(--muted); font-size: 12px; }
+
+    /* Reference BraneScript card */
+    .ref-card {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; margin-top: 4px;
+    }
+    .ref-card-header {
+      padding: 9px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.4px; cursor: pointer; display: flex; align-items: center;
+      gap: 6px; user-select: none;
+    }
+    .ref-card-header:hover { background: var(--row-hover); }
+    .ref-card-body { padding: 12px 14px; }
+    .ref-card-body.hidden { display: none; }
+
+    /* Inline output previews */
+    .out-mini { font-family: var(--font-mono); font-size: 11px; margin-top: 8px; }
+    .out-mini .lbl {
+      text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px;
+      color: var(--muted); margin-bottom: 2px; margin-top: 8px;
+    }
+    .out-mini.err { color: #fc8181; }
+
+    /* Committed results block */
+    .committed-block { margin-top: 10px; }
+    .committed-block .committed-ds-header {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px;
+      color: var(--muted); margin-bottom: 4px; margin-top: 8px;
+    }
+    .committed-block .committed-ds-name {
+      font-size: 11px; font-weight: 600; color: #90cdf4; margin-bottom: 3px;
+    }
+    .committed-block .committed-file {
+      font-size: 10px; color: var(--muted); margin-bottom: 1px;
+    }
+    .committed-block pre {
+      background: rgba(0,0,0,.25); border-radius: 4px; padding: 6px 8px;
+      font-size: 10px; overflow-x: auto; white-space: pre; max-height: 160px;
+      overflow-y: auto; margin: 0 0 6px 0;
+    }
+
+    /* Match tag */
+    .match-tag {
+      font-size: 11px; font-weight: 600; padding: 2px 7px;
+      border-radius: 4px; flex-shrink: 0;
+    }
+    .match-tag.yes { background: rgba(72,187,120,.15);  color: var(--pass); }
+    .match-tag.no  { background: rgba(245,101,101,.15); color: var(--fail); }
+    .match-tag.na  { background: rgba(113,128,150,.15); color: var(--muted); }
+
+    /* Reference card — same structure as model-out-card but distinct colour */
+    .ref-model-card { border: 1px solid #2c5282; border-radius: 6px; margin-bottom: 10px; overflow: hidden; }
+    .ref-model-header {
+      display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+      background: #1a365d; cursor: pointer; user-select: none;
+    }
+    .ref-model-header:hover { background: #2a4a7f; }
+    .ref-label-tag {
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 4px; background: #2b6cb0; color: #bee3f8; flex-shrink: 0;
+    }
+    .ref-badge-dot {
+      display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+      background: #4299e1; margin-right: 1px; vertical-align: middle;
+    }
+
+    /* ── Generate page ───────────────────────────────────────────── */
+    .gen-wrap { padding: 24px 32px; width: 100%; }
+    .gen-form {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
+    }
+    .gen-form label {
+      display: block; font-size: 12px; font-weight: 600;
+      text-transform: uppercase; color: var(--muted); letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .gen-form textarea {
+      width: 100%; min-height: 80px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); padding: 10px 12px; font-size: 14px;
+      resize: vertical; font-family: inherit; box-sizing: border-box;
+    }
+    .gen-form textarea:focus { outline: none; border-color: var(--accent); }
+    .gen-form select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); padding: 8px 12px; font-size: 14px;
+    }
+    .gen-form select:focus { outline: none; border-color: var(--accent); }
+    .gen-form .row { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; }
+    .gen-form .row .field { flex: 1; }
+    .gen-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--radius); padding: 9px 20px;
+      font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
+    }
+    .gen-btn:hover { background: #3a7de8; }
+    .gen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* queue */
+    .gen-queue { display: flex; flex-direction: column; gap: 14px; }
+    .gen-queue-empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+    /* card */
+    .gen-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .gen-card.pass { border-left: 3px solid var(--pass); }
+    .gen-card.fail { border-left: 3px solid var(--fail); }
+    .gen-card.pending { border-left: 3px solid var(--warn); }
+    .gen-card-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      user-select: none;
+    }
+    .gen-card-header:hover { background: rgba(255,255,255,.03); }
+    .gen-card-icon { font-size: 16px; flex-shrink: 0; }
+    .gen-card-intent {
+      flex: 1; font-size: 13px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .gen-card-meta {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11px; color: var(--muted); flex-shrink: 0;
+    }
+    .gen-card-badge {
+      font-size: 10px; font-weight: 700; padding: 2px 7px;
+      border-radius: 3px; flex-shrink: 0;
+    }
+    .gen-card-badge.pass { background: rgba(72,187,120,.15); color: var(--pass); }
+    .gen-card-badge.fail { background: rgba(245,101,101,.15); color: var(--fail); }
+    .gen-card-badge.pending { background: rgba(246,173,85,.12); color: var(--warn); }
+    /* progress bar */
+    .gen-progress {
+      display: flex; align-items: center; gap: 0;
+      padding: 8px 16px; border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,.15);
+    }
+    .gen-step {
+      font-size: 11px; color: var(--muted);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .gen-step::before {
+      content: ''; display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: var(--border); flex-shrink: 0;
+    }
+    .gen-step.done::before  { background: var(--pass); }
+    .gen-step.active::before { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+    .gen-step-sep { flex: 1; height: 1px; background: var(--border); min-width: 12px; max-width: 32px; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    /* body */
+    .gen-card-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+    /* card tabs */
+    .gen-tab-bar {
+      display: flex; border-bottom: 1px solid var(--border);
+      padding: 0 16px; background: rgba(0,0,0,.1);
+    }
+    .gen-tab {
+      padding: 8px 14px; font-size: 12px; font-weight: 600;
+      color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
+      margin-bottom: -1px; user-select: none; display: flex; align-items: center; gap: 5px;
+    }
+    .gen-tab:hover  { color: var(--text); }
+    .gen-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .gen-tab .tab-dot {
+      width: 6px; height: 6px; border-radius: 50%; display: none;
+    }
+    .gen-tab.has-error .tab-dot { display: inline-block; background: var(--fail); }
+    .gen-tab-panel { display: none; }
+    .gen-tab-panel.active { display: block; }
+    /* attempt badge */
+    .gen-attempt-badge {
+      font-size: 10px; padding: 2px 6px; border-radius: 3px;
+      background: rgba(79,142,247,.15); color: var(--accent);
+      font-weight: 700; flex-shrink: 0;
+    }
+    .gen-section-label {
+      font-size: 11px; text-transform: uppercase; color: var(--muted);
+      letter-spacing: 0.4px; margin-bottom: 6px;
+    }
+    .gen-code-box {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 12px; font-family: var(--font-mono); font-size: 12px;
+      overflow-x: auto; white-space: pre; word-break: normal;
+      margin: 0; max-height: 320px; overflow-y: auto; display: block;
+    }
+    .gen-error-banner {
+      background: rgba(245,101,101,.12); border: 1px solid rgba(245,101,101,.35);
+      border-radius: var(--radius); padding: 12px 14px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .gen-error-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+    .gen-error-body { flex: 1; min-width: 0; }
+    .gen-error-type {
+      font-size: 12px; font-weight: 700; color: var(--fail);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .gen-error-detail {
+      font-family: var(--font-mono); font-size: 11px; color: #f56565;
+      white-space: pre-wrap; word-break: break-all; margin: 0;
+      max-height: 200px; overflow-y: auto;
+    }
+    .gen-output-box {
+      background: var(--code-bg); border-radius: var(--radius);
+      padding: 10px 12px; font-family: var(--font-mono); font-size: 12px;
+      white-space: pre-wrap; word-break: break-word;
+      margin: 0; max-height: 250px; overflow-y: auto;
+    }
+    .gen-spinner {
+      display: inline-block; width: 10px; height: 10px;
+      border: 2px solid var(--muted); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+      margin-right: 5px; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<header>
+  <h1>🔬 <span>Brane</span> Pipeline Dashboard</h1>
+  <span id="last-refresh"></span>
+  <span class="live-dot" id="live-dot" title="Auto-refreshing"></span>
+</header>
+
+<!-- ── Page navigation ────────────────────────────────────────── -->
+<nav class="page-nav">
+  <button class="page-nav-btn active" data-page="runs">📋 Runs</button>
+  <button class="page-nav-btn" data-page="packages">📦 Packages</button>
+  <button class="page-nav-btn" data-page="datasets">🗄️ Datasets</button>
+  <button class="page-nav-btn" data-page="execresults">🧪 Exec Results</button>
+  <button class="page-nav-btn" data-page="evaluation">📊 Evaluation</button>
+  <button class="page-nav-btn" data-page="generate">🚀 Generate</button>
+</nav>
+
+<!-- ── RUNS PAGE ──────────────────────────────────────────────── -->
+<div class="page active" id="page-runs">
+<div class="stats-bar" id="stats-bar">
+  <div class="stat-card"><div class="label">Total runs</div><div class="value" id="s-total">—</div></div>
+  <div class="stat-card pass"><div class="label">Passed</div><div class="value" id="s-pass">—</div></div>
+  <div class="stat-card fail"><div class="label">Failed</div><div class="value" id="s-fail">—</div></div>
+  <div class="stat-card rate"><div class="label">Pass rate</div><div class="value" id="s-rate">—</div></div>
+  <div class="stat-card time"><div class="label">Avg duration</div><div class="value" id="s-avg">—</div></div>
+</div>
+
+<!-- ── Toolbar ────────────────────────────────────────────────── -->
+<div class="toolbar">
+  <input type="text" id="search-input" placeholder="Search intent…" />
+  <div class="btn-group">
+    <button class="active" data-filter="all">All</button>
+    <button data-filter="pass">Pass</button>
+    <button data-filter="fail">Fail</button>
+  </div>
+  <span class="count" id="row-count"></span>
+</div>
+
+<!-- ── Table ──────────────────────────────────────────────────── -->
+<div class="table-wrap">
+  <table id="results-table">
+    <thead>
+      <tr>
+        <th class="col-time"  data-col="submitted_at">Time <span class="sort-icon">↕</span></th>
+        <th class="col-intent" data-col="intent">Intent <span class="sort-icon">↕</span></th>
+        <th class="col-model"  data-col="model">Model <span class="sort-icon">↕</span></th>
+        <th class="col-verdict" data-col="verdict">Result <span class="sort-icon">↕</span></th>
+        <th class="col-error"  data-col="error_type">Error <span class="sort-icon">↕</span></th>
+        <th class="col-dur"    data-col="_dur">Duration <span class="sort-icon">↕</span></th>
+        <th class="col-att"    data-col="attempt_number">Att <span class="sort-icon">↕</span></th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr><td colspan="7"><div class="empty-state"><p>Loading…</p></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /#page-runs -->
+
+<!-- ── PACKAGES PAGE ──────────────────────────────────────────── -->
+<div class="page" id="page-packages">
+  <div class="catalog-wrap">
+    <div class="catalog-grid" id="packages-grid">
+      <div style="color:var(--muted);padding:40px">Loading packages…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── DATASETS PAGE ──────────────────────────────────────────── -->
+<div class="page" id="page-datasets">
+  <div class="catalog-wrap">
+    <div class="catalog-grid" id="datasets-grid">
+      <div style="color:var(--muted);padding:40px">Loading datasets…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── EXEC RESULTS PAGE ──────────────────────────────────────── -->
+<div class="page" id="page-execresults">
+  <div class="stats-bar" id="er-stats-bar">
+    <div class="stat-card"><div class="label">Total</div><div class="value" id="er-s-total">—</div></div>
+    <div class="stat-card pass"><div class="label">Passed</div><div class="value" id="er-s-pass">—</div></div>
+    <div class="stat-card fail"><div class="label">Failed</div><div class="value" id="er-s-fail">—</div></div>
+    <div class="stat-card rate"><div class="label">Pass rate</div><div class="value" id="er-s-rate">—</div></div>
+    <div class="stat-card time"><div class="label">Avg time</div><div class="value" id="er-s-avg">—</div></div>
+  </div>
+  <div class="toolbar">
+    <input type="text" id="er-search" placeholder="Search intent…" />
+    <div class="btn-group" id="er-filter-group">
+      <button class="active" data-erfilter="all">All</button>
+      <button data-erfilter="pass">Pass</button>
+      <button data-erfilter="fail">Fail</button>
+    </div>
+    <select id="er-source-filter" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:6px 10px;font-size:13px;cursor:pointer;">
+      <option value="">All sources</option>
+    </select>
+    <span class="count" id="er-row-count"></span>
+  </div>
+  <div class="table-wrap">
+    <table id="er-table">
+      <thead>
+        <tr>
+          <th style="width:130px" data-ercol="timestamp">Time <span class="sort-icon">↕</span></th>
+          <th data-ercol="intent">Intent <span class="sort-icon">↕</span></th>
+          <th style="width:150px" data-ercol="source_file">Source <span class="sort-icon">↕</span></th>
+          <th style="width:90px"  data-ercol="success">Status <span class="sort-icon">↕</span></th>
+          <th style="width:70px"  data-ercol="exit_code">Exit <span class="sort-icon">↕</span></th>
+          <th style="width:80px"  data-ercol="execution_time_s">Time <span class="sort-icon">↕</span></th>
+        </tr>
+      </thead>
+      <tbody id="er-tbody">
+        <tr><td colspan="6"><div class="empty-state"><p>Loading…</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── EVALUATION PAGE ───────────────────────────────────────── -->
+<div class="page" id="page-evaluation">
+  <div class="eval-wrap">
+
+    <!-- Summary comparison table -->
+    <div class="eval-section">
+      <div class="eval-section-hdr">Model Comparison</div>
+      <div id="eval-cmp-wrap">
+        <div style="color:var(--muted);font-size:13px">Loading evaluation runs…</div>
+      </div>
+    </div>
+
+    <!-- Per-intent browser -->
+    <div class="eval-section">
+      <div class="eval-section-hdr">Per-Intent Browser</div>
+      <div class="eval-browser">
+        <div class="eval-intent-sidebar">
+          <div class="eval-intent-search-wrap">
+            <input type="text" id="eval-intent-search" placeholder="Search by ID or intent text…" />
+          </div>
+          <div id="eval-intent-stats" style="padding:7px 14px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;line-height:1.6">
+            <span style="color:var(--muted)">Loading…</span>
+          </div>
+          <div class="eval-intent-list-inner" id="eval-intent-list">
+            <div style="color:var(--muted);padding:20px 14px;font-size:12px">Navigate to this page to load intents.</div>
+          </div>
+        </div>
+        <div class="eval-detail-area" id="eval-detail-area">
+          <div class="eval-detail-placeholder">Select an intent to compare model outputs</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── GENERATE PAGE ─────────────────────────────────────────── -->
+<div class="page" id="page-generate">
+<div class="gen-wrap">
+
+  <div class="gen-form">
+    <div>
+      <label>Intent</label>
+      <textarea id="gen-intent" placeholder="e.g. analyze diabetes risk for all patients in heal_pa_2 and commit results as 'diabetes_report'"></textarea>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Model</label>
+        <select id="gen-model">
+          <option value="">Loading models…</option>
+        </select>
+      </div>
+      <button class="gen-btn" id="gen-submit-btn" onclick="submitGenerate()">Generate &amp; Run</button>
+    </div>
+  </div>
+
+  <div class="gen-queue" id="gen-queue">
+    <div class="gen-queue-empty" id="gen-queue-empty">No jobs yet — enter an intent and click Generate &amp; Run.</div>
+  </div>
+
+</div>
+</div>
+
+<!-- ── Catalog detail panel (packages + datasets) ────────────── -->
+<div class="detail-panel-overlay" id="catalog-overlay"></div>
+<div class="detail-panel" id="catalog-panel">
+  <div class="detail-panel-header">
+    <h2 id="dp-title"></h2>
+    <button class="close-btn" id="close-catalog">✕</button>
+  </div>
+  <div class="detail-panel-body" id="dp-body"></div>
+</div>
+
+<!-- ── Detail modal ───────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="intent-text" id="m-intent"></div>
+        <div class="meta" id="m-meta"></div>
+      </div>
+      <button class="close-btn" id="close-modal">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="code">BraneScript</button>
+      <button class="tab-btn" data-tab="output">Output</button>
+      <button class="tab-btn" data-tab="timing">Timing</button>
+      <button class="tab-btn" data-tab="datasets">Datasets</button>
+    </div>
+    <div class="tab-content active" id="tab-code">
+      <pre><code class="language-clike" id="m-code"></code></pre>
+    </div>
+    <div class="tab-content" id="tab-output">
+      <div class="output-label">stdout</div>
+      <div class="output-block" id="m-stdout"></div>
+      <div class="output-label">stderr</div>
+      <div class="output-block stderr" id="m-stderr"></div>
+    </div>
+    <div class="tab-content" id="tab-timing">
+      <table class="timing-table" id="m-timing"></table>
+    </div>
+    <div class="tab-content" id="tab-datasets">
+      <div id="m-datasets"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Exec Result detail modal ────────────────────────────────── -->
+<div class="modal-overlay" id="er-modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="intent-text" id="er-m-intent"></div>
+        <div class="meta" id="er-m-meta"></div>
+      </div>
+      <button class="close-btn" id="er-close-modal">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn er-tab active" data-ertab="code">BraneScript</button>
+      <button class="tab-btn er-tab" data-ertab="output">Output</button>
+      <button class="tab-btn er-tab" data-ertab="committed">Committed</button>
+    </div>
+    <div class="tab-content active" id="er-tab-code">
+      <pre><code class="language-clike" id="er-m-code"></code></pre>
+    </div>
+    <div class="tab-content" id="er-tab-output">
+      <div class="output-label">stdout</div>
+      <div class="output-block" id="er-m-stdout"></div>
+      <div class="output-label">stderr</div>
+      <div class="output-block stderr" id="er-m-stderr"></div>
+    </div>
+    <div class="tab-content" id="er-tab-committed">
+      <div id="er-m-committed"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── TRAINING CONFIG MODAL ────────────────────────────────────────────── -->
+<div class="modal-overlay" id="tc-modal-overlay" style="display:none" onclick="if(event.target===this)closeTcModal()">
+  <div class="modal" style="max-width:520px;max-height:80vh;overflow-y:auto">
+    <div class="modal-header">
+      <div>
+        <div class="intent-text" id="tc-modal-title" style="font-size:15px"></div>
+        <div class="meta" id="tc-modal-path" style="font-size:11px;margin-top:2px"></div>
+      </div>
+      <button class="close-btn" onclick="closeTcModal()">✕</button>
+    </div>
+    <div id="tc-modal-body" style="padding:16px 20px"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-clike.min.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let allResults   = [];
+let filterVerdict = 'all';
+let searchText    = '';
+let sortCol       = 'submitted_at';
+let sortAsc       = false;
+
+// ── Fetch & refresh ────────────────────────────────────────────────────────
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats');
+    const d = await r.json();
+    document.getElementById('s-total').textContent = d.total;
+    document.getElementById('s-pass').textContent  = d.passed;
+    document.getElementById('s-fail').textContent  = d.failed;
+    document.getElementById('s-rate').textContent  = d.pass_rate + '%';
+    document.getElementById('s-avg').textContent   = d.avg_duration_s != null ? d.avg_duration_s + 's' : '—';
+  } catch {}
+}
+
+async function fetchResults() {
+  try {
+    const r = await fetch('/api/results?limit=500');
+    allResults = await r.json();
+    document.getElementById('live-dot').classList.remove('offline');
+    document.getElementById('last-refresh').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+    renderTable();
+    fetchStats();
+  } catch {
+    document.getElementById('live-dot').classList.add('offline');
+  }
+}
+
+// ── Filtering & sorting ────────────────────────────────────────────────────
+function filteredResults() {
+  let rows = allResults.slice();
+  if (filterVerdict !== 'all')
+    rows = rows.filter(r => r.verdict === filterVerdict);
+  if (searchText)
+    rows = rows.filter(r => (r.intent || '').toLowerCase().includes(searchText));
+  rows.sort((a, b) => {
+    let av = getValue(a, sortCol), bv = getValue(b, sortCol);
+    if (av == null) av = '';
+    if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number')
+      return sortAsc ? av - bv : bv - av;
+    return sortAsc
+      ? String(av).localeCompare(String(bv))
+      : String(bv).localeCompare(String(av));
+  });
+  return rows;
+}
+
+function getValue(r, col) {
+  if (col === '_dur') return r.timing ? r.timing.total_s : null;
+  return r[col];
+}
+
+// ── Table rendering ────────────────────────────────────────────────────────
+function renderTable() {
+  const rows  = filteredResults();
+  const tbody = document.getElementById('table-body');
+  document.getElementById('row-count').textContent = rows.length + ' runs';
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">
+      <div style="font-size:32px">🔬</div>
+      <p>No results yet. Submit a job from Snellius to see it here.</p>
+    </div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const ts  = r.submitted_at ? relativeTime(r.submitted_at) : '—';
+    const intent = truncate(r.intent || '—', 70);
+    const model = shortModel(r.model || '');
+    const badge = r.verdict === 'pass'
+      ? '<span class="badge pass">✓ Pass</span>'
+      : '<span class="badge fail">✗ Fail</span>';
+    const errBadge = r.error_type
+      ? `<span class="badge error-type">${r.error_type}</span>` : '';
+    const dur = r.timing && r.timing.total_s != null
+      ? r.timing.total_s + 's' : '—';
+    const att = r.attempt_number || 1;
+    return `<tr data-id="${r.id}">
+      <td class="col-time" title="${r.submitted_at || ''}">${ts}</td>
+      <td class="col-intent" title="${escHtml(r.intent || '')}">${escHtml(intent)}</td>
+      <td class="col-model">${escHtml(model)}</td>
+      <td class="col-verdict">${badge}</td>
+      <td class="col-error">${errBadge}</td>
+      <td class="col-dur">${dur}</td>
+      <td class="col-att">${att}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('tr[data-id]').forEach(tr =>
+    tr.addEventListener('click', () => openDetail(tr.dataset.id))
+  );
+}
+
+// ── Detail modal ───────────────────────────────────────────────────────────
+async function openDetail(id) {
+  let r = allResults.find(x => x.id === id);
+  if (!r) {
+    try { r = await (await fetch(`/api/results/${id}`)).json(); }
+    catch { return; }
+  }
+
+  // Header
+  document.getElementById('m-intent').textContent = r.intent || '(no intent)';
+  const meta = [
+    r.model       ? shortModel(r.model) : null,
+    r.submitted_at ? fmtDateTime(r.submitted_at) : null,
+    r.attempt_number > 1 ? `Attempt ${r.attempt_number}` : null,
+    r.verdict === 'pass' ? '✓ Pass' : `✗ Fail${r.error_type ? ' — ' + r.error_type : ''}`,
+  ].filter(Boolean);
+  document.getElementById('m-meta').innerHTML =
+    meta.map(t => `<span class="meta-tag">${escHtml(t)}</span>`).join('');
+
+  // Code tab
+  const codeEl = document.getElementById('m-code');
+  codeEl.textContent = r.generated_code || '(no code)';
+  Prism.highlightElement(codeEl);
+
+  // Output tab
+  document.getElementById('m-stdout').textContent = r.stdout || '(empty)';
+  document.getElementById('m-stderr').textContent = r.stderr || '(empty)';
+
+  // Timing tab
+  const t = r.timing;
+  if (t) {
+    document.getElementById('m-timing').innerHTML = [
+      ['Decompose',  t.decompose_s,   's'],
+      ['Retrieval',  t.retrieval_s,   's'],
+      ['Generation', t.generation_s,  's'],
+      ['Execution',  t.execution_s,   's'],
+      ['Total',      t.total_s,       's'],
+    ].map(([label, val, unit]) =>
+      val != null
+        ? `<tr><td>${label}</td><td>${val}${unit}</td></tr>`
+        : ''
+    ).join('');
+  } else {
+    document.getElementById('m-timing').innerHTML =
+      '<tr><td colspan="2" class="no-data">No timing data for this run.</td></tr>';
+  }
+
+  // Datasets tab
+  const ds = r.committed_data || {};
+  const dsNames = Object.keys(ds);
+  if (dsNames.length === 0) {
+    document.getElementById('m-datasets').innerHTML =
+      '<p class="no-data">No committed datasets for this run.</p>';
+  } else {
+    document.getElementById('m-datasets').innerHTML = dsNames.map(name => {
+      const files = (ds[name] && ds[name].files) || {};
+      const fileHtml = Object.entries(files).map(([fname, content]) =>
+        `<div class="dataset-file">
+          <div class="dataset-file-name">${escHtml(fname)}</div>
+          <div class="output-block">${escHtml(String(content).slice(0, 4000))}</div>
+        </div>`
+      ).join('');
+      return `<div class="dataset-block">
+        <div class="dataset-name">📦 ${escHtml(name)}</div>
+        ${fileHtml || '<p class="no-data">No files.</p>'}
+      </div>`;
+    }).join('');
+  }
+
+  // Reset to first tab
+  activateTab('code');
+
+  document.getElementById('modal-overlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function activateTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector(`[data-tab="${name}"]`).classList.add('active');
+  document.getElementById(`tab-${name}`).classList.add('active');
+}
+
+// ── Sort ───────────────────────────────────────────────────────────────────
+function setSort(col) {
+  if (sortCol === col) { sortAsc = !sortAsc; }
+  else { sortCol = col; sortAsc = col !== 'submitted_at'; }
+  document.querySelectorAll('thead th').forEach(th => th.classList.remove('sorted'));
+  const active = document.querySelector(`thead th[data-col="${col}"]`);
+  if (active) {
+    active.classList.add('sorted');
+    active.querySelector('.sort-icon').textContent = sortAsc ? '↑' : '↓';
+  }
+  renderTable();
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
+function shortModel(m) {
+  if (!m) return '—';
+  return m.includes('/') ? m.split('/').pop() : m;
+}
+function relativeTime(iso) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60)   return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400)return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function fmtDateTime(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────
+document.getElementById('search-input').addEventListener('input', e => {
+  searchText = e.target.value.toLowerCase().trim();
+  renderTable();
+});
+
+document.querySelectorAll('.btn-group button').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.btn-group button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    filterVerdict = btn.dataset.filter;
+    renderTable();
+  })
+);
+
+document.querySelectorAll('thead th[data-col]').forEach(th =>
+  th.addEventListener('click', () => setSort(th.dataset.col))
+);
+
+document.getElementById('close-modal').addEventListener('click', closeModal);
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal(); closeErModal(); closeCatalogPanel(); }
+});
+
+document.querySelectorAll('.tab-btn').forEach(btn =>
+  btn.addEventListener('click', () => activateTab(btn.dataset.tab))
+);
+
+// ── Page navigation ────────────────────────────────────────────────────────
+function switchPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.page-nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`page-${name}`).classList.add('active');
+  document.querySelector(`[data-page="${name}"]`).classList.add('active');
+  if (name === 'packages'    && !packagesLoaded)    loadPackages();
+  if (name === 'datasets'    && !datasetsLoaded)    loadDatasets();
+  if (name === 'execresults' && !erLoaded)          loadExecResults();
+  if (name === 'evaluation'  && !evalLoaded)        loadEvaluation();
+  if (name === 'generate'    && !genModelsLoaded)   loadGenModels();
+}
+document.querySelectorAll('.page-nav-btn').forEach(btn =>
+  btn.addEventListener('click', () => switchPage(btn.dataset.page))
+);
+
+// ── Catalog panel ──────────────────────────────────────────────────────────
+function openCatalogPanel(title, bodyHtml) {
+  document.getElementById('dp-title').textContent = title;
+  document.getElementById('dp-body').innerHTML = bodyHtml;
+  document.getElementById('catalog-panel').classList.add('open');
+  document.getElementById('catalog-overlay').classList.add('open');
+  document.querySelectorAll('#dp-body pre code').forEach(el => Prism.highlightElement(el));
+}
+function closeCatalogPanel() {
+  document.getElementById('catalog-panel').classList.remove('open');
+  document.getElementById('catalog-overlay').classList.remove('open');
+}
+document.getElementById('close-catalog').addEventListener('click', closeCatalogPanel);
+document.getElementById('catalog-overlay').addEventListener('click', closeCatalogPanel);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCatalogPanel(); });
+
+// ── Packages ───────────────────────────────────────────────────────────────
+let packagesLoaded = false;
+
+async function loadPackages() {
+  packagesLoaded = true;
+  const grid = document.getElementById('packages-grid');
+  try {
+    const pkgs = await (await fetch('/api/packages')).json();
+    if (!pkgs.length) {
+      grid.innerHTML = '<div style="color:var(--muted);padding:40px">No packages found.</div>';
+      return;
+    }
+    grid.innerHTML = pkgs.map(pkg => `
+      <div class="catalog-card" data-pkg="${escHtml(pkg.name)}">
+        <div class="catalog-card-header">
+          <span class="name">📦 ${escHtml(pkg.name)}</span>
+          ${pkg.version ? `<span class="version">v${escHtml(pkg.version)}</span>` : ''}
+        </div>
+        <div class="catalog-card-body">
+          <div class="section-label">Functions</div>
+          <div class="fn-list">
+            ${(pkg.actions || []).map(a =>
+              `<span class="fn-chip">${escHtml(a.name)}</span>`
+            ).join('')}
+          </div>
+          ${(pkg.types || []).length ? `
+            <div class="section-label">Types</div>
+            <div class="fn-list">
+              ${pkg.types.map(t => `<span class="ds-chip">${escHtml(t.name)}</span>`).join('')}
+            </div>` : ''}
+        </div>
+      </div>`
+    ).join('');
+
+    grid.querySelectorAll('.catalog-card[data-pkg]').forEach(card =>
+      card.addEventListener('click', () => openPackageDetail(
+        pkgs.find(p => p.name === card.dataset.pkg)
+      ))
+    );
+  } catch(e) {
+    grid.innerHTML = `<div style="color:var(--fail);padding:40px">Failed to load packages: ${e}</div>`;
+  }
+}
+
+function openPackageDetail(pkg) {
+  const actionsHtml = (pkg.actions || []).map(a => {
+    const inputs  = a.inputs.map(p =>
+      `<span class="param-name">${escHtml(p.name)}</span>: <span class="param-type">${escHtml(p.type)}</span>`
+    ).join(', ');
+    const outputs = a.outputs.map(p =>
+      `<span class="param-name">${escHtml(p.name)}</span>: <span class="param-type">${escHtml(p.type)}</span>`
+    ).join(', ');
+    return `<div class="fn-block">
+      <div class="fn-block-header">
+        <span class="fn-block-name">${escHtml(a.name)}</span>
+        <span class="fn-block-desc">${escHtml(a.description)}</span>
+      </div>
+      <div class="fn-block-body">
+        <div class="fn-sig-row">
+          <span class="fn-sig-label">In</span>
+          <span class="fn-sig-params">${inputs || '<span style="color:var(--muted)">none</span>'}</span>
+        </div>
+        <div class="fn-sig-row">
+          <span class="fn-sig-label">Out</span>
+          <span class="fn-sig-params">${outputs || '<span style="color:var(--muted)">none</span>'}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const typesHtml = (pkg.types || []).map(t => `
+    <div class="type-block">
+      <div class="type-block-name">class ${escHtml(t.name)}</div>
+      ${t.properties.map(p => `
+        <div class="type-prop">
+          <span class="prop-name">${escHtml(p.name)}</span>
+          <span style="color:var(--muted)">:</span>
+          <span class="prop-type">${escHtml(p.type)}</span>
+        </div>`).join('')}
+    </div>`
+  ).join('');
+
+  const readmeHtml = pkg.readme
+    ? `<div class="dp-section">README</div><div class="readme-block">${escHtml(pkg.readme)}</div>`
+    : '';
+
+  openCatalogPanel(`📦 ${pkg.name}  ${pkg.version ? 'v'+pkg.version : ''}`,
+    `${actionsHtml ? `<div class="dp-section">Functions (${pkg.actions.length})</div>${actionsHtml}` : ''}
+     ${typesHtml   ? `<div class="dp-section">Types</div>${typesHtml}` : ''}
+     ${readmeHtml}`
+  );
+}
+
+// ── Datasets ──────────────────────────────────────────────────────────────
+let datasetsLoaded = false;
+
+async function loadDatasets() {
+  datasetsLoaded = true;
+  const grid = document.getElementById('datasets-grid');
+  try {
+    const datasets = await (await fetch('/api/datasets')).json();
+    if (!datasets.length) {
+      grid.innerHTML = '<div style="color:var(--muted);padding:40px">No datasets found.</div>';
+      return;
+    }
+    grid.innerHTML = datasets.map(ds => `
+      <div class="catalog-card" data-ds="${escHtml(ds.name)}">
+        <div class="catalog-card-header">
+          <span class="name">🗄️ ${escHtml(ds.name)}</span>
+        </div>
+        <div class="catalog-card-body">
+          <div class="section-label">Access</div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-top:3px">
+            ${escHtml(ds.access)}
+          </div>
+          <div class="section-label">Files</div>
+          <div class="fn-list">
+            ${(ds.files || []).slice(0,6).map(f =>
+              `<span class="ds-chip">${escHtml(f.path)}</span>`
+            ).join('')}
+            ${(ds.files || []).length > 6 ? `<span style="color:var(--muted);font-size:11px">+${ds.files.length-6} more</span>` : ''}
+          </div>
+          ${(ds.workflows || []).length ? `
+            <div class="section-label">Workflows</div>
+            <div class="fn-list">
+              ${ds.workflows.map(w => `<span class="fn-chip">${escHtml(w.name)}</span>`).join('')}
+            </div>` : ''}
+        </div>
+      </div>`
+    ).join('');
+
+    grid.querySelectorAll('.catalog-card[data-ds]').forEach(card =>
+      card.addEventListener('click', () => openDatasetDetail(
+        datasets.find(d => d.name === card.dataset.ds)
+      ))
+    );
+  } catch(e) {
+    grid.innerHTML = `<div style="color:var(--fail);padding:40px">Failed to load datasets: ${e}</div>`;
+  }
+}
+
+function openDatasetDetail(ds) {
+  const filesHtml = (ds.files || []).map(f =>
+    `<div class="file-row">
+       <span class="file-path">${escHtml(f.path)}</span>
+       <span class="file-size">${fmtBytes(f.size_bytes)}</span>
+     </div>`
+  ).join('');
+
+  const workflowsHtml = (ds.workflows || []).map(w => `
+    <div class="wf-block">
+      <div class="wf-name">${escHtml(w.name)}</div>
+      <pre><code class="language-clike">${escHtml(w.content)}</code></pre>
+    </div>`
+  ).join('');
+
+  const readmeHtml = ds.readme
+    ? `<div class="dp-section">README</div><div class="readme-block">${escHtml(ds.readme)}</div>`
+    : '';
+
+  openCatalogPanel(`🗄️ ${ds.name}`,
+    `<div class="dp-section">Access</div>
+     <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${escHtml(ds.access)}</div>
+     ${filesHtml ? `<div class="dp-section">Files (${ds.files.length})</div>${filesHtml}` : ''}
+     ${workflowsHtml ? `<div class="dp-section">Example Workflows</div>${workflowsHtml}` : ''}
+     ${readmeHtml}`
+  );
+}
+
+function fmtBytes(b) {
+  if (b == null) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(1) + ' MB';
+}
+
+// ── Exec Results ──────────────────────────────────────────────────────────
+let erAllRows      = [];
+let erFilter       = 'all';
+let erSearchText   = '';
+let erSourceFilter = '';
+let erSortCol      = 'timestamp';
+let erSortAsc      = false;
+let erLoaded       = false;
+
+async function loadExecResults() {
+  erLoaded = true;
+  try {
+    const [statsRes, rowsRes] = await Promise.all([
+      fetch('/api/execution-results/stats'),
+      fetch('/api/execution-results?limit=1000'),
+    ]);
+    const stats = await statsRes.json();
+    erAllRows = await rowsRes.json();
+
+    document.getElementById('er-s-total').textContent = stats.total;
+    document.getElementById('er-s-pass').textContent  = stats.passed;
+    document.getElementById('er-s-fail').textContent  = stats.failed;
+    document.getElementById('er-s-rate').textContent  = stats.pass_rate + '%';
+    document.getElementById('er-s-avg').textContent   = stats.avg_time_s != null ? stats.avg_time_s + 's' : '—';
+
+    // Populate source filter dropdown
+    const sel = document.getElementById('er-source-filter');
+    const existing = new Set(Array.from(sel.options).map(o => o.value));
+    Object.keys(stats.sources || {}).sort().forEach(src => {
+      if (!existing.has(src)) {
+        const opt = document.createElement('option');
+        opt.value = src; opt.textContent = src;
+        sel.appendChild(opt);
+      }
+    });
+
+    renderErTable();
+  } catch(e) {
+    document.getElementById('er-tbody').innerHTML =
+      `<tr><td colspan="6" style="color:var(--fail);padding:20px">Failed to load: ${e}</td></tr>`;
+  }
+}
+
+function erFilteredRows() {
+  let rows = erAllRows.slice();
+  if (erFilter === 'pass') rows = rows.filter(r => r.success);
+  if (erFilter === 'fail') rows = rows.filter(r => !r.success);
+  if (erSearchText) rows = rows.filter(r => (r.intent || '').toLowerCase().includes(erSearchText));
+  if (erSourceFilter) rows = rows.filter(r => r.source_file === erSourceFilter);
+  rows.sort((a, b) => {
+    let av = a[erSortCol], bv = b[erSortCol];
+    if (av == null) av = ''; if (bv == null) bv = '';
+    if (typeof av === 'number' && typeof bv === 'number')
+      return erSortAsc ? av - bv : bv - av;
+    return erSortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+  });
+  return rows;
+}
+
+function renderErTable() {
+  const rows  = erFilteredRows();
+  const tbody = document.getElementById('er-tbody');
+  document.getElementById('er-row-count').textContent = rows.length + ' examples';
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+      <div style="font-size:32px">🔬</div><p>No results match the current filter.</p>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => {
+    const ts    = r.timestamp ? relativeTime(r.timestamp) : '—';
+    const intent = truncate(r.intent || '—', 80);
+    const src   = (r.source_file || '').replace('.jsonl','');
+    const badge = r.success
+      ? '<span class="badge pass">✓ Pass</span>'
+      : (r.timed_out ? '<span class="badge" style="background:#744210;color:#fef3c7">⏰ Timeout</span>'
+                      : '<span class="badge fail">✗ Fail</span>');
+    const exit  = r.exit_code != null ? r.exit_code : '—';
+    const dur   = r.execution_time_s != null ? r.execution_time_s + 's' : '—';
+    return `<tr data-erid="${escHtml(r.id)}">
+      <td title="${escHtml(r.timestamp || '')}">${ts}</td>
+      <td title="${escHtml(r.intent || '')}">${escHtml(intent)}</td>
+      <td><span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">${escHtml(src)}</span></td>
+      <td>${badge}</td>
+      <td style="font-family:var(--font-mono);font-size:12px">${exit}</td>
+      <td style="font-family:var(--font-mono);font-size:12px">${dur}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr[data-erid]').forEach(tr =>
+    tr.addEventListener('click', () => openErDetail(tr.dataset.erid))
+  );
+}
+
+async function openErDetail(id) {
+  let r = erAllRows.find(x => x.id === id);
+  // Fetch full record (includes branescript + full stdout/stderr)
+  try {
+    r = await (await fetch(`/api/execution-results/${encodeURIComponent(id)}`)).json();
+  } catch { if (!r) return; }
+
+  document.getElementById('er-m-intent').textContent = r.intent || '(no intent)';
+  const badge = r.success ? '✓ Pass' : (r.timed_out ? '⏰ Timeout' : `✗ Fail  (exit ${r.exit_code})`);
+  document.getElementById('er-m-meta').innerHTML =
+    [`<span class="meta-tag">${escHtml(r.source_file || '')}</span>`,
+     `<span class="meta-tag">${escHtml(badge)}</span>`,
+     r.execution_time_s != null ? `<span class="meta-tag">${r.execution_time_s}s</span>` : '',
+     r.timestamp ? `<span class="meta-tag">${escHtml(fmtDateTime(r.timestamp))}</span>` : '',
+    ].filter(Boolean).join('');
+
+  const codeEl = document.getElementById('er-m-code');
+  codeEl.textContent = r.branescript || '(no code)';
+  Prism.highlightElement(codeEl);
+
+  document.getElementById('er-m-stdout').textContent = r.stdout || '(empty)';
+  document.getElementById('er-m-stderr').textContent = r.stderr || '(empty)';
+
+  // Committed results tab — show/hide button depending on whether data exists
+  const committed = r.committed_results || {};
+  const hasCommitted = Object.keys(committed).length > 0;
+  const commitTabBtn = document.querySelector('[data-ertab="committed"]');
+  commitTabBtn.style.display = hasCommitted ? '' : 'none';
+  document.getElementById('er-m-committed').innerHTML = hasCommitted
+    ? committedHtml(committed)
+    : '<p style="color:var(--muted);padding:12px 0;font-size:13px">No committed datasets for this execution.</p>';
+
+  // Reset to code tab
+  document.querySelectorAll('.er-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#er-modal-overlay .tab-content').forEach(c => c.classList.remove('active'));
+  document.querySelector('[data-ertab="code"]').classList.add('active');
+  document.getElementById('er-tab-code').classList.add('active');
+
+  document.getElementById('er-modal-overlay').classList.add('open');
+}
+
+function closeErModal() {
+  document.getElementById('er-modal-overlay').classList.remove('open');
+}
+
+// Event wiring – exec results
+document.getElementById('er-search').addEventListener('input', e => {
+  erSearchText = e.target.value.toLowerCase().trim();
+  renderErTable();
+});
+document.querySelectorAll('#er-filter-group button').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#er-filter-group button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    erFilter = btn.dataset.erfilter;
+    renderErTable();
+  })
+);
+document.getElementById('er-source-filter').addEventListener('change', e => {
+  erSourceFilter = e.target.value;
+  renderErTable();
+});
+document.querySelectorAll('#er-table thead th[data-ercol]').forEach(th =>
+  th.addEventListener('click', () => {
+    if (erSortCol === th.dataset.ercol) { erSortAsc = !erSortAsc; }
+    else { erSortCol = th.dataset.ercol; erSortAsc = th.dataset.ercol !== 'timestamp'; }
+    document.querySelectorAll('#er-table thead th').forEach(h => h.classList.remove('sorted'));
+    th.classList.add('sorted');
+    th.querySelector('.sort-icon').textContent = erSortAsc ? '↑' : '↓';
+    renderErTable();
+  })
+);
+document.getElementById('er-close-modal').addEventListener('click', closeErModal);
+document.getElementById('er-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('er-modal-overlay')) closeErModal();
+});
+document.querySelectorAll('.er-tab').forEach(btn =>
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.er-tab').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#er-modal-overlay .tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`er-tab-${btn.dataset.ertab}`).classList.add('active');
+  })
+);
+
+// ── Evaluation ────────────────────────────────────────────────────────────
+let evalLoaded       = false;
+let evalRuns         = [];      // full run objects with examples[]
+let evalGroundTruth  = {};      // id → {id, intent, branescript, stdout, ...}
+let evalModelById    = {};      // id → [{model, example}]  (from eval runs)
+let evalAllIds       = [];      // sorted list of all GT entry ids
+let evalSelId        = null;    // currently selected GT id
+let evalIntentSearch = '';
+
+async function loadEvaluation() {
+  evalLoaded = true;
+  const cmpWrap    = document.getElementById('eval-cmp-wrap');
+  const intentList = document.getElementById('eval-intent-list');
+
+  cmpWrap.innerHTML    = '<div style="color:var(--muted);font-size:13px">Loading…</div>';
+  intentList.innerHTML = '<div style="color:var(--muted);padding:20px 14px;font-size:12px">Loading…</div>';
+
+  try {
+    // Load ground truth and eval run summaries in parallel
+    const [summaries, gt] = await Promise.all([
+      fetch('/api/eval/runs').then(r => r.json()),
+      fetch('/api/eval/ground-truth').then(r => r.json()),
+    ]);
+    evalGroundTruth = gt || {};
+
+    // Build sorted list of all GT ids
+    evalAllIds = Object.keys(evalGroundTruth).sort();
+
+    if (summaries.length) {
+      renderEvalCmpTable(summaries);
+
+      // Fetch full details for all runs (examples included)
+      const details = await Promise.all(
+        summaries.map(s =>
+          fetch(`/api/eval/runs/${encodeURIComponent(s.slug)}`).then(r => r.json())
+        )
+      );
+      evalRuns = details.filter(d => d && !d.error);
+    } else {
+      cmpWrap.innerHTML = `<div class="empty-state" style="padding:30px 0">
+        <div style="font-size:28px">📊</div>
+        <p>No evaluation runs found.</p>
+        <p style="margin-top:8px;font-size:12px;color:var(--muted)">
+          Run: <code style="font-family:var(--font-mono);background:var(--bg);padding:2px 6px;border-radius:4px">
+          python scripts/execute_generated.py --input outputs/generated/…</code>
+        </p></div>`;
+    }
+
+    // Index model examples by GT id
+    evalModelById = {};
+    for (const run of evalRuns) {
+      for (const ex of (run.examples || [])) {
+        const eid = ex.id;
+        if (!eid) continue;
+        if (!evalModelById[eid]) evalModelById[eid] = [];
+        evalModelById[eid].push({ model: run.model, example: ex });
+      }
+    }
+
+    renderEvalIntentList();
+
+  } catch(e) {
+    cmpWrap.innerHTML = `<div style="color:var(--fail);padding:20px">Failed to load: ${e}</div>`;
+  }
+}
+
+function evalMetricClass(v) {
+  if (v == null) return 'none';
+  if (v >= 70)   return 'high';
+  if (v >= 40)   return 'mid';
+  return 'low';
+}
+
+function evalTagClass(label) {
+  const l = (label || '').toLowerCase();
+  if (l.includes('grpo')) return 'grpo';
+  if (l.includes('sft'))  return 'sft';
+  if (l.includes('base')) return 'base';
+  return 'other';
+}
+
+// Store training configs keyed by slug for modal access
+const _evalTrainingConfigs = {};
+
+function renderEvalCmpTable(summaries) {
+  const wrap = document.getElementById('eval-cmp-wrap');
+  const rows = summaries.map(s => {
+    // Cache training config for click handler
+    if (s.training_config) _evalTrainingConfigs[s.slug] = { config: s.training_config, model: s.model, model_path: s.model_path };
+
+    const tc = evalTagClass(s.model || '');
+    const cr = s.compile_rate      != null
+      ? `<span class="metric-val ${evalMetricClass(s.compile_rate)}">${s.compile_rate}%</span>`
+      : '<span class="metric-val none">—</span>';
+    const er = s.execution_rate    != null
+      ? `<span class="metric-val ${evalMetricClass(s.execution_rate)}">${s.execution_rate}%</span>`
+      : '<span class="metric-val none">—</span>';
+    const mr = s.output_match_rate != null
+      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}"
+              title="Overall output match rate (stdout + committed datasets)"
+            >${s.output_match_rate}%</span>
+         <span style="color:var(--muted);font-size:11px"
+               title="${s.output_match_n} scripts had a reference output to compare against"
+             > /${s.output_match_n} with ref</span>`
+      : '<span class="metric-val none">—</span>';
+    const cmr = s.committed_match_rate != null
+      ? `<span class="metric-val ${evalMetricClass(s.committed_match_rate)}"
+              title="% of executed scripts whose committed datasets match the reference"
+            >${s.committed_match_rate}%</span>
+         <span style="color:var(--muted);font-size:11px"> /${s.committed_match_n}</span>`
+      : '<span class="metric-val none">—</span>';
+    const ts = s.timestamp ? relativeTime(s.timestamp) : '—';
+
+    // If training config available, make model tag clickable with info icon
+    const hasConfig = !!s.training_config;
+    const labelEl = hasConfig
+      ? `<span class="model-label-tag ${tc} tc-clickable" onclick="openTcModal('${escHtml(s.slug)}')" title="Click to see training parameters">
+           ${escHtml(s.model || s.slug)}<span class="tc-info-icon">⚙</span>
+         </span>`
+      : `<span class="model-label-tag ${tc}">${escHtml(s.model || s.slug)}</span>`;
+
+    return `<tr>
+      <td>${labelEl}</td>
+      <td>${cr}</td>
+      <td>${er}</td>
+      <td>${mr}</td>
+      <td>${cmr}</td>
+      <td style="color:var(--muted);font-family:var(--font-mono);font-size:12px">${s.total ?? '—'}</td>
+      <td style="color:var(--muted);font-size:12px">${ts}</td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<div style="overflow-x:auto">
+    <table class="cmp-table">
+      <thead><tr>
+        <th>Model</th>
+        <th>Compile %</th>
+        <th>Execute %</th>
+        <th>Output Match %</th>
+        <th>Committed Match %</th>
+        <th>Examples</th>
+        <th>Evaluated</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+function openTcModal(slug) {
+  const entry = _evalTrainingConfigs[slug];
+  if (!entry) return;
+  const { config, model, model_path } = entry;
+
+  document.getElementById('tc-modal-title').textContent = model || slug;
+  document.getElementById('tc-modal-path').textContent  = model_path || '';
+
+  // Friendly label map
+  const labels = {
+    mode: 'Mode', base_model: 'Base model', train_examples: 'Train examples',
+    val_examples: 'Val examples', max_seq_len: 'Max seq length',
+    lora_rank: 'LoRA rank', lora_alpha: 'LoRA alpha',
+    epochs: 'Epochs', batch_size: 'Batch size',
+    grad_accum: 'Gradient accumulation', effective_batch: 'Effective batch size',
+    learning_rate: 'Learning rate', warmup_steps: 'Warmup steps',
+    save_steps: 'Save steps', lr_scheduler: 'LR scheduler',
+    num_generations: 'Num generations (GRPO)', max_new_tokens: 'Max new tokens (GRPO)',
+    temperature: 'Temperature (GRPO)', top_p: 'Top-p (GRPO)',
+    run_id: 'Run ID', timestamp: 'Trained at', output_dir: 'Output dir',
+  };
+
+  const rows = Object.entries(config)
+    .filter(([k]) => k !== 'output_dir' || true)
+    .map(([k, v]) => {
+      const label = labels[k] || k;
+      let val = v;
+      if (k === 'timestamp' && v) val = new Date(v).toLocaleString();
+      if (k === 'learning_rate') val = Number(v).toExponential(2);
+      return `<tr>
+        <td style="padding:6px 10px 6px 0;color:var(--muted);font-size:12px;white-space:nowrap;vertical-align:top">${escHtml(label)}</td>
+        <td style="padding:6px 0 6px 10px;font-size:13px;font-family:var(--font-mono);word-break:break-all">${escHtml(String(v ?? '—'))}</td>
+      </tr>`;
+    }).join('');
+
+  document.getElementById('tc-modal-body').innerHTML =
+    `<table style="width:100%;border-collapse:collapse">${rows}</table>`;
+
+  document.getElementById('tc-modal-overlay').style.display = 'flex';
+}
+
+function closeTcModal() {
+  document.getElementById('tc-modal-overlay').style.display = 'none';
+}
+
+function renderEvalIntentList() {
+  const list   = document.getElementById('eval-intent-list');
+  const stats  = document.getElementById('eval-intent-stats');
+  const search = evalIntentSearch.toLowerCase();
+  const shown  = evalAllIds.filter(id => {
+    if (!search) return true;
+    const gt = evalGroundTruth[id] || {};
+    return id.toLowerCase().includes(search) || (gt.intent || '').toLowerCase().includes(search);
+  });
+
+  // Stats bar
+  const total    = evalAllIds.length;
+  const gtPass   = evalAllIds.filter(id => evalGroundTruth[id]?.success).length;
+  const withModel = evalAllIds.filter(id => (evalModelById[id] || []).length > 0).length;
+  const matched  = evalAllIds.filter(id => (evalModelById[id] || []).some(e => e.example.output_match === true)).length;
+  const shownTxt = shown.length < total ? ` · <strong style="color:var(--accent)">${shown.length}</strong> shown` : '';
+  stats.innerHTML = `
+    <span title="Ground truth entries"><strong>${total}</strong> intents</span>
+    <span style="color:var(--border)">|</span>
+    <span title="Ground truth executions that passed" style="color:var(--pass)">✓ ${gtPass} GT pass</span>
+    <span style="color:var(--border)">|</span>
+    <span title="Intents that have at least one model evaluation run">${withModel} evaluated</span>
+    <span style="color:var(--border)">|</span>
+    <span title="Intents where at least one model matched the reference output" style="color:${matched > 0 ? 'var(--pass)' : 'var(--muted)'}">⚡ ${matched} matched</span>
+    ${shownTxt}`;
+
+  if (!shown.length) {
+    list.innerHTML = '<div style="color:var(--muted);padding:20px 14px;font-size:12px">No intents match.</div>';
+    return;
+  }
+
+  list.innerHTML = shown.map(id => {
+    const gt     = evalGroundTruth[id] || {};
+    const models = evalModelById[id]   || [];
+
+    // GT status dot
+    const gtOk  = gt.success;
+    const gtDot = `<span title="Ground truth: ${gtOk ? 'passed' : 'failed'}"
+      style="display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0;
+             background:${gtOk ? 'var(--pass)' : 'var(--fail)'}"></span>`;
+
+    // Model result badges
+    const badges = models.map(e => {
+      const ok    = e.example.execution?.success;
+      const match = e.example.output_match;
+      const tc    = evalTagClass(e.model || '');
+      const bgStyle = ok && match === true  ? 'background:#276749;color:#9ae6b4'
+                    : ok && match === false ? 'background:#744210;color:#fef3c7'
+                    : ok                   ? ''
+                                          : 'background:#742a2a;color:#fed7d7';
+      const title = ok && match === true  ? 'Executed ✓ and output matches reference'
+                  : ok && match === false ? 'Executed ✓ but output differs from reference'
+                  : ok                   ? 'Executed ✓ (no reference output to compare)'
+                                         : 'Did not execute ✗';
+      return `<span class="model-label-tag ${tc}" title="${title}"
+                style="font-size:10px;padding:1px 5px;${bgStyle}">${ok ? '✓' : '✗'}</span>`;
+    }).join('');
+
+    const anyMatch   = models.some(e => e.example.output_match === true);
+    const sel        = id === evalSelId ? ' selected' : '';
+    const borderLeft = anyMatch ? 'border-left:3px solid var(--pass);' : 'border-left:3px solid transparent;';
+
+    return `<div class="eval-intent-item${sel}" data-evalid="${escHtml(id)}"
+               style="${borderLeft}padding-left:9px">
+      <div style="display:flex;align-items:center;gap:5px;min-width:0">
+        ${gtDot}
+        <span class="eval-intent-item-id">${escHtml(id)}</span>
+        <div style="display:flex;gap:3px;flex-shrink:0">${badges}</div>
+      </div>
+      <div class="eval-intent-item-desc">${escHtml(gt.intent || '')}</div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.eval-intent-item[data-evalid]').forEach(el =>
+    el.addEventListener('click', () => {
+      evalSelId = el.dataset.evalid;
+      renderEvalIntentList();
+      renderEvalDetail(el.dataset.evalid);
+    })
+  );
+}
+
+// Render a committed_results dict as HTML blocks
+function committedHtml(committed) {
+  if (!committed || !Object.keys(committed).length) return '';
+  let html = '<div class="committed-block"><div class="committed-ds-header">committed datasets</div>';
+  for (const [dsName, files] of Object.entries(committed)) {
+    html += `<div class="committed-ds-name">📦 ${escHtml(dsName)}</div>`;
+    if (typeof files === 'object' && files !== null) {
+      for (const [fname, content] of Object.entries(files)) {
+        html += `<div class="committed-file">${escHtml(fname)}</div>`;
+        html += `<pre>${escHtml((content || '').slice(0, 600))}${content && content.length > 600 ? '\n…(truncated)' : ''}</pre>`;
+      }
+    } else {
+      html += `<pre>${escHtml(String(files || '').slice(0, 600))}</pre>`;
+    }
+  }
+  return html + '</div>';
+}
+
+function renderEvalDetail(id) {
+  const area   = document.getElementById('eval-detail-area');
+  const gt     = evalGroundTruth[id];
+  const models = evalModelById[id] || [];
+
+  if (!gt) {
+    area.innerHTML = '<div class="eval-detail-placeholder">Entry not found.</div>';
+    return;
+  }
+
+  // Reference card — always shown
+  const gtBadge = gt.success
+    ? '<span class="badge pass" style="font-size:11px">✓ Passed</span>'
+    : `<span class="badge fail" style="font-size:11px">✗ Failed</span>`;
+  const gtCommitted = (gt.committed_results && Object.keys(gt.committed_results).length > 0)
+    ? gt.committed_results : null;
+
+  const refCardHtml = `
+    <div class="ref-model-card">
+      <div class="ref-model-header" data-toggle="ref-model-body-${id}">
+        <span class="ref-label-tag">📋 Reference (ground truth)</span>
+        ${gtBadge}
+        ${gt.stdout ? `<span class="match-tag yes" style="margin-left:4px">stdout ✓</span>` : ''}
+        ${gtCommitted ? `<span class="match-tag yes" style="margin-left:4px">committed ✓</span>` : ''}
+        <span style="color:var(--muted);font-size:11px;margin-left:6px">${escHtml(gt.source_file || '')}</span>
+        <span class="toggle-arrow" style="margin-left:auto">▸</span>
+      </div>
+      <div class="model-out-body hidden" id="ref-model-body-${id}">
+        <div class="output-label" style="margin-top:0">Reference BraneScript
+          <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:8px">${escHtml(id)}</span>
+        </div>
+        <pre style="margin:0"><code class="language-clike">${escHtml(gt.branescript || '(none)')}</code></pre>
+        ${gt.stdout ? `<div class="out-mini"><div class="lbl">expected stdout</div><div>${escHtml(gt.stdout.slice(0,600))}</div></div>` : ''}
+        ${gt.stderr ? `<div class="out-mini err"><div class="lbl">stderr</div><div>${escHtml(gt.stderr.slice(0,400))}</div></div>` : ''}
+        ${committedHtml(gt.committed_results)}
+      </div>
+    </div>`;
+
+  const cardsHtml = models.length === 0
+    ? `<div style="color:var(--muted);font-size:13px;padding:14px 0;font-style:italic">No model evaluation results for this intent yet.</div>`
+    : models.map((e, idx) => {
+        const ex     = e.example;
+        const tc     = evalTagClass(e.model || '');
+        const ok     = ex.execution?.success;
+        const etype  = ex.execution?.error_type;
+
+        const resultBadge = ok
+          ? '<span class="badge pass">✓ Pass</span>'
+          : (etype === 'compile' ? '<span class="badge fail">✗ Compile error</span>'
+           : etype === 'timeout' ? '<span class="badge" style="background:#744210;color:#fef3c7">⏰ Timeout</span>'
+           : etype === 'empty'   ? '<span class="badge" style="background:#2d3748;color:#a0aec0">Empty output</span>'
+                                 : '<span class="badge fail">✗ Runtime error</span>');
+
+        const overallMatch = ex.output_match;
+        const stdoutMatch  = ex.stdout_match;
+        const commitMatch  = ex.committed_match;
+
+        const matchBadge = overallMatch === true
+          ? '<span class="match-tag yes" title="All available outputs match the reference">✓ Match</span>'
+          : overallMatch === false
+          ? '<span class="match-tag no"  title="One or more outputs differ from the reference">✗ No match</span>'
+          : '<span class="match-tag na"  title="Cannot compare: script did not execute or no reference available">— N/A</span>';
+
+        const subBadges = (stdoutMatch !== null && stdoutMatch !== undefined &&
+                           commitMatch !== null && commitMatch !== undefined)
+          ? `<span class="match-tag ${stdoutMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="stdout comparison">stdout: ${stdoutMatch ? '✓' : '✗'}</span>
+             <span class="match-tag ${commitMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="committed results comparison">committed: ${commitMatch ? '✓' : '✗'}</span>`
+          : (commitMatch !== null && commitMatch !== undefined)
+          ? `<span class="match-tag ${commitMatch ? 'yes' : 'no'}" style="font-size:10px;padding:1px 5px" title="committed datasets comparison">committed: ${commitMatch ? '✓' : '✗'}</span>`
+          : '';
+
+        const stdout = (ex.execution?.stdout || '').slice(0, 400);
+        const stderr = (ex.execution?.stderr || '').slice(0, 400);
+        const modelCommitted = ex.execution?.committed_results || {};
+
+        return `<div class="model-out-card">
+          <div class="model-out-header" data-toggle="model-out-body-${id}-${idx}">
+            <span class="model-label-tag ${tc}">${escHtml(e.model || 'unknown')}</span>
+            ${resultBadge} ${matchBadge} ${subBadges}
+            <span class="toggle-arrow">▸</span>
+          </div>
+          <div class="model-out-body hidden" id="model-out-body-${id}-${idx}">
+            <div class="output-label" style="margin-top:0">Generated BraneScript</div>
+            <pre style="margin:0"><code class="language-clike">${escHtml(ex.generated_bs || '(none)')}</code></pre>
+            ${stdout ? `<div class="out-mini"><div class="lbl">stdout</div><div>${escHtml(stdout)}</div></div>` : ''}
+            ${stderr ? `<div class="out-mini err"><div class="lbl">stderr</div><div>${escHtml(stderr)}</div></div>` : ''}
+            ${committedHtml(modelCommitted)}
+          </div>
+        </div>`;
+      }).join('');
+
+  area.innerHTML = `
+    <div style="font-size:13px;color:var(--text);margin-bottom:14px;line-height:1.5;font-weight:500">
+      ${escHtml(gt.intent || id)}
+    </div>
+    ${refCardHtml}
+    ${cardsHtml}`;
+
+  area.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
+}
+
+// Toggle card open/close via event delegation on the detail area
+document.getElementById('eval-detail-area').addEventListener('click', e => {
+  const header = e.target.closest('.model-out-header[data-toggle], .ref-model-header[data-toggle]');
+  if (header) {
+    const body  = document.getElementById(header.dataset.toggle);
+    const arrow = header.querySelector('.toggle-arrow');
+    if (!body) return;
+    const hidden = body.classList.toggle('hidden');
+    if (arrow) arrow.textContent = hidden ? '▸' : '▾';
+    if (!hidden) body.querySelectorAll('code.language-clike').forEach(el => Prism.highlightElement(el));
+  }
+});
+
+document.getElementById('eval-intent-search').addEventListener('input', e => {
+  evalIntentSearch = e.target.value.trim();
+  renderEvalIntentList();
+});
+
+// ── Generate page ──────────────────────────────────────────────────────────
+let genModelsLoaded = false;
+const _genJobs    = {};   // req_id → job object
+const _genTimers  = {};   // req_id → setInterval id
+
+const STATUS_LABELS = {
+  submitted:    'Submitted to SLURM',
+  queued:       'Waiting in SLURM queue…',
+  generating:   'Model generating BraneScript…',
+  executing:    'Executing on Brane…',
+  done:         'Done',
+  slurm_failed: 'SLURM job failed',
+  error:        'Error',
+};
+const ERROR_TYPE_LABELS = {
+  compile: 'Compile Error',
+  runtime: 'Runtime Error',
+  timeout: 'Timeout',
+};
+
+async function loadGenModels() {
+  genModelsLoaded = true;
+  const sel = document.getElementById('gen-model');
+  try {
+    const models = await (await fetch('/api/models')).json();
+    if (!models.length) {
+      sel.innerHTML = '<option value="">No models found — check outputs/models/ or FRONTEND_MODELS</option>';
+      return;
+    }
+    sel.innerHTML = models.map(m =>
+      `<option value="${escHtml(m.id)}">${escHtml(m.label)}</option>`
+    ).join('');
+  } catch (e) {
+    sel.innerHTML = `<option value="">Error: ${escHtml(String(e))}</option>`;
+  }
+  await loadGenQueue();
+}
+
+async function loadGenQueue() {
+  try {
+    const items = await (await fetch('/api/generate')).json();
+    for (const item of items.reverse()) {   // oldest first so newest ends on top
+      _genJobs[item.req_id] = item;
+      _upsertCard(item);
+      if (!['done', 'slurm_failed', 'error'].includes(item.status)) _startPolling(item.req_id);
+    }
+  } catch (e) { /* silent — queue may be empty */ }
+}
+
+function _shortModel(m) {
+  if (!m) return '';
+  const p = m.replace(/\/$/, '');
+  return p.split('/').pop().replace('output_merged_', '');
+}
+
+function _fmtTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  } catch { return ''; }
+}
+
+function _stepHtml(steps, activeIdx) {
+  return steps.map((s, i) => {
+    const cls = i < activeIdx ? 'gen-step done' : i === activeIdx ? 'gen-step active' : 'gen-step';
+    const sep = i < steps.length - 1 ? '<span class="gen-step-sep"></span>' : '';
+    return `<span class="${cls}">${escHtml(s)}</span>${sep}`;
+  }).join('');
+}
+
+const _SVG = {
+  check: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pass)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="9 12 11 14 15 10"/></svg>`,
+  cross: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fail)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+  clock: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+  retry: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.79"/></svg>`,
+};
+
+function _buildCard(job) {
+  const id = job.req_id;
+  const isDone    = job.status === 'done';
+  const isPass    = isDone && job.success;
+  const isFail    = isDone && !job.success;
+  const isRetry   = job.status === 'retrying';
+  const isPending = !isDone;
+  const cardCls   = isPass ? 'pass' : isFail ? 'fail' : 'pending';
+  const icon      = isPass ? _SVG.check : isFail ? _SVG.cross : isRetry ? _SVG.retry : _SVG.clock;
+  const badgeText = isPass ? 'PASS' : isFail ? 'FAIL' : (job.status || 'PENDING').toUpperCase().replace('_',' ');
+  const badgeCls  = isPass ? 'pass' : isFail ? 'fail' : 'pending';
+
+  const slurmTag  = job.slurm_id ? `<span>SLURM #${escHtml(job.slurm_id)}</span>` : '';
+  const timeTag   = `<span>${_fmtTime(job.submitted_at || job.executed_at)}</span>`;
+  const attemptN  = job.attempt || 1;
+  const maxAtt    = job.max_attempts || 3;
+  const attBadge  = (attemptN > 1 || isRetry)
+    ? `<span class="gen-attempt-badge">Attempt ${escHtml(String(attemptN))}/${maxAtt}</span>` : '';
+
+  // Progress bar (only while running/retrying)
+  const STEPS = ['Submitted', 'SLURM queue', 'Generating', 'Executing'];
+  const stepIdx = {submitted:0, queued:1, generating:2, executing:3, retrying:2};
+  const activeStep = stepIdx[job.status] ?? 0;
+  const progressHtml = isPending
+    ? `<div class="gen-progress" id="gen-progress-${id}">${_stepHtml(STEPS, activeStep)}</div>` : '';
+
+  // Tabs
+  const hasScript = !!job.script;
+  const hasError  = isFail && !!job.stderr;
+  const hasOutput = !!job.stdout;
+  const hasHistory = job.history && job.history.length > 0;
+
+  let tabs = [], panels = [];
+  if (hasScript) {
+    tabs.push(`<span class="gen-tab active" onclick="_switchTab('${id}','script',this)">Code</span>`);
+    panels.push(`<div class="gen-tab-panel active" id="gen-panel-script-${id}">
+      <div class="gen-card-body">
+        <pre class="gen-code-box"><code class="language-javascript" id="gen-script-${id}">${escHtml(job.script)}</code></pre>
+      </div>
+    </div>`);
+  }
+  if (hasError) {
+    const typeLabel = ERROR_TYPE_LABELS[job.error_type] || 'Execution Error';
+    const firstTab = !hasScript;
+    tabs.push(`<span class="gen-tab${firstTab?' active':''} has-error" onclick="_switchTab('${id}','error',this)">Error <span class="tab-dot"></span></span>`);
+    panels.push(`<div class="gen-tab-panel${firstTab?' active':''}" id="gen-panel-error-${id}">
+      <div class="gen-card-body">
+        <div class="gen-error-banner">
+          <span class="gen-error-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fail)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <div class="gen-error-body">
+            <div class="gen-error-type">${escHtml(typeLabel)}</div>
+            <pre class="gen-error-detail">${escHtml(job.stderr)}</pre>
+          </div>
+        </div>
+      </div>
+    </div>`);
+  }
+  if (hasOutput) {
+    const firstTab = !hasScript && !hasError;
+    tabs.push(`<span class="gen-tab${firstTab?' active':''}" onclick="_switchTab('${id}','output',this)">Output</span>`);
+    panels.push(`<div class="gen-tab-panel${firstTab?' active':''}" id="gen-panel-output-${id}">
+      <div class="gen-card-body">
+        <pre class="gen-output-box">${escHtml(job.stdout)}</pre>
+      </div>
+    </div>`);
+  }
+  if (hasHistory) {
+    tabs.push(`<span class="gen-tab" onclick="_switchTab('${id}','history',this)">History (${job.history.length})</span>`);
+    const histRows = job.history.map(h => `
+      <div style="margin-bottom:14px">
+        <div class="gen-section-label" style="margin-bottom:4px">Attempt ${h.attempt} — ${ERROR_TYPE_LABELS[h.error_type]||'Error'}</div>
+        <pre class="gen-code-box" style="max-height:150px">${escHtml(h.script||'')}</pre>
+        <pre class="gen-error-detail" style="margin-top:6px;max-height:80px;padding:8px;background:var(--code-bg);border-radius:var(--radius)">${escHtml(h.error||'')}</pre>
+      </div>`).join('');
+    panels.push(`<div class="gen-tab-panel" id="gen-panel-history-${id}">
+      <div class="gen-card-body">${histRows}</div>
+    </div>`);
+  }
+
+  const tabBarHtml = tabs.length > 0
+    ? `<div class="gen-tab-bar" id="gen-tabs-${id}">${tabs.join('')}</div>` : '';
+  const panelsHtml = panels.join('');
+
+  return `<div class="gen-card ${cardCls}" id="gen-card-${id}">
+  <div class="gen-card-header">
+    <span class="gen-card-icon">${icon}</span>
+    <span class="gen-card-intent" title="${escHtml(job.intent)}">${escHtml(job.intent)}</span>
+    <span class="gen-card-meta">
+      ${slurmTag}
+      <span>${escHtml(_shortModel(job.model))}</span>
+      ${timeTag}
+    </span>
+    ${attBadge}
+    <span class="gen-card-badge ${badgeCls}" id="gen-badge-${id}">${badgeText}</span>
+  </div>
+  ${progressHtml}
+  ${tabBarHtml}
+  <div id="gen-panels-${id}">${panelsHtml}</div>
+</div>`;
+}
+
+function _switchTab(cardId, panelName, clickedTab) {
+  // Deactivate all tabs and panels for this card
+  document.querySelectorAll(`#gen-tabs-${cardId} .gen-tab`).forEach(t => t.classList.remove('active'));
+  document.querySelectorAll(`#gen-panels-${cardId} .gen-tab-panel`).forEach(p => p.classList.remove('active'));
+  // Activate selected
+  clickedTab.classList.add('active');
+  const panel = document.getElementById(`gen-panel-${panelName}-${cardId}`);
+  if (panel) panel.classList.add('active');
+  // Highlight code if switching to script tab
+  if (panelName === 'script') {
+    const codeEl = document.getElementById(`gen-script-${cardId}`);
+    if (codeEl && window.Prism) Prism.highlightElement(codeEl);
+  }
+}
+
+function _upsertCard(job) {
+  const id = job.req_id;
+  const queue = document.getElementById('gen-queue');
+  const empty = document.getElementById('gen-queue-empty');
+  if (empty) empty.style.display = 'none';
+
+  const existing = document.getElementById(`gen-card-${id}`);
+  if (existing) {
+    existing.outerHTML = _buildCard(job);
+    // Highlight code tab
+    const codeEl2 = document.getElementById(`gen-script-${id}`);
+    if (codeEl2 && window.Prism) Prism.highlightElement(codeEl2);
+  } else {
+    // Prepend (newest on top)
+    queue.insertAdjacentHTML('afterbegin', _buildCard(job));
+    const codeEl2 = document.getElementById(`gen-script-${id}`);
+    if (codeEl2 && window.Prism) Prism.highlightElement(codeEl2);
+  }
+}
+
+function _toggleCard(id) {
+  const body = document.getElementById(`gen-body-${id}`);
+  if (body) body.style.display = body.style.display === 'none' ? '' : 'none';
+}
+
+function _startPolling(reqId) {
+  if (_genTimers[reqId]) return;
+  _genTimers[reqId] = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/generate/${reqId}`);
+      const data = await resp.json();
+      if (!_genJobs[reqId]) return;
+
+      _genJobs[reqId] = Object.assign({}, _genJobs[reqId], data);
+      _upsertCard(_genJobs[reqId]);
+
+      if (data.status === 'done' || data.status === 'slurm_failed' || data.status === 'error') {
+        clearInterval(_genTimers[reqId]);
+        delete _genTimers[reqId];
+        document.getElementById('gen-submit-btn').disabled = false;
+        // After 8s fade the completed card out — user can see it in Runs tab
+        setTimeout(() => {
+          const card = document.getElementById(`gen-card-${reqId}`);
+          if (card) { card.style.transition = 'opacity 1s'; card.style.opacity = '0.35'; }
+        }, 8000);
+      }
+    } catch (e) { /* transient */ }
+  }, 4000);
+}
+
+async function submitGenerate() {
+  const intent = document.getElementById('gen-intent').value.trim();
+  const model  = document.getElementById('gen-model').value;
+  if (!intent) { alert('Please enter an intent.'); return; }
+  if (!model)  { alert('Please select a model.');  return; }
+
+  document.getElementById('gen-submit-btn').disabled = true;
+
+  let reqId, slurmId;
+  try {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({intent, model}),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      alert('Submission failed: ' + (data.error || resp.statusText));
+      document.getElementById('gen-submit-btn').disabled = false;
+      return;
+    }
+    reqId   = data.req_id;
+    slurmId = data.slurm_id;
+  } catch (e) {
+    alert('Network error: ' + e);
+    document.getElementById('gen-submit-btn').disabled = false;
+    return;
+  }
+
+  // Add card immediately
+  const job = {
+    req_id:       reqId,
+    intent,
+    model,
+    status:       'submitted',
+    slurm_id:     slurmId,
+    submitted_at: new Date().toISOString(),
+    success:      null,
+    script:       '',
+    stdout:       '',
+    stderr:       '',
+  };
+  _genJobs[reqId] = job;
+  _upsertCard(job);
+
+  // Clear input
+  document.getElementById('gen-intent').value = '';
+
+  _startPolling(reqId);
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────
+fetchResults();
+setInterval(fetchResults, 10_000);
+</script>
+</body>
+</html>

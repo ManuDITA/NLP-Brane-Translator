@@ -1,0 +1,7 @@
+{"id": "basic-0001", "intent": "Print 'Hello, world!'", "branescript": "println(\"Hello, world!\");"}
+{"id": "basic-0002", "intent": "Declare a variable named age with value 30 and print it", "branescript": "let age := 30;\nprintln(age);"}
+{"id": "basic-0003", "intent": "Declare two string variables 'Hello' and 'World', concatenate them into a greeting, and print the result", "branescript": "let first := \"Hello\";\nlet second := \"World\";\nlet greeting := first + \", \" + second + \"!\";\nprintln(greeting);"}
+{"id": "basic-0004", "intent": "Declare a boolean variable set to true and print it", "branescript": "let is_active := true;\nprintln(is_active);"}
+{"id": "basic-0005", "intent": "Declare a=10 and b=3, compute their sum, difference, product, and quotient, and print each result", "branescript": "let a := 10;\nlet b := 3;\nlet sum := a + b;\nlet diff := a - b;\nlet product := a * b;\nlet quotient := a / b;\nprintln(sum);\nprintln(diff);\nprintln(product);\nprintln(quotient);"}
+{"id": "basic-0006", "intent": "Declare a counter starting at 0 and print it, then add 5 to it and print the updated value", "branescript": "let counter := 0;\nprintln(counter);\ncounter := counter + 5;\nprintln(counter);"}
+{"id": "basic-0007", "intent": "Declare a real-valued temperature variable with value 36.6 and print it", "branescript": "let temperature := 36.6;\nprintln(temperature);"}

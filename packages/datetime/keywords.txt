@@ -1,0 +1,12 @@
+# Keyword aliases for the datetime package.
+date
+time
+timestamp
+timezone
+format date
+current time
+duration
+calendar
+clock
+now
+today

@@ -1,0 +1,11 @@
+import epidemics;
+import statistics;
+
+let cases    := new Data{ name := "epidemic_cases" };
+let report   := generate_epidemic_report(cases, 100000);
+
+let summary  := new Data{ name := "epidemic_cases" };
+let rt_stats := compute_summary_stats(summary, "new_cases");
+println(rt_stats);
+
+commit_result("epidemic_full", report);

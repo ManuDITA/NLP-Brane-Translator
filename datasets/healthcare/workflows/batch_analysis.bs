@@ -1,0 +1,10 @@
+
+import healthcare;
+
+let patients := new Data{ name := "heal_pa_1" };
+println("Hello");
+println(patients);
+let report := analyze_heart_disease(patients);
+
+// Commit the IntermediateResult to make it a persistent named dataset.
+commit_result("healthcare_analysis", report);

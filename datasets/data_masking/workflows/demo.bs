@@ -1,0 +1,47 @@
+// demo.bs — Data Masking demo workflow
+//
+// Demonstrates masking strategies on inline values and a real CSV dataset.
+// Requires: data_masking package built, heal_pa_2 dataset registered.
+//
+// Run:  brane workflow run a demo.bs
+
+import data_masking;
+
+// --- Strategy demos on individual values ---
+let redacted := mask_value("Alice Smith", "redact");
+println("Redacted name: " + redacted);
+
+let hashed := mask_value("PAT-00123", "hash");
+println("Hashed ID: " + hashed);
+
+let partial_id := mask_value("SSN-123-45-6789", "partial");
+println("Partial SSN: " + partial_id);
+
+let year_only := mask_value("1985-03-15", "generalise_date");
+println("Generalised date: " + year_only);
+
+let masked_email := mask_value("alice@hospital.nl", "mask_email");
+println("Masked email: " + masked_email);
+
+// --- PII detection on a free-text string ---
+let sample := "Patient Alice Smith (alice@hospital.nl) born 1985-03-15, SSN 123-45-6789.";
+let pii_report := detect_pii(sample);
+println("PII detected: " + pii_report);
+
+// --- Mask a JSON record inline ---
+let record := "{\"patient_id\": \"PAT-00123\", \"name\": \"Alice Smith\", \"dob\": \"1985-03-15\", \"diagnosis\": \"hypertension\"}";
+let field_spec := "[{\"field\": \"name\", \"strategy\": \"redact\"}, {\"field\": \"patient_id\", \"strategy\": \"hash\"}, {\"field\": \"dob\", \"strategy\": \"generalise_date\"}]";
+let masked_record := mask_json_record(record, field_spec);
+println("Masked record: " + masked_record);
+
+// --- Summary of a masking configuration ---
+let summary := get_masking_summary("mixed", field_spec);
+println("Fields in spec: " + summary.fields_masked);
+println("Strategy label: " + summary.strategy);
+
+// --- Mask the healthcare CSV dataset and produce an HTML audit report ---
+let csv_spec := "[{\"column\": \"patient_id\", \"strategy\": \"hash\"}, {\"column\": \"name\", \"strategy\": \"redact\"}, {\"column\": \"dob\", \"strategy\": \"generalise_date\"}, {\"column\": \"email\", \"strategy\": \"mask_email\"}]";
+let masked_ir := mask_csv_file(heal_pa_2, csv_spec);
+
+let audit_ir := generate_masking_report(masked_ir);
+commit_result("masking_audit", audit_ir);
