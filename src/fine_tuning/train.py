@@ -67,45 +67,9 @@ from pathlib import Path
 BASE_MODEL  = os.environ.get("FINETUNE_MODEL", "Qwen/Qwen3.5-9B")
 _BASE_SLUG  = BASE_MODEL.split("/")[-1].lower()          # e.g. "qwen3.5-9b"
 
-def _make_run_tag() -> str:
-    """Build a compact tag from any hyperparams that differ from their defaults.
-    If RUN_TAG env var is set explicitly, use that instead."""
-    explicit = os.environ.get("RUN_TAG", "").strip()
-    if explicit:
-        return explicit
-    # Defaults — must match the values above
-    _defaults = dict(
-        SFT_EPOCHS=3, LORA_RANK=16, SFT_LR=2e-4,
-        BATCH_SIZE=2, GRAD_ACCUM=4,
-        GRPO_EPOCHS=2, GRPO_LR=5e-6,
-    )
-    _fmt = {
-        "SFT_EPOCHS":  lambda v: f"ep{v}",
-        "LORA_RANK":   lambda v: f"r{v}",
-        "SFT_LR":      lambda v: f"lr{v:.0e}".replace("e-0", "e-").replace("e+0", "e"),
-        "BATCH_SIZE":  lambda v: f"bs{v}",
-        "GRAD_ACCUM":  lambda v: f"ga{v}",
-        "GRPO_EPOCHS": lambda v: f"gep{v}",
-        "GRPO_LR":     lambda v: f"glr{v:.0e}".replace("e-0", "e-").replace("e+0", "e"),
-    }
-    _values = dict(
-        SFT_EPOCHS=SFT_EPOCHS, LORA_RANK=LORA_RANK, SFT_LR=SFT_LR,
-        BATCH_SIZE=BATCH_SIZE, GRAD_ACCUM=GRAD_ACCUM,
-        GRPO_EPOCHS=GRPO_EPOCHS, GRPO_LR=GRPO_LR,
-    )
-    parts = [_fmt[k](v) for k, v in _values.items() if v != _defaults[k]]
-    return "-".join(parts)
-
-_RUN_TAG   = _make_run_tag()
-MODEL_SLUG = f"{_BASE_SLUG}-{_RUN_TAG}" if _RUN_TAG else _BASE_SLUG
-
 _HERE       = Path(__file__).resolve().parent
 _ROOT       = _HERE.parent.parent                         # project root
 _MODELS_DIR = _ROOT / "outputs" / "models"
-
-OUTPUT_DIR  = _MODELS_DIR / f"{MODEL_SLUG}-adapter"      # SFT LoRA adapter (intermediate)
-GRPO_DIR    = _MODELS_DIR / f"{MODEL_SLUG}-grpo-adapter"  # GRPO LoRA adapter (intermediate)
-MERGED_DIR  = _MODELS_DIR / MODEL_SLUG                    # merged full model (used for inference)
 
 TRAIN_FILE  = _ROOT / "data" / "training" / "train.jsonl"
 VAL_FILE    = _ROOT / "data" / "training" / "val.jsonl"
@@ -131,6 +95,41 @@ GRPO_MAX_NEW_TOKENS  = int(os.environ.get("GRPO_MAX_NEW_TOKENS",  512))
 GRPO_TEMPERATURE     = float(os.environ.get("GRPO_TEMPERATURE",   0.8))
 GRPO_TOP_P           = float(os.environ.get("GRPO_TOP_P",         0.9))
 GRPO_WARMUP_STEPS    = int(os.environ.get("GRPO_WARMUP_STEPS",    5))
+
+def _make_run_tag() -> str:
+    """Build a compact tag from any hyperparams that differ from their defaults.
+    If RUN_TAG env var is set explicitly, use that instead."""
+    explicit = os.environ.get("RUN_TAG", "").strip()
+    if explicit:
+        return explicit
+    _defaults = dict(
+        SFT_EPOCHS=3, LORA_RANK=16, SFT_LR=2e-4,
+        BATCH_SIZE=2, GRAD_ACCUM=4,
+        GRPO_EPOCHS=2, GRPO_LR=5e-6,
+    )
+    _fmt = {
+        "SFT_EPOCHS":  lambda v: f"ep{v}",
+        "LORA_RANK":   lambda v: f"r{v}",
+        "SFT_LR":      lambda v: f"lr{v:.0e}".replace("e-0", "e-").replace("e+0", "e"),
+        "BATCH_SIZE":  lambda v: f"bs{v}",
+        "GRAD_ACCUM":  lambda v: f"ga{v}",
+        "GRPO_EPOCHS": lambda v: f"gep{v}",
+        "GRPO_LR":     lambda v: f"glr{v:.0e}".replace("e-0", "e-").replace("e+0", "e"),
+    }
+    _values = dict(
+        SFT_EPOCHS=SFT_EPOCHS, LORA_RANK=LORA_RANK, SFT_LR=SFT_LR,
+        BATCH_SIZE=BATCH_SIZE, GRAD_ACCUM=GRAD_ACCUM,
+        GRPO_EPOCHS=GRPO_EPOCHS, GRPO_LR=GRPO_LR,
+    )
+    parts = [_fmt[k](v) for k, v in _values.items() if v != _defaults[k]]
+    return "-".join(parts)
+
+_RUN_TAG   = _make_run_tag()
+MODEL_SLUG = f"{_BASE_SLUG}-{_RUN_TAG}" if _RUN_TAG else _BASE_SLUG
+
+OUTPUT_DIR  = _MODELS_DIR / f"{MODEL_SLUG}-adapter"      # SFT LoRA adapter (intermediate)
+GRPO_DIR    = _MODELS_DIR / f"{MODEL_SLUG}-grpo-adapter"  # GRPO LoRA adapter (intermediate)
+MERGED_DIR  = _MODELS_DIR / MODEL_SLUG                    # merged full model (used for inference)
 
 # Brane executor
 BRANE_INSTANCE  = os.environ.get("BRANE_INSTANCE", "local-instance")
