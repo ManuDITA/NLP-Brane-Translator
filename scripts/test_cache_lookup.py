@@ -237,40 +237,77 @@ def benchmark(threshold: float, output: Path | None):
 # Threshold sweep
 # ---------------------------------------------------------------------------
 
-def sweep(thresholds: list[float]):
-    """Run benchmark at multiple thresholds and print comparison table."""
+def sweep(thresholds: list[float], output: Path | None):
+    """Run benchmark at multiple thresholds — queries ChromaDB once per paraphrase,
+    then applies each threshold as a post-filter (much faster than re-querying)."""
     from semantic_cache import SemanticCache
+
     ref_scripts = _load_training_scripts([TRAIN_FILE, VAL_FILE])
     paraphrases = _load_paraphrases()
 
-    print(f"\n{'Threshold':>10} {'Hit%':>8} {'Correct%':>10} {'FP%':>8} {'Sim mean':>10}")
-    print("─" * 52)
+    # Use threshold=0.0 to always get a result, capturing raw similarity
+    cache = SemanticCache(threshold=0.0)
+    stats = cache.stats()
+    if stats["total_entries"] == 0:
+        print("❌ Cache is empty. Run: python scripts/populate_cache.py")
+        sys.exit(1)
+    print(f"📊 Cache: {stats['total_entries']} entries")
+    print(f"📚 Ground truth: {len(ref_scripts)} examples")
+    print(f"🔤 Paraphrases : {len(paraphrases)} entries")
+    print(f"⚡ Querying once per paraphrase, then sweeping thresholds...\n")
+
+    # Single pass: collect (similarity, is_correct) for every paraphrase
+    records = []   # (similarity, is_correct: bool, had_ref: bool)
+    for i, para in enumerate(paraphrases, 1):
+        intent      = (para.get("intent") or "").strip()
+        original_id = para.get("original_id", "")
+        if not intent or not original_id:
+            continue
+        expected_bs = ref_scripts.get(original_id)
+        if not expected_bs:
+            records.append((None, False, False))
+            continue
+        hit = cache.lookup(intent)
+        if hit is None:
+            records.append((0.0, False, True))
+            continue
+        is_correct = _norm(hit["branescript"]) == _norm(expected_bs)
+        records.append((hit["similarity"], is_correct, True))
+        if i % 200 == 0:
+            print(f"  [{i}/{len(paraphrases)}] queried...")
+
+    total_with_ref = sum(1 for _, _, has_ref in records if has_ref)
+
+    print(f"\n{'Threshold':>10} {'Hit%':>8} {'Correct%':>10} {'FP%':>8}")
+    print("─" * 44)
+
+    sweep_results = []
     for t in thresholds:
-        cache = SemanticCache(threshold=t)
-        hits = correct = false_pos = total = 0
-        sims = []
-        for para in paraphrases:
-            intent = (para.get("intent") or "").strip()
-            orig_id = para.get("original_id", "")
-            if not intent or not orig_id:
+        hits = correct = false_pos = 0
+        for sim, is_correct, has_ref in records:
+            if not has_ref:
                 continue
-            expected_bs = ref_scripts.get(orig_id)
-            if not expected_bs:
-                continue
-            total += 1
-            hit = cache.lookup(intent)
-            if hit:
+            if sim is not None and sim >= t:
                 hits += 1
-                sims.append(hit["similarity"])
-                if _norm(hit["branescript"]) == _norm(expected_bs):
+                if is_correct:
                     correct += 1
                 else:
                     false_pos += 1
-        hr = hits / total * 100 if total else 0
-        cr = correct / total * 100 if total else 0
+        hr  = hits / total_with_ref * 100 if total_with_ref else 0
+        cr  = correct / total_with_ref * 100 if total_with_ref else 0
         fpr = false_pos / hits * 100 if hits else 0
-        sm = sum(sims) / len(sims) if sims else 0
-        print(f"{t:>10.2f} {hr:>7.1f}% {cr:>9.1f}% {fpr:>7.1f}% {sm:>10.4f}")
+        print(f"{t:>10.2f} {hr:>7.1f}% {cr:>9.1f}% {fpr:>7.1f}%")
+        sweep_results.append({
+            "threshold": t, "hit_rate_pct": round(hr, 2),
+            "correct_rate_pct": round(cr, 2), "fp_rate_pct": round(fpr, 2),
+        })
+        # Save incrementally after each threshold so partial results are never lost
+        if output:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps({"sweep": sweep_results}, indent=2))
+
+    if output:
+        print(f"\n💾 Results saved → {output}")
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +325,7 @@ def main():
     args = ap.parse_args()
 
     if args.sweep:
-        sweep([0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98])
+        sweep([0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98], output=args.output)
     else:
         benchmark(threshold=args.threshold, output=args.output)
 
