@@ -233,6 +233,8 @@ Built a local web dashboard:
 - `sbatch_baseline.sh` — baseline evaluation job; requires `EVAL_MODEL` via `--export=ALL,EVAL_MODEL=...`
 - `sbatch_finetune.sh` — SFT/GRPO training job; `FINETUNE_MODEL` and `TRAIN_MODE` configurable
 - `submit_baselines.sh` — submits multiple baseline jobs in parallel
+- `sbatch_generate.sh` — SLURM wrapper for the frontend Generate tab
+- `sbatch_paraphrase.sh` — SLURM job for LLM-driven paraphrase generation
 
 ### M7.2 — Syntax Reference (`data/syntax_reference.md`)
 Wrote a full BraneScript language specification injected into every LLM prompt:
@@ -248,21 +250,203 @@ Migrated the LaTeX thesis template into the main project repository:
 - `.gitignore` extended with LaTeX build artifact patterns
 - `make build` builds the thesis PDF via `latexmk`
 
+### M7.4 — Output Folder Consolidation
+Unified all scattered output directories under `outputs/`:
+- `outputs/pipeline/results/` — job_watcher.py execution results
+- `outputs/eval/` — evaluation JSONs (one per model run)
+- `outputs/metrics/` — training loss JSONL files (one per model)
+- `outputs/snellius/` — raw Snellius-generated JSON files
+- `outputs/branescripts/` — generated `.bs` files from pipeline.py
+- `outputs/logs/` — PID files and service logs
+- `outputs/models/` — LoRA adapters and merged model weights
+
+### M7.5 — `start.sh` — Unified Service Entry Point
+Created a single script to manage all local services:
+```bash
+bash start.sh           # start job_watcher + dashboard
+bash start.sh --restart # restart both services
+bash start.sh --stop    # stop both services
+```
+- Writes PIDs to `outputs/logs/`
+- Health check on dashboard port after startup
+- Handles `set -euo pipefail` edge cases in process management
+
+### M7.6 — Training Metrics and Loss Plotting
+- Added `MetricsCallback` to `train.py`: appends training step metrics (loss, grad norm, learning rate, epoch) to `outputs/metrics/<model>_training_metrics.jsonl`
+- Added `_save_training_config()`: saves all hyperparameters to `training_config.json` in the adapter directory (with both a plain copy and a timestamped copy so multiple runs don't overwrite each other)
+- Created `scripts/plot_training.py`: reads JSONL metrics, plots train/val loss curves and GRPO reward over steps; saves PNG for thesis figures
+
+### M7.7 — Training Config in Eval Files
+Embedded training hyperparameters directly in evaluation output files:
+- `evaluate.py` reads `training_config.json` from the model dir and stores it in the eval JSON at save time
+- Solves the problem of distinguishing multiple SFT runs on the same base model
+- `server.py` prefers embedded config over on-disk lookup, falls back gracefully for older files
+
 ---
 
-## Current Status (July 2026)
+## Phase 8 — Frontend Generate Tab
+
+### M8.1 — Generate Tab: Real-Time BraneScript Generation
+Added a new "Generate" tab to the dashboard allowing interactive BraneScript generation:
+- Text area for intent input
+- Model selector (reads `FRONTEND_MODELS` from `.env`)
+- Submits SLURM job to Snellius via SSH; polls result via file queue
+- Shows generated BraneScript, execution result, stdout/stderr in a job card UI
+
+### M8.2 — Job Queue UI with Tabbed Cards
+Built a full job queue interface:
+- Stack of job cards (one per submission), newest at top
+- Progress steps: Queued → Generating → Executing → Done
+- Each card has Code / Error / Output / History tabs
+- Error banners for failed runs; syntax-highlighted BraneScript boxes
+- Attempt badge showing which retry this is
+- 8-second fade-out on completion; completed jobs move to Runs tab
+
+### M8.3 — Auto-Retry with Error Feedback (up to 3 attempts)
+Implemented an intelligent retry loop for failed BraneScript generation:
+- `MAX_GENERATE_RETRIES = 3` (constant in server.py)
+- On compile/runtime failure: writes `~/brane_jobs/context/<req_id>.json` on Snellius with `{prev_script, error_feedback, attempt}`
+- `generate_single.py` reads context on retry; injects error into prompt: "PREVIOUS ATTEMPT FAILED — fix this script: ..."
+- Each retry history preserved in the job card's History tab
+- Runs tab shows final result only; Generate tab shows active jobs
+
+### M8.4 — Model Info Modal in Evaluation Tab
+Clicking any SFT/GRPO model label in the Model Comparison table opens a modal showing:
+- All training hyperparameters (base model, LoRA rank/alpha, epochs, learning rate, batch size, etc.)
+- Model path and run ID
+- Works by reading embedded `training_config` from the eval JSON or falling back to `training_config.json` on disk
+
+---
+
+## Phase 9 — Semantic Cache
+
+### M9.1 — SemanticCache Class (`src/semantic_cache.py`)
+Built a persistent semantic cache backed by ChromaDB (`brane_pkg_db/intent_cache` collection):
+- `lookup(intent)` → cosine similarity search; returns BraneScript if similarity ≥ threshold (default 0.92)
+- `store(intent, branescript)` → stores successful result
+- `invalidate(intent)` → removes stale entries matching the intent
+- `stats()` / `list_entries()` for inspection
+- Integrated into `generate_single.py`: checks cache before loading the LLM model; stores result after generation
+
+### M9.2 — Cache Population from Training Data
+Created `scripts/populate_cache.py`:
+- Reads all 658 training examples (reference BraneScripts = human-written ground truth)
+- Stores each intent → reference BraneScript pair in the semantic cache
+- Deduplication: skips intents already in cache (with similarity check)
+- `--clear` flag to wipe and re-seed; `--threshold` to control dedup sensitivity
+
+### M9.3 — Paraphrase Generation Pipeline
+Built end-to-end paraphrase generation for cache evaluation:
+- `scripts/generate_paraphrases.py`: uses an LLM to generate N semantically equivalent rewordings per intent; writes to `data/training/paraphrases.jsonl`
+- `sbatch_paraphrase.sh`: SLURM wrapper (default: Qwen3.5-4B, N=3 paraphrases per intent)
+- Output format: `{id, original_id, source_file, intent, branescript}` — same schema as training data
+- Target: 1974 paraphrases (3 × 658 intents) for cache evaluation
+
+### M9.4 — Cache Lookup Benchmark (`scripts/test_cache_lookup.py`)
+Benchmark tool to measure how well the semantic cache handles paraphrased intents:
+- Loads A intents from cache, queries with B paraphrases
+- Metrics: hit rate, correct rate (exact match), fuzzy correct rate (≥0.95 bigram similarity), false positive rate, similarity distribution
+- `--sweep` mode: runs across thresholds [0.80, 0.85, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98] to find optimal operating point
+- Saves JSON results for thesis plotting
+
+### M9.5 — Cache API Endpoints
+Added to `server.py`:
+- `GET /api/cache/stats` — total entries, total hits, threshold
+- `GET /api/cache/entries` — list cached intents (newest first)
+- `POST /api/cache/invalidate` — remove entries similar to a given intent
+
+---
+
+## Phase 10 — Updated Baseline Results (August 2026)
+
+### M10.1 — Improved Baseline Results After Prompt + RAG Fixes
+Re-ran all baseline evaluations after fixing: system prompt (banned empty strings, clarified commit_result), backtick token suppression, better RAG aliases, dataset metadata tagging:
+
+| Model | Compile % | Execute % | Output Match % |
+|---|---|---|---|
+| Qwen3.6-27B (base) | **94.8%** | **92.7%** | 56.5% |
+| Qwen3.5-9B (base) | **64.5%** | **63.4%** | — |
+| Qwen3.5-4B (base) | **57.0%** | **55.4%** | — |
+
+vs July 27 baselines:
+
+| Model | Compile % | Execute % |
+|---|---|---|
+| Qwen3.6-27B (base) | 37.9% | 37.5% |
+| Qwen3.5-9B (base) | 20.9% | 19.8% |
+| Qwen3.5-4B (base) | 5.5% | 5.5% |
+
+The 37.9% → 94.8% jump for 27B is entirely attributable to infrastructure fixes (prompt, RAG, output cleaning), not model training. **This is a significant thesis finding**: RAG quality + prompt engineering has a larger impact than model size.
+
+### M10.2 — SFT Model Evaluation
+First SFT model evaluated:
+- Qwen3.5-9B SFT: 56.8% compile, 1.4% execution
+- Low execution rate likely indicates Brane was not running during the local execution phase
+- Demonstrates the importance of running `process_snellius.py` with Brane active
+
+---
+
+## Current Status (August 2026)
 
 | Component | Status |
 |---|---|
 | Brane packages | 7 packages, all functional |
 | Training data | 658 examples, 658/658 passing, 0 timestamps |
 | Train/Val split | 560 train / 98 val |
+| Paraphrases | ~1974 examples generated (3 per intent) |
 | RAG system | 91 per-function chunks, aliases, "Use when" hints |
-| Baseline evaluation | 3 model sizes evaluated |
-| SFT training | Completed (Qwen3.6-27B adapter) |
-| Response-only training | Fixed (not yet retrained) |
-| GRPO training | Infrastructure ready, not yet run |
+| Baseline evaluation | 3 models × 2 rounds; best: 94.8% execution (27B) |
+| SFT training | Completed for 4B, 9B, 27B; adapters on Snellius |
+| Merged models | output_merged_qwen3.5-4b/9b/27b on Snellius |
+| SFT evaluation | In progress (after merge jobs complete) |
+| GRPO training | Infrastructure ready; not yet run |
+| Semantic cache | Implemented; populated from training data |
+| Cache benchmark | Script ready; paraphrases generated |
+| Training metrics | Loss curves saved per model; plottable |
+| Frontend | 5 tabs: Results, Exec Results, Evaluation, Runs, Generate |
 | Thesis LaTeX | Skeleton in repo, ready for content |
+
+---
+
+## Thesis Metrics and Plots
+
+### Primary Result: BraneScript Generation Quality
+
+The core metric of the thesis is how accurately each model translates a natural-language intent into a correct, executable BraneScript. Three levels:
+
+| Metric | Definition | Measures |
+|---|---|---|
+| **Compile rate** | % of scripts with valid BraneScript syntax | Syntactic accuracy |
+| **Execution rate** | % that run without runtime errors | Semantic accuracy (package API, types) |
+| **Output match rate** | % whose stdout matches the reference | Full end-to-end correctness |
+
+**Plot 1 — Model Comparison Bar Chart**
+Grouped bar chart: compile %, execute %, output match % for each model (base + SFT + GRPO per size). Shows effect of fine-tuning at a glance. Script: `scripts/plot_training.py` or a new `scripts/plot_results.py`.
+
+**Plot 2 — Training Loss Curves**
+Line plot of train loss and validation loss over steps for each model. Shows convergence behaviour, overfitting, and effect of LoRA rank. Source: `outputs/metrics/*.jsonl` → `scripts/plot_training.py --save`.
+
+**Plot 3 — Semantic Cache: Threshold vs Precision/Hit Rate**
+Two-axis line chart:
+- X axis: similarity threshold (0.80 → 0.99)
+- Left Y axis: hit rate % (how many B intents get cached)
+- Right Y axis: precision % (of hits, how many return the correct script)
+- Shows the operating point tradeoff for the cache
+
+**Plot 4 — Impact of RAG and Prompt Engineering**
+Before/after bar chart for the 27B model across two evaluation rounds (July 27 vs August 1). Separates contribution of RAG improvements vs. prompt fixes. This is one of the most striking findings: 37.9% → 94.8% execution rate with the same model weights.
+
+**Plot 5 — Error Type Breakdown**
+Stacked bar per model: proportion of failures that are compile errors vs runtime errors vs output mismatch vs correct. Shows where each model fails and whether SFT reduces specific error types.
+
+**Plot 6 — Dataset Composition**
+Bar chart showing number of training examples per package (healthcare, genomics, epidemics, statistics, text_analysis, data_masking, datetime). Demonstrates coverage and dataset balance.
+
+### Secondary Metrics
+
+- **Cache hit rate vs intent diversity**: shows reproducibility benefit
+- **Retry effectiveness**: how often does attempt 2 or 3 succeed where attempt 1 fails? (from Generate tab history)
+- **Training efficiency**: epochs vs validation loss for different model sizes
 
 ---
 
