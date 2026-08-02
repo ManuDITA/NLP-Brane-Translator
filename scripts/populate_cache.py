@@ -83,10 +83,6 @@ def populate(sources: list[Path], clear: bool, threshold: float):
 
     print(f"\n🚀 Populating cache with {len(examples)} examples…")
     stored = skipped = 0
-    # Use a near-exact threshold for the pre-store dedup check so we only skip
-    # true duplicates, not merely similar intents (which should each get their
-    # own cache entry). Inference-time lookups still use the normal threshold.
-    dedup_cache = SemanticCache(threshold=0.99)
 
     for i, ex in enumerate(examples, start=1):
         intent      = (ex.get("intent") or "").strip()
@@ -94,12 +90,6 @@ def populate(sources: list[Path], clear: bool, threshold: float):
         orig_id     = ex.get("id", f"ex_{i}")
 
         if not intent or not branescript:
-            skipped += 1
-            continue
-
-        # Skip only true exact duplicates
-        hit = dedup_cache.lookup(intent)
-        if hit:
             skipped += 1
             continue
 
