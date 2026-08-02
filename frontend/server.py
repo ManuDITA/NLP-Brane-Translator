@@ -458,22 +458,19 @@ def api_exec_results_stats():
 
 def _load_training_config(model_path: str | None) -> dict | None:
     """
-    Given a model_path (e.g. outputs/models/output_merged_qwen3.5-9b),
+    Given a model_path (e.g. outputs/models/qwen3.5-9b),
     look for training_config.json in the corresponding adapter directory
-    (outputs/models/output_qwen3.5-9b or outputs/models/output_qwen3.5-9b_grpo).
+    (outputs/models/qwen3.5-9b-adapter or qwen3.5-9b-grpo-adapter).
     Returns the config dict or None if not found.
     """
     if not model_path:
         return None
     mp = Path(model_path)
-    # Strip 'output_merged_' prefix to get the slug, then check both sft and grpo dirs
-    name = mp.name  # e.g. output_merged_qwen3.5-9b or output_merged_qwen3.5-9b_grpo
-    slug = name.replace("output_merged_", "")
+    slug = mp.name  # e.g. qwen3.5-9b or qwen3.5-9b-ep5-r32
     candidates = [
-        mp.parent / f"output_{slug}",
-        mp.parent / f"output_{slug}_grpo",
-        mp.parent / f"output_{slug}_sft",
-        mp,  # sometimes config is saved in merged dir too
+        mp.parent / f"{slug}-adapter",
+        mp.parent / f"{slug}-grpo-adapter",
+        mp,  # config may also be saved in merged dir
     ]
     for candidate in candidates:
         cfg = candidate / "training_config.json"
@@ -599,14 +596,17 @@ def _auto_label(model_path: str) -> str:
     """Derive a human-readable label from a model path or HF ID."""
     p = model_path.rstrip("/")
     name = Path(p).name
-    if "output_merged_" in name:
-        slug = name.replace("output_merged_", "")
-        if slug.endswith("_grpo"):
-            slug = slug[:-5]
+    # Detect local fine-tuned model: directory under outputs/models/ that isn't a HF-style "org/model"
+    if (Path(p).exists() or p.startswith("outputs/models/")) and "/" not in name:
+        if name.endswith("-grpo-adapter") or name.endswith("-adapter"):
+            return f"{name} (adapter)"
+        # It's a merged model dir — determine mode from whether grpo-adapter sibling exists
+        models_dir = Path(p).parent
+        if (models_dir / f"{name}-grpo-adapter").exists():
             suffix = "GRPO"
         else:
             suffix = "SFT"
-        label = slug.replace("-", ".").replace("_", ".").title()
+        label = name.replace("-", ".").replace("_", ".").title()
         return f"{label} ({suffix})"
     if "/" in p and not p.startswith("/"):
         return f"{p.split('/')[-1]} (base)"
@@ -621,10 +621,11 @@ def api_models():
     models_dir = _PROJECT_ROOT / "outputs" / "models"
     if models_dir.exists():
         for d in sorted(models_dir.iterdir()):
-            if d.is_dir() and "output_merged_" in d.name:
+            # Show merged model dirs (exclude adapter dirs)
+            if d.is_dir() and not d.name.endswith("-adapter"):
                 models.append({
                     "id":    str(d.relative_to(_PROJECT_ROOT)),
-                    "label": _auto_label(d.name),
+                    "label": _auto_label(str(d.relative_to(_PROJECT_ROOT))),
                     "type":  "local",
                 })
 

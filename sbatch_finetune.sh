@@ -47,11 +47,21 @@ if [[ -f "${PROJECT_DIR}/.env" ]]; then
     set -a; source "${PROJECT_DIR}/.env"; set +a
 fi
 
-# Allow overriding the base model and training mode via environment variables
+# Allow overriding the base model, training mode, and run tag via environment variables.
+# Usage examples:
+#   export FINETUNE_MODEL=Qwen/Qwen3.5-9B RUN_TAG=lr1e4-ep3 TRAIN_MODE=sft && sbatch sbatch_finetune.sh
+#   sbatch --export="ALL,FINETUNE_MODEL=Qwen/Qwen3.5-9B,RUN_TAG=lr1e4-ep3" sbatch_finetune.sh
+#
+# RUN_TAG is appended to the model slug for all output dirs:
+#   outputs/models/output_qwen3.5-9b-lr1e4-ep3/
+#   outputs/models/output_merged_qwen3.5-9b-lr1e4-ep3/
+# Leave RUN_TAG unset to use the plain model name (default behaviour).
 export FINETUNE_MODEL="${FINETUNE_MODEL:-Qwen/Qwen3.5-9B}"
 export TRAIN_MODE="${TRAIN_MODE:-sft}"
+export RUN_TAG="${RUN_TAG:-}"
 echo "Base model  : ${FINETUNE_MODEL}"
 echo "Train mode  : ${TRAIN_MODE}"
+echo "Run tag     : ${RUN_TAG:-<none>}"
 
 mkdir -p "${PROJECT_DIR}/outputs/slurm"
 

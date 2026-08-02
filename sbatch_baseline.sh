@@ -47,12 +47,14 @@ echo "HF cache : ${HF_HOME}"
 
 # ── Model configuration ───────────────────────────────────────────────────────
 # Set EVAL_MODEL before calling sbatch, e.g.:
-#   EVAL_MODEL=Qwen/Qwen3-4B sbatch sbatch_baseline.sh
-#   EVAL_MODEL=outputs/models/output_merged_qwen3.6-27b sbatch sbatch_baseline.sh
+#   export EVAL_MODEL=Qwen/Qwen3-4B && sbatch sbatch_baseline.sh
+#   export EVAL_MODEL=outputs/models/qwen3.5-9b && sbatch sbatch_baseline.sh
+#   export EVAL_MODEL=outputs/models/qwen3.5-9b-ep5-r32 && sbatch sbatch_baseline.sh
+#   sbatch --export="ALL,EVAL_MODEL=outputs/models/qwen3.5-9b-ep5-r32" sbatch_baseline.sh
 #
 # The label is derived automatically from the model path:
 #   Qwen/Qwen3-4B                           → Qwen3-4B (base)
-#   outputs/models/output_merged_qwen3.6-27b → Qwen3.6-27B (SFT)
+#   outputs/models/qwen3.5-9b → Qwen3.5.9B (SFT)
 #   (override with EVAL_LABEL if needed)
 #
 # Qwen3 model IDs on HuggingFace:
