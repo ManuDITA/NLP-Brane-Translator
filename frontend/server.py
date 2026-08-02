@@ -79,6 +79,26 @@ def index():
 
 
 # ---------------------------------------------------------------------------
+# Semantic cache (lazy init — avoids loading ChromaDB on startup if unused)
+# ---------------------------------------------------------------------------
+_semantic_cache = None
+
+def _get_cache():
+    global _semantic_cache
+    if _semantic_cache is None:
+        try:
+            import sys as _sys
+            if str(_PROJECT_ROOT / "src") not in _sys.path:
+                _sys.path.insert(0, str(_PROJECT_ROOT / "src"))
+            from semantic_cache import SemanticCache
+            _semantic_cache = SemanticCache()
+        except Exception as e:
+            print(f"⚠️  Semantic cache unavailable: {e}")
+            _semantic_cache = False   # sentinel: don't retry
+    return _semantic_cache if _semantic_cache is not False else None
+
+
+# ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
 
@@ -436,15 +456,48 @@ def api_exec_results_stats():
 # Evaluation Results API
 # ---------------------------------------------------------------------------
 
+def _load_training_config(model_path: str | None) -> dict | None:
+    """
+    Given a model_path (e.g. outputs/models/output_merged_qwen3.5-9b),
+    look for training_config.json in the corresponding adapter directory
+    (outputs/models/output_qwen3.5-9b or outputs/models/output_qwen3.5-9b_grpo).
+    Returns the config dict or None if not found.
+    """
+    if not model_path:
+        return None
+    mp = Path(model_path)
+    # Strip 'output_merged_' prefix to get the slug, then check both sft and grpo dirs
+    name = mp.name  # e.g. output_merged_qwen3.5-9b or output_merged_qwen3.5-9b_grpo
+    slug = name.replace("output_merged_", "")
+    candidates = [
+        mp.parent / f"output_{slug}",
+        mp.parent / f"output_{slug}_grpo",
+        mp.parent / f"output_{slug}_sft",
+        mp,  # sometimes config is saved in merged dir too
+    ]
+    for candidate in candidates:
+        cfg = candidate / "training_config.json"
+        if cfg.exists():
+            try:
+                return json.loads(cfg.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+    return None
+
+
 def _eval_run_summary(path: Path) -> dict | None:
     """Return lightweight metadata for one eval run JSON file."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        model_path = data.get("model_path")
+        # Prefer training_config embedded in the eval file (newer runs);
+        # fall back to loading from disk for older eval files
+        training_config = data.get("training_config") or _load_training_config(model_path)
         return {
             "file":                  path.name,
             "slug":                  path.stem,
             "model":                 data.get("model"),
-            "model_path":            data.get("model_path"),
+            "model_path":            model_path,
             "total":                 data.get("total"),
             "compile_rate":          data.get("compile_rate"),
             "execution_rate":        data.get("execution_rate"),
@@ -453,6 +506,7 @@ def _eval_run_summary(path: Path) -> dict | None:
             "committed_match_rate":  data.get("committed_match_rate"),
             "committed_match_n":     data.get("committed_match_n"),
             "timestamp":             data.get("timestamp"),
+            "training_config":       training_config,
         }
     except Exception:
         return None
@@ -670,6 +724,40 @@ def api_generate():
     if not model:
         return jsonify({"error": "model is required"}), 400
 
+    # ── Semantic cache lookup ─────────────────────────────────────────────────
+    cache = _get_cache()
+    if cache:
+        try:
+            hit = cache.lookup(intent)
+            if hit:
+                req_id = str(uuid.uuid4())
+                print(f"🎯 Cache hit (similarity={hit['similarity']}) for: {intent[:60]}…", flush=True)
+                _generate_jobs[req_id] = {
+                    "status":       "done",
+                    "intent":       intent,
+                    "model":        model,
+                    "attempt":      1,
+                    "max_attempts": MAX_GENERATE_RETRIES,
+                    "history":      [],
+                    "submitted_at": datetime.now(timezone.utc).isoformat(),
+                    "cache_hit":    True,
+                    "cache_similarity": hit["similarity"],
+                    "original_intent":  hit["intent"],
+                }
+                return jsonify({
+                    "req_id":       req_id,
+                    "status":       "cache_hit",
+                    "cache_hit":    True,
+                    "similarity":   hit["similarity"],
+                    "original_intent": hit["intent"],
+                    "branescript":  hit["branescript"],
+                    "execution":    hit["execution"],
+                    "hits":         hit["hits"],
+                })
+        except Exception as e:
+            print(f"⚠️  Cache lookup error: {e}", flush=True)
+    # ─────────────────────────────────────────────────────────────────────────
+
     req_id = str(uuid.uuid4())
     slurm_id, err = _submit_snellius_generate(req_id, intent, model)
     if err:
@@ -763,6 +851,26 @@ def api_generate_status(req_id):
                 })
 
             # Final result (pass or max retries exhausted)
+            # ── Store in semantic cache on success ────────────────────────────
+            if verdict_pass:
+                try:
+                    cache = _get_cache()
+                    if cache:
+                        cache.store(
+                            intent      = data.get("intent") or job.get("intent", ""),
+                            branescript = data.get("generated_code", ""),
+                            execution   = {
+                                "stdout":    (data.get("stdout") or "").strip(),
+                                "stderr":    (data.get("stderr") or "").strip(),
+                                "exit_code": data.get("exit_code"),
+                                "success":   True,
+                                "committed_data": data.get("committed_data") or {},
+                            },
+                            job_id = req_id,
+                        )
+                except Exception as _ce:
+                    print(f"⚠️  Cache store error: {_ce}", flush=True)
+            # ─────────────────────────────────────────────────────────────────
             return jsonify({
                 "status":         "done",
                 "req_id":         req_id,
@@ -806,6 +914,45 @@ def api_generate_status(req_id):
         "intent":   job["intent"],
         "model":    job["model"],
     })
+
+
+@app.route("/api/cache/stats")
+def api_cache_stats():
+    """GET /api/cache/stats — semantic cache statistics."""
+    cache = _get_cache()
+    if not cache:
+        return jsonify({"available": False})
+    try:
+        stats = cache.stats()
+        return jsonify({"available": True, **stats})
+    except Exception as e:
+        return jsonify({"available": False, "error": str(e)})
+
+
+@app.route("/api/cache/entries")
+def api_cache_entries():
+    """GET /api/cache/entries — list cached intents (newest first, limit 100)."""
+    cache = _get_cache()
+    if not cache:
+        return jsonify([])
+    try:
+        return jsonify(cache.list_entries(limit=100))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cache/invalidate", methods=["POST"])
+def api_cache_invalidate():
+    """POST /api/cache/invalidate — remove entries similar to a given intent."""
+    body   = request.get_json(silent=True) or {}
+    intent = (body.get("intent") or "").strip()
+    if not intent:
+        return jsonify({"error": "intent is required"}), 400
+    cache = _get_cache()
+    if not cache:
+        return jsonify({"error": "cache unavailable"}), 503
+    removed = cache.invalidate(intent)
+    return jsonify({"removed": removed})
 
 
 # ---------------------------------------------------------------------------

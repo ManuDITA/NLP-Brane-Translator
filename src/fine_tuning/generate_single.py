@@ -71,8 +71,26 @@ def _get_pkg_context(intent: str) -> str:
 
 
 def generate(intent: str, model_path: str,
-             prev_script: str = "", error_feedback: str = "", attempt: int = 1) -> str:
-    """Load model, generate BraneScript for intent, return cleaned script."""
+             prev_script: str = "", error_feedback: str = "", attempt: int = 1) -> tuple[str, bool]:
+    """
+    Load model, generate BraneScript for intent, return (script, cache_hit).
+    On a cache hit the model is never loaded.
+    """
+    # ── Semantic cache lookup (skip LLM if we've seen this before) ────────────
+    _cache = None
+    try:
+        from semantic_cache import SemanticCache
+        _cache = SemanticCache()
+        hit = _cache.lookup(intent)
+        if hit and attempt == 1:          # don't cache-hit on retries
+            print(f"\n🎯 Cache hit (similarity={hit['similarity']:.4f}) — skipping LLM")
+            print(f"   Matched: {hit['intent'][:80]}")
+            return hit["branescript"], True
+    except Exception as _ce:
+        print(f"  ⚠️  Cache unavailable: {_ce}")
+        _cache = None
+    # ─────────────────────────────────────────────────────────────────────────
+
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -148,7 +166,18 @@ def generate(intent: str, model_path: str,
 
     new_tokens = output[0][inputs["input_ids"].shape[1]:]
     raw = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    return _extract_bs(raw)
+    script = _extract_bs(raw)
+
+    # ── Store in semantic cache (only on first attempt, not retries) ──────────
+    if _cache and attempt == 1:
+        try:
+            _cache.store(intent=intent, branescript=script)
+            print("  💾 Result stored in semantic cache")
+        except Exception as _ce:
+            print(f"  ⚠️  Cache store error: {_ce}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    return script, False
 
 
 def main():
@@ -184,10 +213,11 @@ def main():
         print(f"  Attempt : {attempt}")
     print(f"{'='*60}")
 
-    script = generate(args.intent, args.model,
+    script, cache_hit = generate(args.intent, args.model,
                       prev_script=prev_script, error_feedback=error_feedback, attempt=attempt)
 
-    print(f"\n✅ Generated BraneScript ({len(script)} chars):")
+    src = "cache" if cache_hit else "LLM"
+    print(f"\n✅ Generated BraneScript via {src} ({len(script)} chars):")
     print(script[:400] + ("..." if len(script) > 400 else ""))
 
     # Write job file so job_watcher.py picks it up and executes it locally

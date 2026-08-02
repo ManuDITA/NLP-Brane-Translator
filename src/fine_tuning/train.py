@@ -418,8 +418,11 @@ def _save_training_config(mode: str) -> str:
         }
 
     cfg_path = out_dir / "training_config.json"
-    with open(cfg_path, "w") as f:
-        json.dump(config, f, indent=2)
+    # Also save a timestamped copy so multiple runs don't overwrite each other
+    cfg_path_ts = out_dir / f"training_config_{run_id}.json"
+    for p in (cfg_path, cfg_path_ts):
+        with open(p, "w") as f:
+            json.dump(config, f, indent=2)
 
     print(f"\n{'─'*50}")
     print(f"  Training configuration")

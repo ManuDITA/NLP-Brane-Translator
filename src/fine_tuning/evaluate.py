@@ -507,14 +507,32 @@ def evaluate(model_path: str, adapter_path: str | None = None,
         if i % CHECKPOINT_EVERY == 0:
             _write_checkpoint(ckpt_path, model_label, results, i, total)
 
+    # ── Embed training config if available ───────────────────────────────────
+    training_cfg = None
+    mp = Path(model_path)
+    slug_tc = mp.name.replace("output_merged_", "")
+    for _candidate in [
+        mp.parent / f"output_{slug_tc}",
+        mp.parent / f"output_{slug_tc}_grpo",
+        mp,
+    ]:
+        _cfg = _candidate / "training_config.json"
+        if _cfg.exists():
+            try:
+                training_cfg = json.loads(_cfg.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            break
+
     # ── Build final metrics dict ──────────────────────────────────────────────
     metrics: dict = {
-        "model":        model_label,
-        "model_path":   model_path,
-        "adapter_path": adapter_path,
-        "total":        len(results),
-        "timestamp":    datetime.now(timezone.utc).isoformat(),
-        "examples":     results,
+        "model":           model_label,
+        "model_path":      model_path,
+        "adapter_path":    adapter_path,
+        "training_config": training_cfg,
+        "total":           len(results),
+        "timestamp":       datetime.now(timezone.utc).isoformat(),
+        "examples":        results,
     }
 
     if generate_only:
