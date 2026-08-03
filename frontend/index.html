@@ -1809,8 +1809,8 @@ const _evalTrainingConfigs = {};
 function renderEvalCmpTable(summaries) {
   const wrap = document.getElementById('eval-cmp-wrap');
   const rows = summaries.map(s => {
-    // Cache training config for click handler
-    if (s.training_config) _evalTrainingConfigs[s.slug] = { config: s.training_config, model: s.model, model_path: s.model_path };
+    // Cache info for click handler (always, even without training_config)
+    _evalTrainingConfigs[s.slug] = { config: s.training_config, model: s.model, model_path: s.model_path };
 
     const tc = evalTagClass(s.model || '');
     const cr = s.compile_rate      != null
@@ -1819,14 +1819,24 @@ function renderEvalCmpTable(summaries) {
     const er = s.execution_rate    != null
       ? `<span class="metric-val ${evalMetricClass(s.execution_rate)}">${s.execution_rate}%</span>`
       : '<span class="metric-val none">—</span>';
-    const mr = s.output_match_rate != null
-      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}"
-              title="Overall output match rate (stdout + committed datasets)"
-            >${s.output_match_rate}%</span>
-         <span style="color:var(--muted);font-size:11px"
-               title="${s.output_match_n} scripts had a reference output to compare against"
-             > /${s.output_match_n} with ref</span>`
-      : '<span class="metric-val none">—</span>';
+    const mr = s.output_match_rate_total != null
+      ? `<span class="metric-val ${evalMetricClass(s.output_match_rate_total)}"
+              title="Output match rate over ALL scripts (matched / total)"
+            >${s.output_match_rate_total}%</span>`
+         + (s.output_match_rate != null
+            ? `<span style="color:var(--muted);font-size:11px"
+                     title="${s.output_match_n} scripts had a reference output; ${s.output_match_rate}% of those matched">
+                 &nbsp;(${s.output_match_rate}% of ${s.output_match_n} refs)
+               </span>`
+            : '')
+      : (s.output_match_rate != null
+          ? `<span class="metric-val ${evalMetricClass(s.output_match_rate)}"
+                  title="Output match rate (of scripts with reference output)"
+                >${s.output_match_rate}%</span>
+             <span style="color:var(--muted);font-size:11px"
+                   title="${s.output_match_n} scripts had a reference output to compare against"
+                 > /${s.output_match_n} with ref</span>`
+          : '<span class="metric-val none">—</span>');
     const cmr = s.committed_match_rate != null
       ? `<span class="metric-val ${evalMetricClass(s.committed_match_rate)}"
               title="% of executed scripts whose committed datasets match the reference"
@@ -1836,7 +1846,7 @@ function renderEvalCmpTable(summaries) {
     const ts = s.timestamp ? relativeTime(s.timestamp) : '—';
 
     // If training config available, make model tag clickable with info icon
-    const hasConfig = !!s.training_config;
+    const hasConfig = true;  // always clickable — modal shows model info even without training config
     const labelEl = hasConfig
       ? `<span class="model-label-tag ${tc} tc-clickable" onclick="openTcModal('${escHtml(s.slug)}')" title="Click to see training parameters">
            ${escHtml(s.model || s.slug)}<span class="tc-info-icon">⚙</span>
@@ -1892,22 +1902,28 @@ function openTcModal(slug) {
     run_id: 'Run ID', timestamp: 'Trained at', output_dir: 'Output dir',
   };
 
-  const rows = Object.entries(config)
-    .filter(([k]) => k !== 'output_dir' || true)
-    .map(([k, v]) => {
-      const label = labels[k] || k;
-      let val = v;
-      if (k === 'timestamp' && v) val = new Date(v).toLocaleString();
-      if (k === 'learning_rate') val = Number(v).toExponential(2);
-      return `<tr>
-        <td style="padding:6px 10px 6px 0;color:var(--muted);font-size:12px;white-space:nowrap;vertical-align:top">${escHtml(label)}</td>
-        <td style="padding:6px 0 6px 10px;font-size:13px;font-family:var(--font-mono);word-break:break-all">${escHtml(String(v ?? '—'))}</td>
-      </tr>`;
-    }).join('');
+  let bodyHtml;
+  if (config && typeof config === 'object' && Object.keys(config).length > 0) {
+    const rows = Object.entries(config)
+      .map(([k, v]) => {
+        const label = labels[k] || k;
+        let val = v;
+        if (k === 'timestamp' && v) val = new Date(v).toLocaleString();
+        if (k === 'learning_rate') val = Number(v).toExponential(2);
+        return `<tr>
+          <td style="padding:6px 10px 6px 0;color:var(--muted);font-size:12px;white-space:nowrap;vertical-align:top">${escHtml(label)}</td>
+          <td style="padding:6px 0 6px 10px;font-size:13px;font-family:var(--font-mono);word-break:break-all">${escHtml(String(v ?? '—'))}</td>
+        </tr>`;
+      }).join('');
+    bodyHtml = `<table style="width:100%;border-collapse:collapse">${rows}</table>`;
+  } else {
+    bodyHtml = `<p style="color:var(--muted);font-size:13px;padding:12px 0">
+      No training configuration available for this run.<br>
+      <span style="font-size:12px">Model path: <code>${escHtml(model_path || '—')}</code></span>
+    </p>`;
+  }
 
-  document.getElementById('tc-modal-body').innerHTML =
-    `<table style="width:100%;border-collapse:collapse">${rows}</table>`;
-
+  document.getElementById('tc-modal-body').innerHTML = bodyHtml;
   document.getElementById('tc-modal-overlay').style.display = 'flex';
 }
 

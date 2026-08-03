@@ -378,11 +378,59 @@ vs July 27 baselines:
 
 The 37.9% → 94.8% jump for 27B is entirely attributable to infrastructure fixes (prompt, RAG, output cleaning), not model training. **This is a significant thesis finding**: RAG quality + prompt engineering has a larger impact than model size.
 
-### M10.2 — SFT Model Evaluation
-First SFT model evaluated:
-- Qwen3.5-9B SFT: 56.8% compile, 1.4% execution
-- Low execution rate likely indicates Brane was not running during the local execution phase
-- Demonstrates the importance of running `process_snellius.py` with Brane active
+### M10.2 — SFT Model Evaluation (First Round)
+First SFT model evaluated with old system prompt (before fixes):
+- Qwen3.5-9B SFT: **56.8% compile, 49.5% execution**
+- Regression vs base (63.4% exec): caused by system prompt mismatch — SFT was trained on the old prompt but evaluated with the new prompt
+- Demonstrates importance of consistent prompt formatting between training and inference
+
+### M10.3 — Dataset Deduplication Fix
+Audited all training data sources and removed 74 duplicate intents:
+- 1316 raw examples across 9 source files → 584 unique intents after deduplication
+- Priority order for keeping duplicates: `packages.jsonl` > `genomics.jsonl` > `healthcare.jsonl` > `advanced.jsonl` > `basic.jsonl` > `control_flow.jsonl` > `functions.jsonl` > `classes_arrays.jsonl` > `training_500.jsonl`
+- 74 examples removed from `training_500.jsonl` (overlapped with higher-priority files)
+- Rebuilt train/val splits: **497 train / 87 val** (was 560/98)
+- Removed runtime dedup check from `populate_cache.py` (threshold 0.99 was incorrectly skipping valid unique examples)
+
+### M10.4 — New SFT Models Trained (ep5, correct prompt)
+Two new LoRA fine-tunes submitted on Snellius after dedup and prompt fixes:
+- `qwen3.5-9b-ep5`: Qwen/Qwen3.5-9B, 5 epochs, LoRA r=16
+- `qwen3.6-27b-ep5`: Qwen/Qwen3.6-27B, 5 epochs, LoRA r=16
+- Merged adapters available at `outputs/models/qwen3.5-9b-ep5/` and `outputs/models/qwen3.6-27b-ep5/`
+- Evaluation results pending
+
+### M10.5 — Semantic Cache Benchmark: Full Threshold Sweep
+Optimised the sweep from 15,792 ChromaDB queries (8 thresholds × 1974 queries) down to **1974 queries** by querying once at threshold=0.0 and applying thresholds as a post-filter. Saves incrementally after each threshold.
+
+**Embedding model**: `sentence-transformers/all-MiniLM-L6-v2` (384-dim, BERT-based, cosine similarity)
+**Dataset**: 584 unique intents in cache, ~1974 paraphrases (3 per intent) as test queries
+
+#### Cache Sweep Results (August 2, 2026)
+
+| Threshold | Hit%   | Correct% | FP%  | Interpretation |
+|-----------|--------|----------|------|----------------|
+| 0.80      | 100.0% | 99.1%    | 0.9% | Maximum recall; FP already near floor |
+| 0.85      | 100.0% | 99.1%    | 0.9% | No benefit over 0.80 |
+| 0.88      | 99.9%  | 99.0%    | 0.9% | Negligible hit loss, same FP |
+| **0.90**  | **99.7%** | **98.9%** | **0.9%** | **Near-optimal operating point** |
+| **0.92** *(default)* | **99.1%** | **98.3%** | **0.8%** | **Current default — good trade-off** |
+| 0.94      | 96.2%  | 95.4%    | 0.8% | Drops 3% hit for no FP gain |
+| 0.96      | 88.1%  | 87.5%    | 0.6% | Significant hit loss |
+| 0.98      | 59.1%  | 59.1%    | 0.1% | Too conservative — 40% cache misses |
+
+**Key finding**: The **~0.9% irreducible FP floor** is a fundamental property of sentence embeddings, not a tuning issue. Intents that differ only by a parameter value (e.g., `per 100,000` vs `per 200,000`, `height` vs `weight`) embed at cosine similarity >0.97 — the embedding model encodes propositional meaning, not specific values. No threshold can eliminate these FPs without also losing valid hits.
+
+**Recommendation**: Keep default threshold at **0.92**. Lowering to 0.88 gives full hit rate with identical FP cost.
+
+**Thesis significance**: This is a novel empirical finding about the limitations of semantic caching for scientific computing. Discussed in the evaluation and discussion chapters.
+
+### M10.6 — Thesis Introduction and Background Written
+First two thesis chapters drafted from the literature study:
+
+- **Chapter 1 (Introduction)**: Motivation (cognitive overhead of WMSs), problem statement, 4 research questions (RQ1–RQ4), 5 contributions, thesis structure
+- **Chapter 2 (Background)**: Scientific WMSs (Pegasus, Nextflow, Snakemake, Galaxy, CWL), W3C PROV-DM, FAIR workflows, intent-based orchestration + 5 literature gaps (G1–G5), LLMs in scientific computing (RAG, ControlA), Brane + BraneScript
+- References added: 13 new BibTeX entries covering all cited works
+- PDF builds cleanly: 43 pages
 
 ---
 
@@ -391,20 +439,21 @@ First SFT model evaluated:
 | Component | Status |
 |---|---|
 | Brane packages | 7 packages, all functional |
-| Training data | 658 examples, 658/658 passing, 0 timestamps |
-| Train/Val split | 560 train / 98 val |
+| Training data | **584 unique examples** (deduplicated from 658), all passing, 0 timestamps |
+| Train/Val split | **497 train / 87 val** |
 | Paraphrases | ~1974 examples generated (3 per intent) |
 | RAG system | 91 per-function chunks, aliases, "Use when" hints |
-| Baseline evaluation | 3 models × 2 rounds; best: 94.8% execution (27B) |
-| SFT training | Completed for 4B, 9B, 27B; adapters on Snellius |
-| Merged models | output_merged_qwen3.5-4b/9b/27b on Snellius |
-| SFT evaluation | In progress (after merge jobs complete) |
+| Baseline evaluation | 3 models × 2 rounds; best: **94.8% execution (27B base)** |
+| SFT training (round 1) | 9B SFT: 56.8% compile, 49.5% exec (prompt mismatch regression) |
+| SFT training (round 2) | **qwen3.5-9b-ep5, qwen3.6-27b-ep5** trained; evaluation pending |
+| Merged models | `outputs/models/qwen3.5-9b-ep5/`, `outputs/models/qwen3.6-27b-ep5/` on Snellius |
 | GRPO training | Infrastructure ready; not yet run |
-| Semantic cache | Implemented; populated from training data |
-| Cache benchmark | Script ready; paraphrases generated |
+| Semantic cache | **584 examples cached; threshold=0.92** |
+| Cache benchmark | ✅ **Complete** — full threshold sweep, results above |
+| Cache optimal threshold | **0.92** (99.1% hit, 98.3% correct, 0.8% FP) |
 | Training metrics | Loss curves saved per model; plottable |
 | Frontend | 5 tabs: Results, Exec Results, Evaluation, Runs, Generate |
-| Thesis LaTeX | Skeleton in repo, ready for content |
+| Thesis LaTeX | **Introduction + Background written** (43 pages) |
 
 ---
 

@@ -1,10 +1,128 @@
 \chapter{Introduction}\label{s:intro}
 
-\todo{
-This section includes some motivations behind the work, explicitly or implicitly
-highlights the research question, provides a high-level explanation of the
-solution, and describes the contributions.
-}
+\section{Motivation}
+
+Scientific computing increasingly depends on complex, multi-step computational
+workflows: data must be fetched, cleaned, analysed, and interpreted, often
+across heterogeneous compute infrastructure. Workflow Management Systems (WMSs)
+such as Pegasus~\cite{deelman2015pegasus}, Nextflow~\cite{di2017nextflow}, and
+Snakemake~\cite{molder2021snakemake} have become indispensable in fields like
+genomics, epidemiology, and climate science precisely because they automate
+resource allocation, fault recovery, and execution ordering. Yet, despite their
+maturity, these systems impose a heavy cognitive cost on scientists. To express
+even a straightforward intent---``compute GC content for sequence
+ATGCGATCG''---a researcher must first understand the WMS's execution model,
+write a domain-specific language (DSL) script that explicitly enumerates every
+computational step, declare data dependencies as a directed acyclic graph (DAG),
+and then debug execution failures at the infrastructure level rather than the
+scientific level.
+
+This mismatch between \emph{scientific intent} and \emph{workflow specification}
+has been recognised as a fundamental barrier to reproducible science. Scientists
+spend substantial effort debugging YAML configurations and DAG topologies instead
+of advancing research questions. The cognitive overhead compounds further in
+distributed settings, where data locality, containerisation, and security
+policies add additional layers of complexity to what should be a simple
+computational request.
+
+Recent advances in Large Language Models (LLMs) open a new possibility: a
+researcher could describe a computational task in plain language, and an
+intelligent system could automatically translate that natural-language intent
+into a runnable workflow. This vision---\emph{intent-based orchestration}---has
+attracted growing interest in the systems and HPC communities. However, existing
+approaches remain incomplete. Systems that accept natural language either
+generate generic code that cannot be executed in a target WMS environment, or
+they lack the formal provenance guarantees required for reproducible science.
+Conversely, WMSs that provide strong reproducibility have no mechanism for
+accepting high-level declarative intent.
+
+The gap is thus precise and actionable: no system currently bridges declarative,
+natural-language intent expression with the rigorous, provenance-tracked
+execution guarantees of a production WMS.
+
+\section{Problem Statement}
+
+This thesis addresses the following core problem: given a scientific computing
+infrastructure based on Brane---a distributed WMS designed for federated,
+privacy-sensitive data analysis---how can a researcher specify computational
+tasks in natural language and reliably obtain correct, reproducible workflow
+executions?
+
+The problem decomposes into several interacting challenges. First, natural
+language is inherently ambiguous: the same scientific intent can be expressed
+in many ways, and different phrasings should produce semantically equivalent
+workflows. Second, Brane workflows are expressed in BraneScript, a typed DSL
+with strict package invocation semantics; translation errors produce workflows
+that either fail to compile or silently return incorrect results. Third,
+scientific workflows require reproducibility: the same intent must produce the
+same execution trace across reruns and across different sessions.
+
+Addressing these challenges requires not only a translation mechanism from
+natural language to BraneScript, but also a retrieval mechanism to ground
+translation in available package capabilities, and a caching mechanism to
+avoid redundant LLM calls for repeated or semantically equivalent intents.
+
+\section{Research Questions}
+
+This thesis investigates the following research questions:
+
+\begin{enumerate}
+    \item[\textbf{RQ1}] To what extent can LLMs translate natural-language
+        scientific intents into syntactically and semantically correct
+        BraneScript workflows?
+    \item[\textbf{RQ2}] How does Retrieval-Augmented Generation (RAG) with
+        package-aware context affect translation accuracy compared to a
+        zero-shot baseline?
+    \item[\textbf{RQ3}] How does supervised fine-tuning (SFT) on domain-specific
+        BraneScript examples affect translation accuracy and generalisation?
+    \item[\textbf{RQ4}] Can semantic caching effectively serve as a
+        reproducibility layer for intent-based orchestration, and what are its
+        fundamental limitations for scientific computing?
+\end{enumerate}
+
+\section{Contributions}
+
+This thesis makes the following contributions:
+
+\begin{enumerate}
+    \item \textbf{NLP-to-BraneScript Translator.} A complete pipeline that
+        accepts a natural-language scientific intent and produces a runnable
+        BraneScript workflow via an LLM, with RAG-based package context retrieval
+        using ChromaDB.
+
+    \item \textbf{Curated BraneScript Dataset.} A dataset of 584 unique
+        intent--BraneScript pairs spanning seven scientific domains (healthcare,
+        genomics, epidemiology, statistics, text analysis, data masking, and
+        datetime), constructed with explicit deduplication and diversity criteria.
+
+    \item \textbf{Fine-Tuned Models.} Supervised fine-tuning experiments on
+        Qwen3.5-9B and Qwen3.6-27B using LoRA, evaluated against base model
+        baselines on BraneScript compilation and execution correctness.
+
+    \item \textbf{Semantic Cache for Reproducible Orchestration.} A
+        ChromaDB-backed semantic cache that maps intent embeddings to previously
+        generated BraneScript workflows, enabling sub-millisecond response for
+        repeated or paraphrased intents, with a benchmarked threshold sweep for
+        precision--recall trade-off analysis.
+
+    \item \textbf{Empirical Evaluation.} A systematic evaluation of model size,
+        RAG depth, and caching threshold, yielding practical guidance on deploying
+        LLM-based intent translators in production scientific computing
+        environments.
+\end{enumerate}
+
+\section{Thesis Structure}
+
+The remainder of this thesis is organised as follows. Chapter~\ref{s:background}
+provides background on scientific workflow systems, provenance, intent-based
+orchestration, and LLMs in scientific computing. Chapter~\ref{s:overview}
+presents a high-level architecture of the proposed system. Chapter~\ref{s:design}
+describes the design decisions. Chapter~\ref{s:implementation} details the
+implementation. Chapter~\ref{s:evaluation} reports the empirical results.
+Chapter~\ref{s:discussion} interprets the results in the context of the research
+questions. Chapter~\ref{sec:threats} discusses threats to validity.
+Chapter~\ref{s:related} surveys related work, and Chapter~\ref{s:conclusion}
+concludes with future directions.
 
 
 
