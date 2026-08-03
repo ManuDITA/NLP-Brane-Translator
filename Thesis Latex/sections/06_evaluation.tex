@@ -1,12 +1,163 @@
 \chapter{Evaluation}\label{s:evaluation}
 
+This chapter reports the empirical results used to answer RQ1--RQ4
+(Chapter~\ref{s:intro}). All experiments use the metrics defined in
+Chapter~\ref{s:implementation}: \emph{compile rate}, \emph{execution rate},
+and \emph{output match rate}.
 
-\todo{
-Discuss the design of your experiments, the results you obtained, and how they
-help in evaluating the claims you made in the introduction. You may also use the
-evaluation results in this section to justify your design choices or assess the
-contributions of different aspects  of your design towards the overall goals.
-}
+\section{Experimental Setup}
+
+\textbf{Dataset.} 584 unique intent--BraneScript pairs (deduplicated from
+1316 raw examples authored across nine source files, after removing 74
+duplicates using a fixed file-priority order, Chapter~\ref{s:design}), split
+into 497 training and 87 validation examples. An additional 1974 paraphrases
+(three per intent) were generated for the semantic cache evaluation
+(Section~\ref{s:eval-cache}).
+
+\textbf{Models.} Three base models are evaluated: Qwen3.5-4B, Qwen3.5-9B, and
+Qwen3.6-27B, all served without fine-tuning as a baseline, and with LoRA-based
+supervised fine-tuning (Chapter~\ref{s:design}) for the two larger sizes.
+
+\textbf{Hardware.} All generation and training runs execute on Snellius
+(Dutch national HPC facility) H100 GPU nodes, submitted via SLURM.
+
+\section{RQ1/RQ2: Translation Accuracy and the Effect of RAG and Prompt Engineering}
+
+An initial evaluation round (27 July) established baseline compile/execution
+rates for all three base models with an early version of the system prompt and
+retrieval configuration:
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Model} & \textbf{Execution rate} & \textbf{Output match} & \textbf{Comparable $n$} \\
+\hline
+Qwen3.6-27B (base) & 37.9\% & 40.3\% & 196 \\
+Qwen3.5-9B (base)  & 20.9\% & 28.0\% & 107 \\
+Qwen3.5-4B (base)  & 5.5\%  & 58.1\% & 31 \\
+\hline
+\end{tabular}
+\caption{Baseline execution and output-match rates, 27 July evaluation round.}
+\label{tab:baseline-july}
+\end{table}
+
+After diagnosing several infrastructure issues --- an system prompt that
+permitted empty-string arguments and under-specified \texttt{commit\_result}
+semantics, insufficiently precise RAG package aliases, and generation output
+that was not being cleaned of stray formatting tokens --- the same three base
+models were re-evaluated with a corrected prompt and retrieval configuration
+(1 August), without any change to model weights:
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Model} & \textbf{Compile rate} & \textbf{Execution rate} & \textbf{Output match} \\
+\hline
+Qwen3.6-27B (base) & 94.8\% & 92.7\% & 56.5\% \\
+Qwen3.5-9B (base)  & 64.5\% & 63.4\% & --- \\
+Qwen3.5-4B (base)  & 57.0\% & 55.4\% & --- \\
+\hline
+\end{tabular}
+\caption{Baseline compile/execution rates after prompt and RAG fixes, 1 August evaluation round.}
+\label{tab:baseline-august}
+\end{table}
+
+The execution rate of the 27B model rises from 37.9\% to 92.7\% between the
+two rounds, using identical model weights. This is the central finding for
+RQ1/RQ2: for this task, RAG quality and prompt correctness have a larger
+effect on translation accuracy than model scale, and a meaningful fraction of
+what initially appears as a model-capability limitation is in fact an
+engineering and grounding problem. This directly supports the addressal of gap
+G2 (Chapter~\ref{s:background}): providing precise, package-grounded context is
+necessary for a general-purpose LLM to reliably target a DSL absent from its
+pre-training data.
+
+\section{RQ3: Effect of Supervised Fine-Tuning}
+
+A first SFT model (Qwen3.5-9B, fine-tuned on the pre-deduplication 560/98
+split with the earlier system prompt) was evaluated using the corrected
+(1~August) evaluation prompt, and achieved 56.8\% compile rate and 49.5\%
+execution rate --- a regression relative to the corresponding 63.4\% execution
+rate of the un-tuned base model under the same prompt. The cause was traced to
+a mismatch between the prompt format used during training and the prompt
+format used at evaluation time: the model had specialised to the training-time
+prompt's conventions, which no longer matched the corrected evaluation prompt.
+This is itself a substantive finding for RQ3: fine-tuning gains are contingent
+on strict consistency between the training and inference prompt format, and a
+prompt change invalidates previously fine-tuned models unless they are
+retrained against the new prompt.
+
+Following the dataset deduplication (497/87 split, Section~\ref{s:design}) and
+the prompt fix, two new LoRA fine-tunes were trained for five epochs each
+(\texttt{qwen3.5-9b-ep5}, \texttt{qwen3.6-27b-ep5}) against the corrected
+prompt.
+
+\todo{Evaluation of \texttt{qwen3.5-9b-ep5} and \texttt{qwen3.6-27b-ep5} under
+the corrected prompt was still pending at the time of writing. This section
+will be updated with compile/execution/output-match rates for both models,
+and a direct comparison against the corresponding base-model rows in
+Table~\ref{tab:baseline-august}, once training metrics
+(Figure~\ref{fig:loss-curves}) confirm convergence.}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{qwen3.5-9b-ep5_loss_curves.png}
+    \caption{Training and validation loss over steps for the \texttt{qwen3.5-9b-ep5} fine-tuning run.}
+    \label{fig:loss-curves}
+\end{figure}
+
+\section{RQ4: Semantic Cache as a Reproducibility Layer}\label{s:eval-cache}
+
+The semantic cache was seeded with all 584 unique training intents and their
+reference BraneScript, then queried with the 1974 paraphrases across eight
+candidate similarity thresholds (Chapter~\ref{s:implementation}).
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Threshold} & \textbf{Hit rate} & \textbf{Correct rate} & \textbf{False-positive rate} \\
+\hline
+0.80 & 100.0\% & 99.1\% & 0.9\% \\
+0.85 & 100.0\% & 99.1\% & 0.9\% \\
+0.88 & 99.9\%  & 99.0\% & 0.9\% \\
+0.90 & 99.7\%  & 98.9\% & 0.9\% \\
+0.92 (default) & 99.1\% & 98.3\% & 0.8\% \\
+0.94 & 96.2\%  & 95.4\% & 0.8\% \\
+0.96 & 88.1\%  & 87.5\% & 0.6\% \\
+0.98 & 59.1\%  & 59.1\% & 0.1\% \\
+\hline
+\end{tabular}
+\caption{Semantic cache threshold sweep over 1974 paraphrased intents (2 August evaluation round).}
+\label{tab:cache-sweep}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{cache_sweep.png}
+    \caption{Cache hit rate and correctness as a function of the similarity threshold.}
+    \label{fig:cache-sweep}
+\end{figure}
+
+Two observations follow directly from Table~\ref{tab:cache-sweep}. First, the
+false-positive rate never drops below approximately 0.9\% regardless of how
+conservative the threshold is set, until the threshold becomes so high
+(0.98) that hit rate collapses to 59.1\%; lowering the threshold below the
+default 0.92 (down to 0.88) yields a strictly better hit rate at effectively
+the same false-positive cost. Second, manual inspection of the residual false
+positives shows they are dominated by intent pairs that differ only in a
+specific parameter value (e.g., a numeric threshold such as ``per 100,000''
+vs.\ ``per 200,000'', or a swapped column name such as ``height'' vs.\
+``weight''), which the \texttt{all-MiniLM-L6-v2} embedding model places at
+cosine similarity above 0.97 because it encodes propositional meaning rather
+than exact parameter values. This is a direct empirical illustration of the
+tension noted in Chapter~\ref{s:background}: no similarity threshold can
+eliminate this class of false positive without also discarding a large
+fraction of valid hits, because the two failure modes share the same
+underlying cause. This result is discussed further, together with its
+implications for gap G3, in Chapter~\ref{s:discussion}.
 
 
 

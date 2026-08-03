@@ -1,7 +1,158 @@
 \chapter{Implementation}\label{s:implementation}
 
+This chapter details how the design decisions of Chapter~\ref{s:design} are
+realised in code. It follows the same component breakdown introduced in
+Chapter~\ref{s:overview}.
 
-This section presents important implementation details.
+\section{Pipeline Orchestrator}
+
+The orchestrator (\texttt{src/pipeline.py}) implements \texttt{run\_pipeline()},
+which loops over the generation--validation--execution cycle described in
+Chapter~\ref{s:overview} for at most \texttt{MAX\_RETRIES}~$=3$ attempts. Key
+functions include \texttt{check\_syntax()}, which invokes the Brane compiler on
+the candidate script and returns a boolean success flag with the compiler's
+error message; \texttt{check\_semantic()}, which validates function and
+argument usage against the retrieved package context before execution is
+attempted; and \texttt{execute\_workflow()}, which submits the compiled
+workflow to the Brane runtime and captures \texttt{stdout}, \texttt{stderr}, and
+the exit code. Ambiguous intents are detected via
+\texttt{is\_clarification\_request()} and handled by
+\texttt{ask\_for\_clarification()}, which returns a question to the user
+instead of attempting generation. Successful workflows are persisted with
+\texttt{save\_branescript\_to\_folder()} for later inspection and reuse as
+training or cache-seeding data. \texttt{build\_pipeline\_components()}
+initialises the embedding model
+(\texttt{sentence-transformers/all-MiniLM-L6-v2}) and the two ChromaDB
+retrievers shared across a pipeline run.
+
+\section{Knowledge Base and Retrieval}
+
+\texttt{src/knowledgeBase.py} builds and queries the two vector stores
+introduced in Section~\ref{s:design}. Package specifications
+(\texttt{container.yml} files) are parsed and exploded into per-function
+\texttt{Document} chunks, each annotated with the owning package name and a
+short usage hint, and embedded via LangChain's \texttt{HuggingFaceEmbeddings}
+wrapper around \texttt{all-MiniLM-L6-v2}. The \texttt{PACKAGE\_ALIASES}
+dictionary maps domain vocabulary to package identifiers and is consulted
+before falling back to similarity search, implementing the hybrid retrieval
+strategy described in Chapter~\ref{s:design}.
+
+\section{Brane Packages}
+
+Seven packages are implemented under \texttt{packages/}:
+\texttt{healthcare}, \texttt{genomics}, \texttt{epidemics},
+\texttt{statistics}, \texttt{text\_analysis}, \texttt{data\_masking}, and
+\texttt{datetime}. Each package follows a common dispatch convention: the
+container's entry point reads the invoked function name from
+\texttt{sys.argv[1]} (declared in the package's \texttt{command.args}
+specification), rather than relying on environment variables, and routes to
+the corresponding Python function. Structured return values are serialised as
+tagged class instances (\texttt{["ClassName", \{...\}]}), consistent with the
+typed data representation decision in Chapter~\ref{s:design}. Package images
+are built with \texttt{docker buildx build}, extending a common base image;
+the standard \texttt{brane package build} command was found to break functions
+that return an \texttt{IntermediateResult}, so the Docker-based build path is
+used for all seven packages instead.
+
+\section{Fine-Tuning Infrastructure}
+
+\texttt{src/fine\_tuning/train.py} implements supervised fine-tuning (SFT) and
+provisions Group Relative Policy Optimisation (GRPO) as a subsequent stage.
+Default SFT hyperparameters are LoRA rank~16 (alpha~32), 3 epochs, batch
+size~2 with gradient accumulation~4 (effective batch size~8), learning rate
+$2\times10^{-4}$ with a cosine schedule, using 4-bit quantisation through
+Unsloth where available, with a plain Hugging Face/PEFT fallback otherwise. A
+\texttt{DataCollatorForCompletionOnlyLM}/\texttt{train\_on\_responses\_only()}
+path implements the response-only loss masking described in
+Chapter~\ref{s:design}. Training runs on Snellius H100 GPUs via
+\texttt{sbatch\_finetune.sh}; a \texttt{MetricsCallback} logs loss, gradient
+norm, learning rate, and epoch to
+\texttt{outputs/metrics/\textit{model}\_training\_metrics.jsonl} after every
+step, and \texttt{\_save\_training\_config()} records the full hyperparameter
+set alongside the resulting adapter, so that multiple SFT runs against the
+same base model remain distinguishable.
+
+\texttt{src/fine\_tuning/evaluate.py} computes the three metrics used
+throughout Chapter~\ref{s:evaluation}: \emph{compile rate} (the fraction of
+generated scripts accepted by the Brane compiler), \emph{execution rate} (the
+fraction that run to completion with exit code~0), and \emph{output match
+rate} (the fraction of executed scripts, among those with a stored reference
+output, whose \texttt{stdout} matches the reference exactly). The script
+embeds the corresponding \texttt{training\_config.json} into each evaluation
+result file, which lets the dashboard (Section~\ref{ss:frontend}) distinguish
+between multiple SFT runs of the same base model without additional
+bookkeeping.
+
+\section{Semantic Cache}
+
+\texttt{src/semantic\_cache.py} implements the \texttt{SemanticCache} class
+described in Chapter~\ref{s:design}, backed by a ChromaDB collection
+(\texttt{brane\_pkg\_db/intent\_cache}) with a default similarity threshold
+\texttt{DEFAULT\_THRESHOLD}~$=0.92$. Its public interface consists of
+\texttt{lookup(intent)} (cosine similarity search, returning the cached
+BraneScript above threshold or \texttt{None}), \texttt{store(intent,
+branescript)}, \texttt{invalidate(intent)} (removing stale entries matching an
+intent), and \texttt{stats()}/\texttt{list\_entries()} for inspection. The
+cache is seeded with all 584 unique training intents and their reference
+BraneScript by \texttt{scripts/populate\_cache.py}, and is consulted by
+\texttt{generate\_single.py} before the LLM is loaded, so that a cache hit
+avoids model-loading and inference cost entirely, in line with the
+progressive-trust ordering.
+
+\subsection{Cache Evaluation Harness}
+
+\texttt{scripts/generate\_paraphrases.py} produces semantically equivalent
+rewordings of each training intent (three per intent, targeting 1974
+paraphrases total) using an LLM (Qwen3.5-4B by default), via the
+\texttt{sbatch\_paraphrase.sh} SLURM wrapper. \texttt{scripts/test\_cache\_lookup.py}
+then benchmarks cache behaviour by seeding the cache with the original
+intents and querying it with the paraphrases, reporting: \emph{hit rate} (the
+fraction of paraphrases that retrieve any entry above threshold),
+\emph{correct rate} (the fraction retrieving the exact reference script),
+\emph{fuzzy correct rate} (the fraction retrieving a script with Jaccard
+bigram similarity $\geq 0.95$ after whitespace/comment normalisation), and
+\emph{false-positive rate} (the fraction of hits that return the wrong
+script). Its \texttt{--sweep} mode evaluates eight thresholds
+($0.80$--$0.98$); the implementation queries the cache once per paraphrase at
+threshold $0$ and applies each candidate threshold as a post-hoc filter on the
+returned similarity scores, reducing the sweep from $8 \times 1974 = 15{,}792$
+ChromaDB queries to $1974$.
+
+\section{Dashboard}\label{ss:frontend}
+
+The dashboard (\texttt{frontend/}, served by \texttt{server.py}) exposes five
+tabs: \emph{Results} and \emph{Exec Results} (static views over prior
+evaluation runs), \emph{Evaluation} (a model-comparison table with a modal
+showing full training hyperparameters per model, reading the embedded
+\texttt{training\_config}), \emph{Runs} (completed interactive generation
+jobs), and \emph{Generate} (interactive pipeline invocation). The Generate tab
+submits a SLURM job to Snellius over SSH for a user-supplied intent and
+selected model, polling a file-based job queue for status
+(Queued~$\rightarrow$~Generating~$\rightarrow$~Executing~$\rightarrow$~Done)
+and rendering the resulting BraneScript, execution output, and any errors in a
+job card. Failed attempts are automatically retried up to
+\texttt{MAX\_GENERATE\_RETRIES}~$=3$ times: on failure, the previous script and
+its error are written to a context file on Snellius and injected into the next
+generation attempt's prompt by \texttt{generate\_single.py}, mirroring the
+error-feedback design of the core pipeline (Chapter~\ref{s:design}) at the
+level of the interactive dashboard. Cache inspection endpoints
+(\texttt{/api/cache/stats}, \texttt{/api/cache/entries},
+\texttt{/api/cache/invalidate}) expose the semantic cache's state directly to
+the dashboard.
+
+\section{Infrastructure}
+
+A single entry-point script, \texttt{start.sh}, starts, restarts, and stops
+the local services (job watcher and dashboard), writing PIDs to
+\texttt{outputs/logs/} and performing a post-start health check. All run
+artefacts are consolidated under \texttt{outputs/}, with dedicated
+subdirectories for LoRA adapters and merged weights
+(\texttt{outputs/models/}), evaluation results (\texttt{outputs/eval/}),
+training metrics and plots (\texttt{outputs/metrics/}), figures
+(\texttt{outputs/figures/}), pipeline results
+(\texttt{outputs/pipeline/results/}), generated BraneScript
+(\texttt{outputs/branescripts/}), and logs (\texttt{outputs/logs/}), replacing
+an earlier, less structured \texttt{output\_snellius/} layout.
 
 
 

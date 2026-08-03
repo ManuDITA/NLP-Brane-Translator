@@ -1,12 +1,131 @@
 \chapter{Overview}\label{s:overview}
 
+This chapter presents the system built to address the problem stated in
+Chapter~\ref{s:intro}: translating a natural-language scientific intent into a
+correct, executable BraneScript workflow. We describe the system from the
+perspective of a user submitting an intent, then walk through the pipeline
+stages that turn that intent into a validated, executed workflow.
 
-\todo{
-This section provides a high-level outline of the proposed system or solution.
-It typically illustrates the system architecture or the interactions between the
-different solution components (via a “boxes-and-arrows” diagram) from a user’s
-perspective.
-}
+\section{User Perspective}
 
+A researcher interacts with the system by submitting a single natural-language
+sentence, for example: \emph{``I want to analyse all heart-disease data using
+package Healthcare''}. No knowledge of BraneScript syntax, package function
+signatures, or Brane's execution model is required. The system returns one of
+three outcomes: (1)~a BraneScript workflow together with its execution result,
+(2)~a clarification question if the intent is ambiguous or underspecified
+(e.g., no target dataset is named), or (3)~a final failure report after
+repeated generation attempts could not produce a working workflow.
 
+This interaction is available through two entry points that share the same
+underlying pipeline: a command-line invocation of \texttt{pipeline.py}, and the
+``Generate'' tab of the project's web dashboard, which submits the same request
+as a batch job on the Snellius HPC cluster and streams back progress and results
+(Section~\ref{s:implementation}).
+
+\section{System Architecture}
+
+Figure~\ref{fig:pipeline-architecture} shows the end-to-end architecture of the
+system, from intent to executed workflow.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{pipeline_architecture.png}
+    \caption{End-to-end architecture: an intent is decomposed into sub-tasks,
+    which drive two parallel retrieval systems (BraneScript language
+    specification and package/dataset context). The retrieved context is
+    combined into a prompt that an LLM uses to generate BraneScript, which is
+    then syntax-checked, semantically checked, and executed. Failures at either
+    check re-enter the prompt-construction stage as feedback for a bounded
+    number of retries.}
+    \label{fig:pipeline-architecture}
+\end{figure}
+
+The pipeline is organised into six conceptual stages:
+
+\begin{enumerate}
+    \item \textbf{Intent decomposition.} The raw natural-language intent is
+        broken down into a high-level task description: which function(s) need
+        to be defined, which package(s) must be imported, which dataset(s) are
+        referenced, and what control flow (loops, conditionals) the workflow
+        requires.
+
+    \item \textbf{Dual context retrieval.} The decomposed intent feeds two
+        independent retrieval systems in parallel: a \emph{language
+        specification} retriever, which returns relevant BraneScript syntax
+        (function definitions, control-flow constructs, parallel blocks) from a
+        dedicated knowledge base; and a \emph{package/dataset} retriever, which
+        returns the function signatures and usage context of the specific
+        Brane packages and datasets relevant to the intent (e.g., the
+        \texttt{healthcare} package and the associated heart-disease dataset).
+
+    \item \textbf{Prompt construction.} The retrieved language specification and
+        package/dataset context are combined with the original intent and a
+        system prompt into a single generation prompt for the LLM.
+
+    \item \textbf{Generation.} The LLM (a general-purpose or fine-tuned Qwen
+        model) produces a candidate BraneScript workflow.
+
+    \item \textbf{Validation.} The candidate is first \emph{syntax-checked}
+        against the Brane compiler (a fast, local check that requires no
+        execution), and, on success, \emph{semantically checked} against the
+        retrieved package context (e.g., that referenced functions and
+        arguments actually exist in the imported packages).
+
+    \item \textbf{Execution.} Only workflows that pass both checks are executed
+        on the Brane runtime. If either check fails, the error is fed back into
+        prompt construction as corrective context, and the pipeline retries
+        generation up to a fixed number of attempts before reporting failure to
+        the user.
+\end{enumerate}
+
+This structure realises the two design principles introduced informally in
+Chapter~\ref{s:background} and developed further in
+Chapter~\ref{s:design}: \emph{compile-before-execute}, so that no compute
+resources are spent on malformed workflows, and \emph{progressive trust}, so
+that cheaper, more deterministic mechanisms (the semantic cache, the syntax
+checker) are always tried before the more expensive and stochastic ones (LLM
+generation, workflow execution).
+
+\section{Components}
+
+At the code level, the architecture in Figure~\ref{fig:pipeline-architecture}
+is realised by the following components, each described in detail in
+Chapter~\ref{s:implementation}:
+
+\begin{itemize}
+    \item \textbf{Pipeline orchestrator} (\texttt{src/pipeline.py}) --- drives
+        the six stages above and implements the bounded retry loop.
+    \item \textbf{Knowledge base} (\texttt{src/knowledgeBase.py}) --- builds and
+        queries the two ChromaDB vector stores that back the dual retrieval
+        stage.
+    \item \textbf{Semantic cache} (\texttt{src/semantic\_cache.py}) --- a
+        ChromaDB-backed cache that short-circuits generation for intents that
+        are semantically equivalent to a previously seen one, sitting in front
+        of the LLM in the progressive-trust ordering.
+    \item \textbf{Brane packages} (\texttt{packages/*}) --- seven
+        domain-specific packages (\texttt{healthcare}, \texttt{genomics},
+        \texttt{epidemics}, \texttt{statistics}, \texttt{text\_analysis},
+        \texttt{data\_masking}, \texttt{datetime}) that expose the typed
+        functions the generated BraneScript invokes, and that execute against
+        locally registered datasets.
+    \item \textbf{Fine-tuning and evaluation infrastructure}
+        (\texttt{src/fine\_tuning/train.py}, \texttt{evaluate.py}) --- produces
+        and benchmarks the domain-adapted LLMs used as an alternative to the
+        base model in the generation stage.
+    \item \textbf{Dashboard} (\texttt{frontend/}) --- exposes the pipeline
+        interactively, and additionally visualises evaluation results and cache
+        statistics.
+\end{itemize}
+
+Crucially, the data that packages such as \texttt{healthcare} and
+\texttt{genomics} operate on never leaves the site at which it is registered:
+the LLM only ever sees the natural-language intent, package function
+signatures, and (redacted) dataset metadata during generation; the generated
+BraneScript is executed by Brane's runtime against the dataset in place. This
+separation between \emph{workflow generation} (which may involve cloud-hosted
+or shared LLM infrastructure) and \emph{data access} (which remains local to
+the owning site) is the architectural realisation of the privacy and
+data-ownership motivation for choosing Brane as the target platform for this
+work (Section~\ref{s:background}).
 

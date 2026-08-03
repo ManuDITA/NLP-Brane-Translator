@@ -1,10 +1,182 @@
 \chapter{Design}\label{s:design}
 
+This chapter motivates the design decisions behind the architecture presented
+in Chapter~\ref{s:overview}. Each decision is presented together with the
+alternative it was chosen over and the evidence, where available, that
+justified the choice.
 
-\todo{
-In this section, you would provide a high-level description of the system or
-solution and explain your design choices.
-}
+\section{Compile-Before-Execute and Progressive Trust}
 
+Two principles govern the ordering of operations in the pipeline.
 
+\textbf{Compile-before-execute.} Executing a workflow on the Brane runtime is
+orders of magnitude more expensive than checking whether it compiles: execution
+may involve container startup, data movement across sites, and long-running
+computation. The design therefore inserts a syntax-checking stage
+(\texttt{check\_syntax} in \texttt{pipeline.py}) between generation and
+execution, using Brane's own compiler as an oracle. Only workflows that compile
+proceed to a semantic check and then to execution. This mirrors the ``translate
+then verify'' pattern of intent-based networking (Section~\ref{s:background}),
+adapted to a compiled DSL rather than a network configuration.
+
+\textbf{Progressive trust.} Within a single request, the pipeline tries
+mechanisms in increasing order of cost and decreasing order of determinism: it
+first queries the \emph{semantic cache} for a previously generated workflow for
+a similar intent (near-zero cost, deterministic); if no cache hit occurs, it
+falls back to \emph{LLM generation} (higher cost, stochastic); and only a
+compiled and semantically checked result is \emph{executed}. This ordering
+was chosen because the cost of each stage was found, in practice, to differ by
+several orders of magnitude (a cache lookup completes in milliseconds; LLM
+generation on a fine-tuned 27B model takes seconds; workflow execution can take
+minutes), so any request that can be served by a cheaper stage should never
+reach a more expensive one.
+
+\section{Retrieval Design}
+
+Gap G2 identified in Chapter~\ref{s:background} requires grounding
+natural-language translation in the concrete capabilities of the target WMS.
+The design addresses this with two independent ChromaDB collections rather than
+a single, undifferentiated knowledge base:
+
+\begin{itemize}
+    \item \textbf{Language specification retriever} (\texttt{brane\_lang\_db}):
+        indexes BraneScript syntax and control-flow documentation, so that the
+        model is reminded of correct \texttt{if}/\texttt{else},
+        \texttt{for}, and \texttt{parallel} syntax regardless of which
+        packages are involved.
+    \item \textbf{Package/dataset retriever} (\texttt{brane\_pkg\_db}): indexes
+        function signatures, parameter types, and usage examples for each of
+        the seven packages, plus metadata about registered datasets.
+\end{itemize}
+
+Separating these two concerns allows the intent decomposition stage
+(Section~\ref{s:overview}) to query each retriever with a different sub-query
+derived from the same intent (``what syntax is needed'' vs.\ ``what packages
+and data are needed''), rather than forcing a single query to serve both
+purposes.
+
+\subsection{Chunking Granularity}
+
+An earlier design indexed each package's \texttt{container.yml} specification
+as a single chunk (28 chunks total across all packages). This was found to
+frequently cause the model to select the wrong function within a package when
+a package exposed multiple similar functions. The design was revised to
+\emph{per-function chunking}: every function in every package's specification
+becomes its own retrievable chunk (91 chunks total), annotated with a short
+``use when'' hint describing the scenario in which that specific function is
+appropriate. This increases the precision of retrieval at the cost of a larger
+index, and was adopted because function-level ambiguity was the dominant source
+of retrieval-induced generation errors observed during development.
+
+\subsection{Package Aliasing and Hybrid Retrieval}
+
+Scientists describe their data using domain vocabulary (``heart disease data'',
+``epidemic curve'') rather than the internal package names
+(\texttt{healthcare}, \texttt{epidemics}) that BraneScript requires. The design
+introduces a \texttt{PACKAGE\_ALIASES} mapping from such domain terms to
+package names, and a \emph{hybrid retrieval} strategy: when the intent
+decomposition stage detects a package or dataset name (directly or via an
+alias) in the intent, retrieval uses a metadata filter pinned to that name;
+otherwise, it falls back to similarity search over the embedding space (top-$k$
+with $k=8$). The hybrid strategy was chosen over pure similarity search because
+similarity search alone occasionally retrieved a semantically related but
+wrong package (e.g., \texttt{statistics} instead of \texttt{epidemics} for
+epidemic-curve intents), whereas exact name matches, when available, are
+unambiguous.
+
+\section{Prompt and Feedback Design}
+
+The generation prompt combines the original intent, the retrieved language and
+package context, and a system prompt encoding BraneScript-specific rules (e.g.,
+that empty strings are invalid arguments, and that \texttt{commit\_result} must
+be called exactly once per named output). These rules were derived iteratively
+from observed failure modes rather than specified a priori, reflecting the
+practical reality that the invalid-output space of a fine-grained DSL is best
+characterised empirically.
+
+When a candidate workflow fails syntax or semantic checking, the design
+reuses the same prompt-construction stage for a bounded number of retries
+(\texttt{MAX\_RETRIES}~$=3$ in \texttt{pipeline.py}): the failing script and the
+associated error message are injected into the next prompt as corrective
+context (``previous attempt failed: fix this script''), rather than starting
+generation from scratch. This closed-loop design was chosen because compiler
+and runtime error messages are highly specific (e.g., naming the exact
+undefined variable or type mismatch), giving the LLM a much stronger correction
+signal than a bare retry would.
+
+\section{Typed Data Representation}
+
+BraneScript functions that return structured data represent it as tagged class
+instances (\texttt{["ClassName", \{field: value, ...\}]}) rather than as
+opaque JSON-encoded strings passed between functions. This design decision was
+adopted after observing that requiring the model to construct and parse ad hoc
+JSON strings inside BraneScript led to substantially more hallucinated or
+malformed intermediate values; typed class instances give the model a smaller,
+more constrained surface to generate correctly, and let the semantic checker
+validate field access against the declared type.
+
+\section{Fine-Tuning Design}
+
+Two design decisions shape the fine-tuning approach used to produce
+domain-adapted alternatives to the base LLMs.
+
+\textbf{Parameter-efficient fine-tuning (QLoRA).} Full fine-tuning of a 27B
+model is infeasible within the available HPC allocation. The design instead
+uses 4-bit quantisation (via \texttt{bitsandbytes}) combined with Low-Rank
+Adaptation (LoRA, rank 16), which updates a small number of adapter parameters
+while keeping the base weights frozen and quantised. This makes fine-tuning
+the largest evaluated model (Qwen3.6-27B) tractable on the available GPU
+hardware, at the cost of a lower-rank approximation of the full fine-tuning
+update.
+
+\textbf{Response-only loss masking.} An early version of the training loop
+computed the language-modelling loss over the entire prompt, including the
+system prompt and retrieved context, not just the target BraneScript. This
+diluted the gradient signal for the stop token and caused generation to
+continue past the intended end of the script at inference time. The design was
+corrected to mask the loss so that it is computed only over the response
+tokens (the reference BraneScript), which is the standard approach for
+instruction-style fine-tuning and directly fixed the over-generation problem
+observed during development.
+
+The design additionally provisions for reinforcement-learning-based refinement
+(GRPO) as a further training stage beyond supervised fine-tuning, with a reward
+signal based on compilation and execution success. This infrastructure is
+implemented (Chapter~\ref{s:implementation}) but had not been run to produce
+evaluated models at the time of writing (Chapter~\ref{s:evaluation}).
+
+\section{Semantic Cache Design}
+
+The semantic cache addresses reusability (Section~\ref{s:background}, FAIR
+principles) and offers a candidate answer to the intent-reproducibility gap
+(G3): if the same or a paraphrased intent is submitted again, the cached
+BraneScript is returned deterministically instead of re-invoking a stochastic
+LLM. The cache is implemented as a ChromaDB collection keyed by sentence
+embeddings of the intent text (using the same \texttt{all-MiniLM-L6-v2} model
+as the retrieval subsystem, for embedding-space consistency), with a
+configurable similarity threshold (default $0.92$) above which a cached entry
+is considered a hit.
+
+This design embeds a deliberate trade-off rather than a settled solution: the
+same embedding space that enables useful generalisation across paraphrases also
+maps intents that differ only in a specific parameter (e.g., a numeric
+threshold or a dataset name) to very high similarity, since sentence embeddings
+capture propositional meaning rather than exact parameter values. The cache
+threshold is therefore not a free design parameter to be tuned away, but an
+explicit precision--recall operating point whose limits are characterised
+empirically in Chapter~\ref{s:evaluation}.
+
+\section{Dataset Design}
+
+The training and retrieval corpus is organised around the seven packages
+listed in Chapter~\ref{s:overview}, with intents authored to cover a range of
+control-flow complexity (basic single-function calls, class and array usage,
+control flow, multi-function compositions, and package-specific advanced
+scenarios). Because multiple source files were authored somewhat
+independently over the course of the project, near-duplicate intents
+accumulated across files; the design applies a deterministic deduplication
+pass with an explicit file-priority order (domain-specific files such as
+\texttt{packages.jsonl} and \texttt{genomics.jsonl} take precedence over the
+earlier, more generic \texttt{training\_500.jsonl}), so that the more
+carefully curated examples are retained when a duplicate is detected.
 

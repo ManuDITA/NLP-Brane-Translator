@@ -1,9 +1,86 @@
 \chapter{Related Work}\label{s:related}
 
+This chapter positions this thesis relative to prior work with similar goals
+or methodology, and states explicitly how this work differs.
 
-\todo{
-Describe here scientific papers similar to your experiment, both in terms of goal and methodology.  One paragraph for each paper (we expect about 5-8 papers to be discussed). Each paragraph contains: (i) a brief description of the related paper and (ii) a black-on-white description about how your work differs from the related paper. You may place this section immediately after the Background section, if necessary.
-}
+\textbf{Pegasus~\cite{deelman2015pegasus} and Nextflow~\cite{di2017nextflow}.}
+Pegasus and Nextflow are mature, production-grade WMSs that solve the
+downstream problem addressed by this thesis --- reliable execution,
+scheduling, and fault recovery for a workflow that has already been specified
+--- extremely well. Neither system, however, accepts natural-language input:
+both require the scientist to author an explicit DAG (Pegasus) or dataflow
+script (Nextflow) by hand. This thesis does not attempt to replace either
+system's execution model; it targets the layer \emph{before} specification,
+translating an intent into a workflow specification for a WMS (Brane) whose
+execution model is comparable in spirit to Pegasus and Nextflow, but which
+additionally enforces data-locality guarantees at the platform level.
 
+\textbf{Common Workflow Language~\cite{crusoe2022cwl}.} CWL takes a
+complementary approach to the portability problem: rather than a single
+execution engine, it standardises a vendor-neutral workflow description format
+so that a single specification can run on multiple WMS back-ends. This thesis
+shares CWL's goal of lowering the cost of producing a valid workflow
+specification, but attacks it from the opposite direction: instead of a
+portable specification format that a human must still write, it generates a
+platform-specific (BraneScript) specification directly from natural language.
+The two approaches are not mutually exclusive; a natural-language-to-CWL
+translator would face largely the same RAG-grounding and validation challenges
+studied here, applied to a different target DSL.
 
+\textbf{LLM-based workflow generation (Balis et al.~\cite{balis2024llm}).}
+Balis demonstrated that LLMs can generate Parsl-based Python workflows from
+natural-language descriptions with promising accuracy on domain-specific
+tasks, establishing --- for a different target DSL --- the same basic premise
+this thesis relies on: that an LLM can encode enough workflow-pattern
+knowledge to serve as a translator. This thesis differs in three respects:
+it targets a DSL (BraneScript) with essentially no public pre-training
+presence, which required both RAG and supervised fine-tuning rather than
+relying on the base model's prior exposure to the target language; it
+evaluates translation quality with an explicit three-tier metric (compile,
+execute, output match) rather than a single pass/fail judgement; and it
+studies a semantic-caching layer as a complementary reproducibility mechanism,
+which is outside the scope of that work.
 
+\textbf{Code generation benchmarks (Codex/HumanEval~\cite{chen2021evaluating}).}
+Chen et al.\ established the pass@$k$ methodology for evaluating LLM code
+generation against a corpus of general-purpose Python problems with unit
+tests. The compile/execute/output-match metrics used in
+Chapter~\ref{s:evaluation} are a domain-specific adaptation of the same
+underlying idea --- functional correctness rather than surface similarity to a
+reference --- specialised to a setting (BraneScript, a DSL absent from
+HumanEval-style corpora, with side effects on real datasets) where a
+general-purpose code benchmark does not apply.
+
+\textbf{Retrieval-Augmented Generation~\cite{lewis2020rag}.} Lewis et al.\
+introduced RAG as a general mechanism for grounding LLM generation in an
+external knowledge base at inference time, originally in the context of
+open-domain question answering. This thesis applies the same underlying
+mechanism to a structurally different retrieval problem: rather than
+retrieving free-text passages, it retrieves function-level package
+specifications and BraneScript syntax fragments, and combines two
+independent retrieval indices (language specification and
+package/dataset) rather than a single corpus, motivated directly by the
+RQ1/RQ2 finding (Chapter~\ref{s:discussion}) that grounding quality, more than
+model scale, determines translation accuracy for a low-resource DSL.
+
+\textbf{Intent-based networking~\cite{bn2016ibn}.} The four-phase
+expression--translation--activation--assurance lifecycle originally proposed
+for network configuration provides the conceptual vocabulary this thesis
+adopts for scientific workflow generation (Chapter~\ref{s:background}). The
+key difference is domain: network intents are typically drawn from a bounded,
+well-specified configuration space, whereas scientific intents may reference
+arbitrary datasets, statistical procedures, and domain terminology, which is
+why this thesis required a dedicated retrieval and fine-tuning pipeline rather
+than a rule-based translator, as is common in the IBN literature.
+
+\textbf{Workflow provenance formats
+(CWLProv~\cite{soiland2018cwlprov}, RO-Crate~\cite{soiland2022rocrate}) and
+FAIR workflows~\cite{goble2020fair}.} These works define how to record and
+package \emph{retrospective} execution provenance and reusable workflow
+artefacts once a workflow has been specified and run. This thesis's semantic
+cache (Chapter~\ref{s:design}) is best understood as a step towards
+\emph{intent} provenance --- recording which natural-language request produced
+which workflow --- which none of these formats natively capture (gap G1,
+Chapter~\ref{s:background}); a natural extension of this work would export
+cache entries in an RO-Crate-compatible structure so that intent provenance
+and execution provenance can be queried together.

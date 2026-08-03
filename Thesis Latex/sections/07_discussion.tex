@@ -1,9 +1,98 @@
 \chapter{Discussion}\label{s:discussion}
 
+This chapter interprets the results of Chapter~\ref{s:evaluation} in light of
+the research questions and the motivation set out in Chapter~\ref{s:intro}.
 
-\todo{
-Here you put your results in context (possibly grouped by research question). Usually, this section focuses on analyzing the
-implications of the proposed work for current and future research and for practitioners.
-}
+\section{RQ1/RQ2 --- Engineering Effort Dominates Model Scale}
 
+The single largest effect observed in this thesis is not a modelling result at
+all: correcting the system prompt and RAG configuration moved the 27B model's
+execution rate from 37.9\% to 92.7\% with no change to model weights
+(Table~\ref{tab:baseline-july} vs.~\ref{tab:baseline-august}). A naive reading
+of the July results alone would have concluded that even a 27B model is
+unreliable at BraneScript generation, and that only a much larger model could
+close the gap; the August results show that this conclusion would have been
+wrong, and that the actual bottleneck was grounding and instruction quality.
+This has a direct practical implication for anyone deploying an LLM-based
+translator for a low-resource DSL: invest first in precise retrieval and an
+unambiguous system prompt, and only then in model size or further fine-tuning.
+It also validates gap G2 as identified in the literature review
+(Chapter~\ref{s:background}): the missing piece for practical intent-to-WMS
+translation is not raw model capability but a carefully engineered bridge
+between the two.
 
+\section{RQ3 --- Fine-Tuning Requires Train/Inference Consistency}
+
+The regression observed for the first SFT model (49.5\% execution vs.\ 63.4\%
+for the corresponding base model, Section~\ref{s:evaluation}) is, on its own
+terms, a negative result for naively applying supervised fine-tuning. However,
+its cause --- a mismatch between the prompt format used during training and the
+one used at evaluation time --- generalises beyond this project: any
+fine-tuned model is only as reliable as the consistency between how it was
+trained and how it is subsequently prompted. Because BraneScript-generation
+prompts are themselves a moving target during development (the system prompt
+was revised multiple times to fix concrete failure modes, Section~\ref{s:design}),
+a fine-tuned model is effectively coupled to the exact prompt version it was
+trained against, which has implications for how such systems should be
+maintained in production: a prompt change should be treated as invalidating
+existing fine-tuned adapters until they are retrained. The retrained models
+(\texttt{qwen3.5-9b-ep5}, \texttt{qwen3.6-27b-ep5}) are expected to close this
+gap, but their evaluation was not complete at the time of writing
+(Section~\ref{s:evaluation}), so RQ3 can currently only be answered
+qualitatively: fine-tuning has the potential to improve translation accuracy
+further, but only if paired with disciplined prompt version control.
+
+\section{RQ4 --- Semantic Caching Has a Fundamental, Not Just an Engineering, Limit}
+
+The cache threshold sweep (Section~\ref{s:eval-cache}) shows an irreducible
+false-positive floor of approximately 0.9\% across a wide range of thresholds.
+Unlike the RQ1/RQ2 finding above, this is not attributable to fixable
+engineering choices: it follows from the fact that a general-purpose sentence
+embedding model encodes what an intent is \emph{about}, not the exact parameter
+values within it. Two intents that differ only in a threshold value or a
+column name are, for most practical purposes, requests for different
+computations, yet they are nearly indistinguishable in embedding space. This is
+a direct, empirical instance of gap G3 (no agreed definition of intent
+reproducibility, Chapter~\ref{s:background}): the semantic cache implicitly
+assumes that ``reproducible'' means ``the same workflow for the same
+\emph{propositional} intent'', while for scientific correctness it must mean
+``the same workflow for the same intent \emph{including all parameter
+values}''. The recommendation to keep the threshold near 0.90--0.92 rather
+than try to eliminate false positives entirely reflects an acceptance of this
+trade-off rather than a solution to it; a more complete solution would likely
+require entity/parameter extraction layered on top of sentence embeddings, which
+is left as future work (Chapter~\ref{s:conclusion}).
+
+\section{Revisiting the Choice of Brane}
+
+The motivation for using Brane as the testbed for this work
+(Chapter~\ref{s:background}) rested on two properties: its support for
+federated workflows in which the party executing a computation need not own
+the underlying data, and its enforcement --- via typed, sandboxed packages ---
+of that separation at the platform level rather than by convention. The
+results in this thesis evaluate translation accuracy, not privacy directly,
+but the architecture that makes evaluation possible is itself evidence for
+that motivation: every one of the seven packages used in this work
+(\texttt{healthcare}, \texttt{genomics}, \texttt{epidemics},
+\texttt{statistics}, \texttt{text\_analysis}, \texttt{data\_masking},
+\texttt{datetime}) executes against data registered locally, and at no point
+does the generation pipeline --- which may call out to a shared or remote LLM
+service --- receive raw patient or genomic records; it only ever sees the
+intent text and package/dataset \emph{metadata}. The translation problem
+studied here is thus additive to Brane's existing privacy guarantees rather
+than a replacement for them: a correct BraneScript workflow inherits Brane's
+data-locality enforcement automatically, simply by virtue of being expressed
+in BraneScript rather than in a Python script with unrestricted file access.
+
+\section{Summary}
+
+Taken together, the results suggest a layered picture of where accuracy comes
+from in intent-based scientific workflow generation: retrieval and prompt
+engineering account for the largest single improvement observed, fine-tuning
+offers a further, but consistency-dependent, improvement, and semantic caching
+offers a strong but fundamentally bounded reproducibility mechanism. None of
+these three layers is a substitute for the others, and each addresses a
+different failure mode: retrieval and prompting address the model's lack of
+BraneScript-specific knowledge, fine-tuning addresses residual syntactic and
+package-usage errors, and caching addresses redundant computation and
+partial reproducibility for repeated intents.
