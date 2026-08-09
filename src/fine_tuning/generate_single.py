@@ -44,7 +44,7 @@ def _extract_bs(text: str) -> str:
     return m.group(1).strip() if m else text.strip()
 
 
-def _get_pkg_context(intent: str) -> str:
+def _get_pkg_context(intent: str, subtasks: list[str] | None = None) -> str:
     """Load RAG context for the intent if brane_pkg_db is available."""
     try:
         from langchain_chroma import Chroma
@@ -62,12 +62,37 @@ def _get_pkg_context(intent: str) -> str:
         )
         db = Chroma(persist_directory=str(db_path), embedding_function=embeddings)
         retriever = PkgRetriever(pkg_db=db, k=4)
-        ctx = retriever.run([], intent)
+        ctx = retriever.run(subtasks or [], intent)
         print("  ✅ RAG context retrieved")
         return ctx
     except Exception as e:
         print(f"  ⚠️  RAG not available: {e}")
         return ""
+
+
+def _decompose_intent(intent: str, model, tokenizer) -> list[str]:
+    """
+    Break the intent into BraneScript sub-tasks, same as pipeline.py (CLI).
+    Builds a small greedy text-generation pipeline from the already-loaded
+    model/tokenizer, so no second model load is required.
+    """
+    try:
+        from transformers import pipeline as hf_pipeline
+        from intent_decomposer import IntentDecomposer
+
+        text_gen_pipeline = hf_pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            return_full_text=False,
+            max_new_tokens=256,
+            do_sample=False,
+        )
+        decomposer = IntentDecomposer(text_gen_pipeline=text_gen_pipeline, tokenizer=tokenizer)
+        return decomposer.decompose(intent)
+    except Exception as e:
+        print(f"  ⚠️  Decomposition unavailable: {e}")
+        return []
 
 
 def generate(intent: str, model_path: str,
@@ -105,7 +130,11 @@ def generate(intent: str, model_path: str,
     model.eval()
     print("  ✅ Model loaded")
 
-    pkg_context = _get_pkg_context(intent)
+    # ── Task breakdown (same decomposition step as pipeline.py/CLI) ────────
+    subtasks = _decompose_intent(intent, model, tokenizer)
+    subtasks_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(subtasks))
+
+    pkg_context = _get_pkg_context(intent, subtasks)
 
     # Build error_section for retry attempts
     error_section = ""
@@ -122,6 +151,7 @@ def generate(intent: str, model_path: str,
     user_message  = build_user_message(
         intent,
         pkg_context or "(no package context available)",
+        subtasks=subtasks_str,
         error_section=error_section,
     )
 

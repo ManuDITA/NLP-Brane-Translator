@@ -4,12 +4,14 @@ pipeline.py
 Main entry point. Implements the simplified architecture:
 
   User request
+    → Semantic cache lookup (skip straight to result on a hit)
     → Task breakdown + language spec retrieval (IntentDecomposer)
     → Package/dataset retrieval (PkgRetriever)
     → LLM inference (BraneScript generation)
     → Syntax/semantic check  (on fail: retry with error, max 3 attempts)
     → Save generated BraneScript to disk
     → [Optional] Submit to file-based job queue → run via job_watcher.py
+    → Semantic cache store (on a successful, first-attempt result)
 
 Run:
     python pipeline.py [--execute]
@@ -33,6 +35,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from intent_decomposer import IntentDecomposer
 from pkg_retriever import PkgRetriever
+from semantic_cache import SemanticCache
 from training_collector import TrainingCollector
 from utils import strip_thinking_tokens, strip_code_fences, looks_like_branescript, detect_python_code, detect_json_string_assignment, load_hf_token
 from prompts import GENERATION_SYSTEM_TEMPLATE, build_user_message, load_system_prompt
@@ -434,9 +437,44 @@ def run_pipeline(user_query: str,
                  syntax_reference: str,
                  execute: bool = False,
                  collector: Optional[TrainingCollector] = None,
-                 model_name: str = "") -> str:
+                 model_name: str = "",
+                 cache: Optional[SemanticCache] = None) -> str:
 
     t_start = time.time()
+
+    # ── Step 0: Semantic cache lookup (skip LLM entirely on a hit) ─────────
+    # This mirrors the dashboard/Snellius path (generate_single.py, frontend/
+    # server.py) so a CLI invocation benefits from — and populates — the same
+    # cache regardless of which entry point is used.
+    if cache is not None:
+        try:
+            hit = cache.lookup(user_query)
+        except Exception as e:
+            print(f"   ⚠️  Cache lookup error: {e}")
+            hit = None
+        if hit:
+            print(f"\n🎯 Cache hit (similarity={hit['similarity']:.4f}) — skipping generation")
+            print(f"   Matched: {hit['intent'][:80]}")
+            code = hit["branescript"]
+            cached_exec = hit.get("execution") or {}
+
+            if execute and not cached_exec:
+                # We have a cached script but no cached execution result yet
+                # (e.g. it was cached from a no-execute run) — run it for real.
+                exec_result = execute_workflow(code, user_query,
+                                               model_name=model_name, attempt_number=1)
+                if exec_result["success"]:
+                    try:
+                        cache.store(intent=user_query, branescript=code, execution=exec_result)
+                    except Exception as e:
+                        print(f"   ⚠️  Cache store error: {e}")
+
+            if code.strip():
+                save_branescript_to_folder(code, user_query)
+
+            t_total = time.time() - t_start
+            print(f"\n⏱️  Timing summary: total {t_total:6.1f}s (cache hit)")
+            return code
 
     # Pre-build the system message — constant for all attempts of this query
     system_msg = GENERATION_SYSTEM_TEMPLATE.format(
@@ -592,6 +630,11 @@ def run_pipeline(user_query: str,
 
         # ── No execution requested — we are done ──────────────────────────
         if not execute:
+            if cache is not None:
+                try:
+                    cache.store(intent=user_query, branescript=code)
+                except Exception as e:
+                    print(f"   ⚠️  Cache store error: {e}")
             break
 
         # ── Execute and retry on failure ──────────────────────────────────
@@ -609,6 +652,11 @@ def run_pipeline(user_query: str,
                                    execution_result=exec_result,
                                    attempt_number=attempt, model=model_name,
                                    timing=_timing_snapshot())
+            if cache is not None:
+                try:
+                    cache.store(intent=user_query, branescript=code, execution=exec_result)
+                except Exception as e:
+                    print(f"   ⚠️  Cache store error: {e}")
             break
 
         # Execution failed — log attempt and prepare retry
@@ -695,6 +743,7 @@ def build_pipeline_components(model_id: str, temperature: float) -> dict:
         "decomposer":        IntentDecomposer,
         "pkg_retriever":     PkgRetriever,
         "syntax_reference":  str,
+        "cache":             SemanticCache or None (unavailable),
     }
     """
     print(f"📖 Loading syntax reference from {SYNTAX_REFERENCE_PATH}...")
@@ -741,12 +790,20 @@ def build_pipeline_components(model_id: str, temperature: float) -> dict:
     decomposer = IntentDecomposer(text_gen_pipeline=text_gen_pipeline, tokenizer=tokenizer)
     pkg_retriever = PkgRetriever(pkg_db=pkg_db, k=4)
 
+    try:
+        cache = SemanticCache()
+        print("✅ Semantic cache ready")
+    except Exception as e:
+        print(f"⚠️  Semantic cache unavailable ({e}) — continuing without it.")
+        cache = None
+
     return {
         "text_gen_pipeline": text_gen_pipeline,
         "tokenizer":         tokenizer,
         "decomposer":        decomposer,
         "pkg_retriever":     pkg_retriever,
         "syntax_reference":  syntax_reference,
+        "cache":             cache,
     }
 
 
@@ -789,6 +846,10 @@ if __name__ == "__main__":
              "Each intent is processed in sequence. "
              "Mutually exclusive with --query."
     )
+    parser.add_argument(
+        "--no-cache", action="store_true", default=False,
+        help="Disable the semantic cache lookup/store for this run (always generate fresh)."
+    )
     args = parser.parse_args()
 
     if args.query and args.intents_file:
@@ -803,6 +864,7 @@ if __name__ == "__main__":
     decomposer       = components["decomposer"]
     pkg_retriever    = components["pkg_retriever"]
     syntax_reference = components["syntax_reference"]
+    cache            = None if args.no_cache else components["cache"]
 
     collector = None
     if args.collect:
@@ -847,6 +909,7 @@ if __name__ == "__main__":
             execute=args.execute,
             collector=collector,
             model_name=args.model,
+            cache=cache,
         )
         t_intent = time.time() - t_intent_start
 

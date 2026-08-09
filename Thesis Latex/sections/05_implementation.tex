@@ -8,41 +8,64 @@ Chapter~\ref{s:overview}.
 
 The orchestrator (\texttt{src/pipeline.py}) implements \texttt{run\_pipeline()},
 which loops over the generation--validation--execution cycle described in
-Chapter~\ref{s:overview} for at most \texttt{MAX\_RETRIES}~$=3$ attempts. Key
-functions include \texttt{check\_syntax()}, which invokes the Brane compiler on
-the candidate script and returns a boolean success flag with the compiler's
-error message; \texttt{check\_semantic()}, which validates function and
+Chapter~\ref{s:overview} for at most \texttt{MAX\_RETRIES}~$=3$ attempts. Before
+attempting generation, it queries the semantic cache
+(Section~\ref{s:cache-impl}) for the intent and returns the cached script and
+result immediately on a hit; on a miss, it decomposes the intent into
+sub-tasks via \texttt{IntentDecomposer} (\texttt{src/intent\_decomposer.py})
+before retrieval, exactly as the other two entry points do. Key
+functions include \texttt{check\_syntax()}, a fast local heuristic check
+(balanced braces/parentheses, correct \texttt{let}-binding syntax) that
+rejects obviously malformed output before Brane is ever invoked, and returns
+a boolean success flag with a diagnostic message; \texttt{check\_semantic()}, which validates function and
 argument usage against the retrieved package context before execution is
-attempted; and \texttt{execute\_workflow()}, which submits the compiled
-workflow to the Brane runtime and captures \texttt{stdout}, \texttt{stderr}, and
-the exit code. Ambiguous intents are detected via
+attempted; and \texttt{execute\_workflow()}, which submits the candidate
+workflow to the Brane runtime --- which compiles and executes it as a single
+\texttt{brane workflow run} command --- and captures \texttt{stdout},
+\texttt{stderr}, and the exit code, distinguishing a compilation failure from
+a runtime failure. On success, the (intent, script, result) triple is
+written back to the semantic cache. Ambiguous intents are detected via
 \texttt{is\_clarification\_request()} and handled by
 \texttt{ask\_for\_clarification()}, which returns a question to the user
 instead of attempting generation. Successful workflows are persisted with
 \texttt{save\_branescript\_to\_folder()} for later inspection and reuse as
 training or cache-seeding data. \texttt{build\_pipeline\_components()}
 initialises the embedding model
-(\texttt{sentence-transformers/all-MiniLM-L6-v2}) and the two ChromaDB
-retrievers shared across a pipeline run.
+(\texttt{sentence-transformers/all-MiniLM-L6-v2}), the single
+\texttt{PkgRetriever} instance shared across a pipeline run, and the
+\texttt{SemanticCache} instance (constructed defensively: a failure to reach
+the cache's ChromaDB collection is caught and logged, and the pipeline
+proceeds with caching disabled rather than failing outright); the
+BraneScript syntax reference is loaded once as plain text and requires no
+embedding model at all. A \texttt{--no-cache} command-line flag allows the
+cache to be bypassed explicitly for a given invocation.
 
 \section{Knowledge Base and Retrieval}
 
-\texttt{src/knowledgeBase.py} builds and queries the two vector stores
-introduced in Section~\ref{s:design}. Package specifications
+\texttt{src/knowledgeBase.py} builds and queries the single vector store
+introduced in Section~\ref{s:design}, \texttt{brane\_pkg\_db}. Package specifications
 (\texttt{container.yml} files) are parsed and exploded into per-function
 \texttt{Document} chunks, each annotated with the owning package name and a
 short usage hint, and embedded via LangChain's \texttt{HuggingFaceEmbeddings}
 wrapper around \texttt{all-MiniLM-L6-v2}. The \texttt{PACKAGE\_ALIASES}
 dictionary maps domain vocabulary to package identifiers and is consulted
 before falling back to similarity search, implementing the hybrid retrieval
-strategy described in Chapter~\ref{s:design}.
+strategy described in Chapter~\ref{s:design}. There is no separate store for
+BraneScript syntax: \texttt{load\_system\_prompt()}
+(\texttt{src/prompts.py}) reads \texttt{data/syntax\_reference.md} once and
+formats it directly into the generation system prompt for every request.
 
 \section{Brane Packages}
 
-Seven packages are implemented under \texttt{packages/}:
-\texttt{healthcare}, \texttt{genomics}, \texttt{epidemics},
-\texttt{statistics}, \texttt{text\_analysis}, \texttt{data\_masking}, and
-\texttt{datetime}. Each package follows a common dispatch convention: the
+Seven packages are implemented under \texttt{packages/} as the evaluation
+testbed for this thesis: \texttt{healthcare}, \texttt{genomics},
+\texttt{epidemics}, \texttt{statistics}, \texttt{text\_analysis},
+\texttt{data\_masking}, and \texttt{datetime}. Neither the pipeline nor the
+retriever is specific to these seven: both operate against whatever typed
+functions are published in the Brane package registry a given deployment is
+configured against, and the testbed packages exist to provide a concrete,
+end-to-end domain on which to train and evaluate the system, not to bound
+its scope. Each package follows a common dispatch convention: the
 container's entry point reads the invoked function name from
 \texttt{sys.argv[1]} (declared in the package's \texttt{command.args}
 specification), rather than relying on environment variables, and routes to
@@ -77,13 +100,22 @@ throughout Chapter~\ref{s:evaluation}: \emph{compile rate} (the fraction of
 generated scripts accepted by the Brane compiler), \emph{execution rate} (the
 fraction that run to completion with exit code~0), and \emph{output match
 rate} (the fraction of executed scripts, among those with a stored reference
-output, whose \texttt{stdout} matches the reference exactly). The script
+output, whose \texttt{stdout} matches the reference exactly). Like the
+command-line and dashboard entry points, it decomposes each intent into
+sub-tasks before retrieval by default, via the same \texttt{IntentDecomposer}
+built from the model already loaded for generation; a \texttt{--skip-decomposition}
+flag disables this step so that its effect on the reported metrics can be
+measured directly (Chapter~\ref{s:evaluation}). It deliberately never
+consults the semantic cache, for the reason given in Chapter~\ref{s:design}:
+a cache hit would let a previously generated correct answer masquerade as
+freshly generated output, inflating the reported rates without reflecting
+the model actually being evaluated. The script
 embeds the corresponding \texttt{training\_config.json} into each evaluation
 result file, which lets the dashboard (Section~\ref{ss:frontend}) distinguish
 between multiple SFT runs of the same base model without additional
 bookkeeping.
 
-\section{Semantic Cache}
+\section{Semantic Cache}\label{s:cache-impl}
 
 \texttt{src/semantic\_cache.py} implements the \texttt{SemanticCache} class
 described in Chapter~\ref{s:design}, backed by a ChromaDB collection
@@ -94,10 +126,13 @@ BraneScript above threshold or \texttt{None}), \texttt{store(intent,
 branescript)}, \texttt{invalidate(intent)} (removing stale entries matching an
 intent), and \texttt{stats()}/\texttt{list\_entries()} for inspection. The
 cache is seeded with all 584 unique training intents and their reference
-BraneScript by \texttt{scripts/populate\_cache.py}, and is consulted by
-\texttt{generate\_single.py} before the LLM is loaded, so that a cache hit
-avoids model-loading and inference cost entirely, in line with the
-progressive-trust ordering.
+BraneScript by \texttt{scripts/populate\_cache.py}, and is consulted before
+any decomposition or retrieval work is done: by \texttt{run\_pipeline()} on
+the command-line entry point, and by \texttt{generate\_single.py} on the
+dashboard/Snellius path, so that a cache hit avoids model-loading and
+inference cost entirely on either entry point, in line with the
+progressive-trust ordering. \texttt{evaluate.py} is the one caller that
+deliberately never touches the cache (Chapter~\ref{s:design}).
 
 \subsection{Cache Evaluation Harness}
 
@@ -117,6 +152,28 @@ script). Its \texttt{--sweep} mode evaluates eight thresholds
 threshold $0$ and applies each candidate threshold as a post-hoc filter on the
 returned similarity scores, reducing the sweep from $8 \times 1974 = 15{,}792$
 ChromaDB queries to $1974$.
+
+\section{Job Watcher}
+
+\texttt{scripts/remote\_execution/local/job\_watcher.py} is a small polling
+daemon, started and supervised by \texttt{start.sh} alongside the dashboard,
+that runs wherever Brane itself is reachable --- typically the researcher's
+own machine, rather than the Snellius compute node that ran generation.
+It watches a job directory for BraneScript files written by
+\texttt{generate\_single.py}, and for each pending job invokes
+\texttt{subprocess.run(["brane", "workflow", "run", "a", path])}, the same
+command used by the command-line entry point, so that the authority
+determining whether a script executes correctly is identical regardless of
+which entry point produced it. The resulting exit code is interpreted the
+same way on both entry points --- $2$ for a compilation failure, $1$ for a
+runtime failure, $0$ for success --- and, together with \texttt{stdout} and
+\texttt{stderr}, is written back to the job's result file for the dashboard
+to pick up and, on failure, feed back into the retry sequence shown in
+Figure~\ref{fig:sequence-diagram}. Separating job watching from the
+dashboard process itself keeps the dashboard's own responsibilities limited
+to submission, polling, and presentation, and lets Brane execution happen on
+whichever machine has network access to the target Brane instances, which
+need not be the machine serving the dashboard.
 
 \section{Dashboard}\label{ss:frontend}
 

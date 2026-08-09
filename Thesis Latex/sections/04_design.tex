@@ -5,19 +5,28 @@ in Chapter~\ref{s:overview}. Each decision is presented together with the
 alternative it was chosen over and the evidence, where available, that
 justified the choice.
 
-\section{Compile-Before-Execute and Progressive Trust}
+\section{Compile-Before-Execute and Progressive Trust}\label{s:design-principles}
 
 Two principles govern the ordering of operations in the pipeline.
 
 \textbf{Compile-before-execute.} Executing a workflow on the Brane runtime is
 orders of magnitude more expensive than checking whether it compiles: execution
 may involve container startup, data movement across sites, and long-running
-computation. The design therefore inserts a syntax-checking stage
-(\texttt{check\_syntax} in \texttt{pipeline.py}) between generation and
-execution, using Brane's own compiler as an oracle. Only workflows that compile
-proceed to a semantic check and then to execution. This mirrors the ``translate
-then verify'' pattern of intent-based networking (Section~\ref{s:background}),
-adapted to a compiled DSL rather than a network configuration.
+computation. The command-line entry point therefore inserts a syntax-checking
+stage (\texttt{check\_syntax} in \texttt{pipeline.py}) between generation and
+execution: a fast, local heuristic check (balanced braces/parentheses, correct
+\texttt{let}-binding syntax) that rejects output that is obviously malformed
+before it is ever submitted to Brane. This heuristic is deliberately cheap
+rather than a reimplementation of the BraneScript grammar, and is specific to
+the command-line tool; the dashboard/Snellius path and the offline evaluation
+pipeline submit every generated script directly to Brane, treating its exit
+code as the only validation signal. In all cases, Brane's own compiler,
+invoked when the workflow is actually submitted for execution
+(\texttt{brane workflow run}), remains the sole authority on whether a script
+is valid, and a compilation failure at that stage is treated identically to a
+runtime failure for retry purposes. This mirrors the ``translate then verify''
+pattern of intent-based networking (Section~\ref{s:background}), adapted to a
+compiled DSL rather than a network configuration.
 
 \textbf{Progressive trust.} Within a single request, the pipeline tries
 mechanisms in increasing order of cost and decreasing order of determinism: it
@@ -29,31 +38,57 @@ was chosen because the cost of each stage was found, in practice, to differ by
 several orders of magnitude (a cache lookup completes in milliseconds; LLM
 generation on a fine-tuned 27B model takes seconds; workflow execution can take
 minutes), so any request that can be served by a cheaper stage should never
-reach a more expensive one.
+reach a more expensive one. The cache is consulted by both the command-line
+tool and the dashboard, so the benefit applies regardless of entry point; it
+is, however, deliberately the one component excluded from the offline
+evaluation pipeline used to produce the results in
+Chapter~\ref{s:evaluation}. A cache hit there would let a previously cached
+correct answer masquerade as newly generated output, inflating the reported
+compile and execution rates without reflecting the quality of the model
+actually being evaluated. The evaluation pipeline therefore always generates
+a fresh script for every intent, while still exercising the same
+decomposition and retrieval steps as both deployed entry points, so that the
+metrics it reports characterise the model and the retrieval-augmented
+prompt, not the cache.
 
 \section{Retrieval Design}
 
 Gap G2 identified in Chapter~\ref{s:background} requires grounding
 natural-language translation in the concrete capabilities of the target WMS.
-The design addresses this with two independent ChromaDB collections rather than
-a single, undifferentiated knowledge base:
+This capability surface has two very different shapes, and the design treats
+them differently rather than folding both into a single retrieval mechanism:
 
 \begin{itemize}
-    \item \textbf{Language specification retriever} (\texttt{brane\_lang\_db}):
-        indexes BraneScript syntax and control-flow documentation, so that the
-        model is reminded of correct \texttt{if}/\texttt{else},
-        \texttt{for}, and \texttt{parallel} syntax regardless of which
-        packages are involved.
-    \item \textbf{Package/dataset retriever} (\texttt{brane\_pkg\_db}): indexes
-        function signatures, parameter types, and usage examples for each of
-        the seven packages, plus metadata about registered datasets.
+    \item \textbf{BraneScript syntax} (control flow, function declarations,
+        the \texttt{parallel} construct, typed \texttt{class} declarations) is
+        small, stable across packages, and shared by every intent regardless
+        of which packages it invokes. The design therefore injects the full
+        syntax reference (\texttt{data/syntax\_reference.md}) as static text
+        into every generation prompt, rather than retrieving it: at this size,
+        retrieval would add latency and the risk of omitting a construct the
+        intent needs, for no benefit over simply always including it in full.
+    \item \textbf{Package and dataset context}, by contrast, grows with every
+        package registered with Brane and cannot be included in full without
+        making the prompt intractably long. This is where retrieval earns its
+        cost: the \textbf{package/dataset retriever}
+        (\texttt{src/\allowbreak pkg\_retriever.py}, backed by the
+        \texttt{brane\_pkg\_db} ChromaDB collection) indexes function
+        signatures, parameter types, and usage examples for each package
+        registered with Brane, plus metadata about registered datasets, and
+        returns only the subset relevant to a given intent. In this thesis,
+        this corpus is built from the seven packages used as the evaluation
+        testbed (Chapter~\ref{s:evaluation}), but the retriever itself is not
+        specific to those packages.
 \end{itemize}
 
-Separating these two concerns allows the intent decomposition stage
-(Section~\ref{s:overview}) to query each retriever with a different sub-query
-derived from the same intent (``what syntax is needed'' vs.\ ``what packages
-and data are needed''), rather than forcing a single query to serve both
-purposes.
+\texttt{brane\_pkg\_db} is therefore the only retrieval-augmented-generation
+component in the system; there is no separate BraneScript language-specification
+store. Every entry point --- the command-line tool, the dashboard/Snellius
+path, and the offline evaluation pipeline --- decomposes the intent into
+sub-tasks before querying this single retriever (Chapter~\ref{s:overview}),
+sharpening the query by supplying the decomposed sub-tasks alongside the raw
+intent, rather than issuing a separate query per retriever, since only one
+retriever exists.
 
 \subsection{Chunking Granularity}
 
@@ -86,11 +121,12 @@ unambiguous.
 
 \section{Prompt and Feedback Design}
 
-The generation prompt combines the original intent, the retrieved language and
-package context, and a system prompt encoding BraneScript-specific rules (e.g.,
-that empty strings are invalid arguments, and that \texttt{commit\_result} must
-be called exactly once per named output). These rules were derived iteratively
-from observed failure modes rather than specified a priori, reflecting the
+The generation prompt combines the original intent, the retrieved
+package/dataset context, the static BraneScript syntax reference, and a
+system prompt encoding BraneScript-specific rules (e.g., that empty strings
+are invalid arguments, and that \texttt{commit\_result} must be called
+exactly once per named output). These rules were derived iteratively from
+observed failure modes rather than specified a priori, reflecting the
 practical reality that the invalid-output space of a fine-grained DSL is best
 characterised empirically.
 

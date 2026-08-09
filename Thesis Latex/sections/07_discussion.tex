@@ -16,7 +16,12 @@ wrong, and that the actual bottleneck was grounding and instruction quality.
 This has a direct practical implication for anyone deploying an LLM-based
 translator for a low-resource DSL: invest first in precise retrieval and an
 unambiguous system prompt, and only then in model size or further fine-tuning.
-It also validates gap G2 as identified in the literature review
+Because the prompt, retrieval aliases, and output post-processing were all
+revised together between the two evaluation rounds, this finding should be
+read as evidence that retrieval-and-prompt engineering \emph{as a bundle}
+outweighs model scale, not as an isolated measurement of RAG's individual
+contribution against a no-RAG condition (Chapter~\ref{sec:threats}). It also
+validates gap G2 as identified in the literature review
 (Chapter~\ref{s:background}): the missing piece for practical intent-to-WMS
 translation is not raw model capability but a carefully engineered bridge
 between the two.

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Thesis Preview (auto-reload)</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  #pdf { width: 100%; height: 100%; border: none; }
+  #status {
+    position: fixed; top: 6px; right: 10px; z-index: 10;
+    font: 12px sans-serif; color: #666; background: rgba(255,255,255,0.8);
+    padding: 2px 6px; border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<div id="status">watching…</div>
+<iframe id="pdf" src="build/main.pdf"></iframe>
+<script>
+  const pdfPath = 'build/main.pdf';
+  const frame = document.getElementById('pdf');
+  const status = document.getElementById('status');
+  let lastSignature = null;
+
+  async function poll() {
+    try {
+      const res = await fetch(pdfPath, { method: 'HEAD', cache: 'no-store' });
+      const signature = res.headers.get('Last-Modified') || res.headers.get('Content-Length');
+      if (lastSignature === null) {
+        lastSignature = signature;
+      } else if (signature !== lastSignature) {
+        lastSignature = signature;
+        // Preserve the currently viewed page across reload where possible.
+        let page = 1;
+        try {
+          const m = frame.contentWindow.location.hash.match(/page=(\d+)/);
+          if (m) page = m[1];
+        } catch (e) { /* cross-origin viewer internals may block this; ignore */ }
+        frame.src = pdfPath + '#page=' + page + '&t=' + Date.now();
+        status.textContent = 'reloaded ' + new Date().toLocaleTimeString();
+      }
+    } catch (e) {
+      status.textContent = 'waiting for server…';
+    }
+    setTimeout(poll, 1200);
+  }
+  poll();
+</script>
+</body>
+</html>

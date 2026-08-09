@@ -21,7 +21,7 @@ supervised fine-tuning (Chapter~\ref{s:design}) for the two larger sizes.
 \textbf{Hardware.} All generation and training runs execute on Snellius
 (Dutch national HPC facility) H100 GPU nodes, submitted via SLURM.
 
-\section{RQ1/RQ2: Translation Accuracy and the Effect of RAG and Prompt Engineering}
+\section{RQ1/RQ2: Translation Accuracy and the Effect of Retrieval and Prompt Engineering Quality}
 
 An initial evaluation round (27 July) established baseline compile/execution
 rates for all three base models with an early version of the system prompt and
@@ -66,13 +66,19 @@ Qwen3.5-4B (base)  & 57.0\% & 55.4\% & --- \\
 
 The execution rate of the 27B model rises from 37.9\% to 92.7\% between the
 two rounds, using identical model weights. This is the central finding for
-RQ1/RQ2: for this task, RAG quality and prompt correctness have a larger
-effect on translation accuracy than model scale, and a meaningful fraction of
-what initially appears as a model-capability limitation is in fact an
-engineering and grounding problem. This directly supports the addressal of gap
-G2 (Chapter~\ref{s:background}): providing precise, package-grounded context is
-necessary for a general-purpose LLM to reliably target a DSL absent from its
-pre-training data.
+RQ1/RQ2: for this task, the combined quality of retrieval context and prompt
+correctness has a larger effect on translation accuracy than model scale, and
+a meaningful fraction of what initially appears as a model-capability
+limitation is in fact an engineering and grounding problem. Note that this
+comparison changes several factors at once --- RAG package aliases, the system
+prompt, and output post-processing all improved together between the two
+rounds --- so it demonstrates that retrieval-and-prompt quality \emph{as a
+whole} matters more than model scale, but it does not isolate the specific
+contribution of RAG alone against a true RAG-disabled baseline; no such
+ablation was run in this thesis (Chapter~\ref{sec:threats}). This still directly
+supports the addressal of gap G2 (Chapter~\ref{s:background}): providing
+precise, package-grounded context is necessary for a general-purpose LLM to
+reliably target a DSL absent from its pre-training data.
 
 \section{RQ3: Effect of Supervised Fine-Tuning}
 

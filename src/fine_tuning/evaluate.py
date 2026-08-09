@@ -107,6 +107,41 @@ def _get_pkg_retriever():
         _PKG_RETRIEVER = None
     return _PKG_RETRIEVER
 
+
+# ---------------------------------------------------------------------------
+# Intent decomposer — lazy-initialised once per model, reuses the already-
+# loaded model/tokenizer to break the intent into sub-tasks before retrieval,
+# the same step pipeline.py (CLI) and generate_single.py perform.
+# ---------------------------------------------------------------------------
+_INTENT_DECOMPOSER = None
+
+def _get_intent_decomposer(model, tokenizer):
+    """
+    Return an IntentDecomposer wrapping a small greedy text-generation
+    pipeline built from the model/tokenizer already loaded for evaluation.
+    Initialised once per process; returns None on failure.
+    """
+    global _INTENT_DECOMPOSER
+    if _INTENT_DECOMPOSER is not None:
+        return _INTENT_DECOMPOSER
+    try:
+        from transformers import pipeline as hf_pipeline
+        from intent_decomposer import IntentDecomposer
+        text_gen_pipeline = hf_pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            return_full_text=False,
+            max_new_tokens=256,
+            do_sample=False,
+        )
+        _INTENT_DECOMPOSER = IntentDecomposer(text_gen_pipeline=text_gen_pipeline, tokenizer=tokenizer)
+        print("  ✅ IntentDecomposer ready")
+    except Exception as e:
+        print(f"  ⚠️  Could not load IntentDecomposer: {e}")
+        _INTENT_DECOMPOSER = None
+    return _INTENT_DECOMPOSER
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -262,24 +297,37 @@ def load_model(model_path: str, adapter_path: str | None = None):
 GENERATION_TIMEOUT = 120
 
 
-def generate_branescript(model, tokenizer, intent: str) -> str:
+def generate_branescript(model, tokenizer, intent: str, decompose: bool = True) -> str:
     """
     Generate BraneScript for a given intent using greedy decoding.
     Uses PkgRetriever to fetch only the relevant package context for this intent
     (same RAG pipeline as the interactive pipeline.py).
+
+    decompose=True (default) breaks the intent into sub-tasks first (same
+    step as pipeline.py/CLI and generate_single.py) before retrieval, so the
+    evaluation reflects the same pipeline shape used in production. Pass
+    decompose=False to run an ablation measuring the effect of this step.
+
     Runs inside a thread so it can be abandoned if it hangs past
     GENERATION_TIMEOUT seconds (returns empty string on timeout).
     """
     import torch
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+    subtasks: list[str] = []
+    if decompose:
+        decomposer = _get_intent_decomposer(model, tokenizer)
+        if decomposer is not None:
+            subtasks = decomposer.decompose(intent)
+    subtasks_str = "\n".join(f"{i+1}. {s}" for i, s in enumerate(subtasks))
+
     retriever = _get_pkg_retriever()
-    pkg_context = retriever.run([], intent) if retriever else "(No package context available.)"
+    pkg_context = retriever.run(subtasks, intent) if retriever else "(No package context available.)"
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user",   "content": build_user_message(
-            question=intent, pkg_context=pkg_context)},
+            question=intent, pkg_context=pkg_context, subtasks=subtasks_str)},
     ]
     try:
         prompt = tokenizer.apply_chat_template(
@@ -382,7 +430,8 @@ def evaluate(model_path: str, adapter_path: str | None = None,
              label: str | None = None,
              test_file: Path | None = None,
              generate_only: bool = False,
-             resume: bool = False) -> dict:
+             resume: bool = False,
+             decompose: bool = True) -> dict:
     """
     Run full evaluation on a test set.
 
@@ -394,6 +443,10 @@ def evaluate(model_path: str, adapter_path: str | None = None,
     resume=True         → load an existing in-progress checkpoint and skip
                           already-processed examples (safe to re-submit after
                           a timeout or OOM kill).
+    decompose=True      → break each intent into sub-tasks before retrieval,
+                          same as pipeline.py/CLI and generate_single.py
+                          (default: on). Pass False to measure the effect of
+                          decomposition on the reported metrics.
     """
     test_set    = _load_test_set(test_file)
     if not generate_only:
@@ -444,7 +497,7 @@ def evaluate(model_path: str, adapter_path: str | None = None,
 
         # ── Generate ─────────────────────────────────────────────────────────
         try:
-            generated = generate_branescript(model, tokenizer, intent)
+            generated = generate_branescript(model, tokenizer, intent, decompose=decompose)
         except Exception as exc:
             print(f"💥 generation error: {exc}", flush=True)
             results.append({
@@ -589,7 +642,8 @@ def _save_results(m: dict, suffix: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def compare_all(base_model: str, test_file: Path | None = None,
-               generate_only: bool = False, resume: bool = False) -> None:
+               generate_only: bool = False, resume: bool = False,
+               decompose: bool = True) -> None:
     """Evaluate base, SFT-merged, and GRPO-merged variants and print comparison."""
     slug        = base_model.split("/")[-1].lower()
     models_dir  = PROJECT_ROOT / "outputs" / "models"
@@ -609,7 +663,7 @@ def compare_all(base_model: str, test_file: Path | None = None,
 
     all_metrics = [
         evaluate(mp, ap, label, test_file=test_file,
-                 generate_only=generate_only, resume=resume)
+                 generate_only=generate_only, resume=resume, decompose=decompose)
         for mp, ap, label in variants
     ]
 
@@ -648,13 +702,20 @@ if __name__ == "__main__":
                              "Safe to use after a job timeout or OOM kill.")
     parser.add_argument("--compare-all", action="store_true",
                         help="Evaluate base + SFT + GRPO variants for the given model in sequence")
+    parser.add_argument("--skip-decomposition", action="store_true",
+                        help="Disable the intent-decomposition step before retrieval (ablation run). "
+                             "Decomposition is ON by default, matching pipeline.py/CLI and "
+                             "generate_single.py. Use a distinct --label when comparing the two "
+                             "so checkpoint/result files don't collide.")
     args = parser.parse_args()
 
     tf = Path(args.test_file) if args.test_file else None
 
     if args.compare_all:
         compare_all(args.model, test_file=tf,
-                    generate_only=args.generate_only, resume=args.resume)
+                    generate_only=args.generate_only, resume=args.resume,
+                    decompose=not args.skip_decomposition)
     else:
         evaluate(args.model, adapter_path=args.adapter, label=args.label,
-                 test_file=tf, generate_only=args.generate_only, resume=args.resume)
+                 test_file=tf, generate_only=args.generate_only, resume=args.resume,
+                 decompose=not args.skip_decomposition)

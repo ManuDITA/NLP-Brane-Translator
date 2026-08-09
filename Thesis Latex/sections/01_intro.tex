@@ -1,6 +1,6 @@
 \chapter{Introduction}\label{s:intro}
 
-\section{Motivation}
+\section{Motivation}\label{s:motivation}
 
 Scientific computing increasingly depends on complex, multi-step computational
 workflows: data must be fetched, cleaned, analysed, and interpreted, often
@@ -10,8 +10,8 @@ Snakemake~\cite{molder2021snakemake} have become indispensable in fields like
 genomics, epidemiology, and climate science precisely because they automate
 resource allocation, fault recovery, and execution ordering. Yet, despite their
 maturity, these systems impose a heavy cognitive cost on scientists. To express
-even a straightforward intent---``compute GC content for sequence
-ATGCGATCG''---a researcher must first understand the WMS's execution model,
+even a straightforward intent---``calculate the average age of patients in this
+dataset''---a researcher must first understand the WMS's execution model,
 write a domain-specific language (DSL) script that explicitly enumerates every
 computational step, declare data dependencies as a directed acyclic graph (DAG),
 and then debug execution failures at the infrastructure level rather than the
@@ -28,7 +28,7 @@ computational request.
 Recent advances in Large Language Models (LLMs) open a new possibility: a
 researcher could describe a computational task in plain language, and an
 intelligent system could automatically translate that natural-language intent
-into a runnable workflow. This vision---\emph{intent-based orchestration}---has
+into a runnable workflow. This vision, \emph{intent-based orchestration}, has
 attracted growing interest in the systems and HPC communities. However, existing
 approaches remain incomplete. Systems that accept natural language either
 generate generic code that cannot be executed in a target WMS environment, or
@@ -40,27 +40,107 @@ The gap is thus precise and actionable: no system currently bridges declarative,
 natural-language intent expression with the rigorous, provenance-tracked
 execution guarantees of a production WMS.
 
+A second, largely orthogonal problem compounds this gap in practice. Many of
+the scientific domains that would benefit most from intent-based orchestration, 
+like the one targeting healthcare and genomics, work with data that cannot be freely centralised
+or shared with an external computing party. An intent-based system for these
+domains therefore faces a constraint that a general-purpose coding assistant
+does not: not only the underlying data, but every artefact derived from an
+interaction with it --- the generated workflow, any intermediate or derived
+results --- must remain within the boundary of the organisation that owns the
+data. A solution to the intent-translation problem above that assumes free
+data movement, or that must route intents through an external, centrally
+hosted LLM service, is not viable for these domains regardless of how accurate
+its translations are.
+
 \section{Problem Statement}
 
-This thesis addresses the following core problem: given a scientific computing
-infrastructure based on Brane---a distributed WMS designed for federated,
-privacy-sensitive data analysis---how can a researcher specify computational
-tasks in natural language and reliably obtain correct, reproducible workflow
-executions?
+In such distributed scientific computing infrastructures, the party executing
+a computation need not own the underlying data. The core problem this thesis
+addresses is how a researcher, working under that constraint, can describe a
+computational task in natural language and reliably obtain a workflow
+execution that is both correct and reproducible.
 
-The problem decomposes into several interacting challenges. First, natural
-language is inherently ambiguous: the same scientific intent can be expressed
-in many ways, and different phrasings should produce semantically equivalent
-workflows. Second, Brane workflows are expressed in BraneScript, a typed DSL
-with strict package invocation semantics; translation errors produce workflows
-that either fail to compile or silently return incorrect results. Third,
-scientific workflows require reproducibility: the same intent must produce the
-same execution trace across reruns and across different sessions.
+The problem decomposes into four interacting challenges.
 
-Addressing these challenges requires not only a translation mechanism from
-natural language to BraneScript, but also a retrieval mechanism to ground
-translation in available package capabilities, and a caching mechanism to
-avoid redundant LLM calls for repeated or semantically equivalent intents.
+\textbf{Ambiguity of natural language.} The same scientific intent can be
+phrased in many different ways, and different phrasings, or the same
+phrasing repeated by different users, should ideally produce semantically
+equivalent workflows. Intents are also frequently underspecified: a request
+may omit which dataset, parameter, or output format is intended, in which
+case the system must either recover a reasonable default from context or
+explicitly ask for clarification, rather than silently guessing. Natural
+language also uses domain vocabulary (e.g., ``heart-disease data'') that does
+not correspond directly to any identifier in the target system (a specific
+dataset name or package); the translation system must therefore ground
+loosely specified terms in the concrete capabilities actually available to it,
+not merely in the words of the request.
+
+\textbf{Correctness with respect to a strongly typed, platform-specific
+DSL.} Workflow specification languages of this kind are typically statically
+typed, with strict, platform-specific rules for invoking computational
+capabilities (functions, packages, or services) and for connecting their
+inputs and outputs. Such languages are unlikely to be well represented in the
+data an LLM was pre-trained on, so a general-purpose model cannot be expected
+to produce valid programs in them purely from its prior knowledge; it must be
+additionally grounded in the platform's actual capabilities, whether through
+retrieved documentation, fine-tuning on representative examples, or both.
+Translation errors in this setting fall into two qualitatively different
+classes that require different detection mechanisms: \emph{overt} errors,
+where a generated workflow fails to compile or fails at runtime, and
+\emph{silent} errors, where a workflow executes without error but computes a
+scientifically incorrect result, which can only be caught by comparing
+execution behaviour against an expected outcome rather than by static checking
+alone.
+
+\textbf{Reproducibility.} A scientifically useful translation system must
+ensure that the same intent, or an evident paraphrase of it, yields the same
+(or a demonstrably equivalent) workflow and execution trace across repeated
+invocations, across sessions, and potentially across different users. This
+requires more than a translator that happens to behave deterministically for
+a fixed input: because the underlying LLM component is stochastic and may be
+updated or replaced over time, reproducibility requires an explicit mechanism
+that relates a given intent to the workflow(s) it has previously produced, so
+that repeated or equivalent requests do not silently diverge, and so that
+computation is not repeated unnecessarily for a request that has effectively
+already been answered.
+
+\textbf{Operating within a privacy boundary.} As established in
+Section~\ref{s:motivation}, in domains such as healthcare and genomics neither
+the underlying data nor any artefact derived from it --- the generated
+workflow, intermediate results, execution logs --- may leave the
+organisation that owns the data. This constrains not only what the translation
+system is allowed to output, but where its components are allowed to run: an
+architecture that routes intents through an externally hosted, centralised LLM
+service, or that stores any derived artefacts outside the data owner's
+boundary, is not a viable solution to the three challenges above, regardless
+of how accurate or reproducible its translations otherwise are.
+
+Addressing these four challenges together requires not only a translation
+mechanism from natural language to a target workflow language, but also a
+retrieval mechanism to ground translation in the platform's available
+capabilities, a validation mechanism that distinguishes overt from silent
+errors, and a mechanism for relating a given intent to workflows it has
+previously produced, all without exposing data or derived artefacts beyond
+their owning organisation. How these requirements are met --- including the
+specific mechanisms chosen for grounding, validation, and reuse --- is a
+matter of design and is deferred to Chapter~\ref{s:design}.
+
+\subsection{Scope of This Thesis}
+
+The four challenges above are general to any distributed, privacy-sensitive
+workflow platform with a strongly typed specification language; they do not,
+by themselves, depend on any particular choice of platform. This thesis
+studies them concretely through \textbf{Brane}, a distributed WMS whose
+federated execution model dispatches computation to the site holding the
+relevant data rather than moving the data to the computation, which makes it
+a natural instantiation of the privacy boundary described above. Brane and its
+workflow language, BraneScript, are introduced in detail in
+Chapter~\ref{s:background}. From this point on, the thesis is stated
+concretely in terms of BraneScript --- the research questions, contributions,
+and evaluation all target it directly --- while the underlying translation,
+retrieval, validation, and reuse techniques are not specific to BraneScript
+and are intended to generalise to other strongly typed workflow DSLs.
 
 \section{Research Questions}
 
@@ -69,46 +149,15 @@ This thesis investigates the following research questions:
 \begin{enumerate}
     \item[\textbf{RQ1}] To what extent can LLMs translate natural-language
         scientific intents into syntactically and semantically correct
-        BraneScript workflows?
-    \item[\textbf{RQ2}] How does Retrieval-Augmented Generation (RAG) with
-        package-aware context affect translation accuracy compared to a
-        zero-shot baseline?
-    \item[\textbf{RQ3}] How does supervised fine-tuning (SFT) on domain-specific
-        BraneScript examples affect translation accuracy and generalisation?
+        DSL workflows?
+    \item[\textbf{RQ2}] How does the quality of retrieval-augmented context and
+        prompt engineering affect translation accuracy, independent of model
+        scale?
+    \item[\textbf{RQ3}] How does supervised fine-tuning (SFT) on domain-specific 
+        Branescript examples affect translation accuracy and generalisation?    
     \item[\textbf{RQ4}] Can semantic caching effectively serve as a
         reproducibility layer for intent-based orchestration, and what are its
         fundamental limitations for scientific computing?
-\end{enumerate}
-
-\section{Contributions}
-
-This thesis makes the following contributions:
-
-\begin{enumerate}
-    \item \textbf{NLP-to-BraneScript Translator.} A complete pipeline that
-        accepts a natural-language scientific intent and produces a runnable
-        BraneScript workflow via an LLM, with RAG-based package context retrieval
-        using ChromaDB.
-
-    \item \textbf{Curated BraneScript Dataset.} A dataset of 584 unique
-        intent--BraneScript pairs spanning seven scientific domains (healthcare,
-        genomics, epidemiology, statistics, text analysis, data masking, and
-        datetime), constructed with explicit deduplication and diversity criteria.
-
-    \item \textbf{Fine-Tuned Models.} Supervised fine-tuning experiments on
-        Qwen3.5-9B and Qwen3.6-27B using LoRA, evaluated against base model
-        baselines on BraneScript compilation and execution correctness.
-
-    \item \textbf{Semantic Cache for Reproducible Orchestration.} A
-        ChromaDB-backed semantic cache that maps intent embeddings to previously
-        generated BraneScript workflows, enabling sub-millisecond response for
-        repeated or paraphrased intents, with a benchmarked threshold sweep for
-        precision--recall trade-off analysis.
-
-    \item \textbf{Empirical Evaluation.} A systematic evaluation of model size,
-        RAG depth, and caching threshold, yielding practical guidance on deploying
-        LLM-based intent translators in production scientific computing
-        environments.
 \end{enumerate}
 
 \section{Thesis Structure}
