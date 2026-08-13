@@ -120,6 +120,12 @@ class TrainingCollector:
         # log_file points at the index so external callers that print
         # collector.log_file still show a useful path.
         self.log_file = self.log_dir / "index.jsonl"
+        # Separate append-only log for cache hits: these do not go through
+        # generation or execution, so they do not fit the runs/ schema above
+        # (no generated_code produced by *this* request, no verdict). Kept
+        # here rather than folded into index.jsonl so existing readers of
+        # index.jsonl (stats(), dashboard) do not need to special-case them.
+        self.cache_hits_file = self.log_dir / "cache_hits.jsonl"
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -264,6 +270,47 @@ class TrainingCollector:
             f.write(json.dumps(index_entry, ensure_ascii=False) + "\n")
 
         return run_id
+
+    # ------------------------------------------------------------------
+    # Cache hits
+    # ------------------------------------------------------------------
+
+    def log_cache_hit(
+        self,
+        *,
+        intent: str,
+        matched_intent: str,
+        matched_job_id: str,
+        branescript: str,
+        similarity: float,
+        model: str = "",
+    ) -> str:
+        """
+        Record that *intent* was served from the semantic cache instead of
+        being generated, so this event has a persisted trace of its own
+        (needed to reconstruct the cache-derivation edge in the PROV export,
+        Section~4.6/4.7 in the thesis; see prov_export.py).
+
+        Unlike log_attempt(), this does not create a runs/ directory: no
+        generation or execution happened for this specific request, only a
+        lookup against the entry originally produced by run
+        *matched_job_id*.
+        """
+        hit_id = str(uuid.uuid4())
+        ts = datetime.now(timezone.utc)
+        entry = {
+            "id": hit_id,
+            "timestamp": ts.isoformat(),
+            "intent": intent,
+            "matched_intent": matched_intent,
+            "matched_job_id": matched_job_id,
+            "branescript": branescript,
+            "similarity": similarity,
+            "model": model,
+        }
+        with open(self.cache_hits_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return hit_id
 
     # ------------------------------------------------------------------
     # Convenience wrappers

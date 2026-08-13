@@ -347,10 +347,11 @@ hallucinated function calls and incorrect parameter types.
 
 Gueroudji et al.~introduced ControlA, a system that uses LLMs as autonomous
 agents for scientific workflow management, allowing the model to iteratively
-refine a workflow in response to execution feedback. This agentic approach is
-complementary to the single-shot translation studied in this thesis, and
-represents a potential future extension in which the LLM can retry or repair
-failed BraneScript workflows automatically.
+refine a workflow in response to execution feedback, with the model itself
+reasoning about how to diagnose and repair failures. This agentic approach
+differs from the bounded, externally-driven retry mechanism adopted in this
+thesis (Chapter~\ref{s:design}), and represents a complementary direction for
+future work.
 
 % ------------------------------------------------------------------
 \section{Target Platform Selection: Brane and Dynamos}
@@ -360,7 +361,7 @@ failed BraneScript workflows automatically.
 
 Brane~\cite{brane2022} is a distributed, containerised computing framework
 designed for federated scientific data analysis. It targets scenarios where
-data cannot leave a site due to privacy or regulatory constraints
+data cannot leave a site due to privacy or regulatory constraints;
 (e.g., hospital patient records, genomics data under GDPR), but compute results
 can be returned to a central orchestrator. Brane wraps computational tools in
 OCI-compatible container images (\emph{packages}), and provides a central
@@ -401,13 +402,7 @@ problem this thesis needs to solve: a package's signatures are themselves a
 natural, structured retrieval corpus for grounding LLM generation (the RAG
 design described in Chapter~\ref{s:design}), which is not true of execution
 environments whose available capabilities are not declared in any machine-readable
-form. Finally, by the time this project began, Brane had already been deployed
-and exercised across multiple institutions within the EPI consortium it was
-built for, giving the platform itself a degree of real-world testing and
-stability that a newer, single-group effort could not yet match; this mattered
-directly, because any instability in the underlying target platform would
-have been inherited by the translation system built on top of it. The
-alternative considered on exactly this point is discussed next.
+form. The alternative considered on exactly these points is discussed next.
 
 BraneScript is the DSL used to express Brane workflows. It is a statically
 typed, procedural language with Python-inspired syntax. Key constructs include:
@@ -460,9 +455,8 @@ runtime was, at the time, itself unreliable: exploratory test runs
 intermittently failed or behaved unpredictably at the container-orchestration
 level, in ways that were not always straightforward to diagnose, which was
 further evidence that the framework was not yet mature enough to build a
-production-oriented translation pipeline on top of. Brane's more mature,
-statically typed package model, together with its existing multi-site
-deployment history and comparatively stable runtime, made it the more viable
+production-oriented translation pipeline on top of. Brane's statically typed
+package model and comparatively stable runtime made it the more viable
 choice for the remainder of the thesis, though the underlying motivation ---
 privacy-preserving, federated distribution of scientific computation --- is
 shared between the two systems, and the translation approach developed here

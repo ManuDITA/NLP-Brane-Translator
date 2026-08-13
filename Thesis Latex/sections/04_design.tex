@@ -3,92 +3,105 @@
 This chapter motivates the design decisions behind the architecture presented
 in Chapter~\ref{s:overview}. Each decision is presented together with the
 alternative it was chosen over and the evidence, where available, that
-justified the choice.
+justified the choice. It follows the same order in which a request moves
+through the pipeline: decomposition and retrieval, prompting and typed data
+representation, dataset and fine-tuning, and finally provenance and caching
+as cross-cutting concerns.
 
-\section{Compile-Before-Execute and Progressive Trust}\label{s:design-principles}
+\section{Intent Decomposition}\label{s:decomposition}
 
-Two principles govern the ordering of operations in the pipeline.
+Before any retrieval or generation takes place, the pipeline runs the raw
+intent through a dedicated decomposition step
+(\texttt{IntentDecomposer} in \texttt{src/intent\_decomposer.py}): a short,
+separate prompt asks the same already-loaded generation model to break the
+intent into a numbered list of at most 12 concrete sub-tasks, phrased in
+plain English rather than code. This step was introduced because retrieving
+directly against the raw intent conflates two different problems ---
+understanding \emph{what needs to be done} (which BraneScript constructs and
+package calls the request actually requires) and \emph{how to express it}
+(concrete BraneScript syntax) --- and a single embedding of a multi-part
+intent tends to average over all of its sub-goals rather than surfacing a
+chunk for each one. Stating explicitly, in English, that a request needs a
+package call, a loop over a dataset, and execution on a named node gives the
+retrieval stage (Section~\ref{s:retrieval-design}) several focused queries
+instead of one broad one; the per-subtask fallback search described there
+(top-3 chunks per sub-task) only exists because this decomposition happens
+first, sharpening the query before it is ever embedded.
 
-\textbf{Compile-before-execute.} Executing a workflow on the Brane runtime is
-orders of magnitude more expensive than checking whether it compiles: execution
-may involve container startup, data movement across sites, and long-running
-computation. The command-line entry point therefore inserts a syntax-checking
-stage (\texttt{check\_syntax} in \texttt{pipeline.py}) between generation and
-execution: a fast, local heuristic check (balanced braces/parentheses, correct
-\texttt{let}-binding syntax) that rejects output that is obviously malformed
-before it is ever submitted to Brane. This heuristic is deliberately cheap
-rather than a reimplementation of the BraneScript grammar, and is specific to
-the command-line tool; the dashboard/Snellius path and the offline evaluation
-pipeline submit every generated script directly to Brane, treating its exit
-code as the only validation signal. In all cases, Brane's own compiler,
-invoked when the workflow is actually submitted for execution
-(\texttt{brane workflow run}), remains the sole authority on whether a script
-is valid, and a compilation failure at that stage is treated identically to a
-runtime failure for retry purposes. This mirrors the ``translate then verify''
-pattern of intent-based networking (Section~\ref{s:background}), adapted to a
-compiled DSL rather than a network configuration.
+Two constraints shape what a sub-task is allowed to contain. First, each
+sub-task must correspond to one primitive BraneScript construct" an
+import, a function definition, a conditional, a parallel block, a return
+statement, and so on, all this deliberately scoped to what the \emph{workflow}
+has to (and can) express, not what a package function computes internally: the
+decomposition prompt explicitly forbids sub-tasks such as ``compute risk
+score'' or ``validate input'', since those describe logic already
+implemented inside a package rather than something the generated
+BraneScript itself needs to construct from scratch. This keeps decomposition aligned
+with the retrieval it feeds: a sub-task describing internal package
+logic would only ever retrieve documentation about a function's
+\emph{behaviour}, not the BraneScript needed to \emph{call} it. Second, each
+sub-task is capped at 5--15 words and explicitly phrased as ``a BraneScript
+manual search query'' rather than a natural-language description, so the
+same text can be used, unmodified, as the query embedded for retrieval:
+decomposition and retrieval end up sharing one representation of a sub-task.
 
-\textbf{Progressive trust.} Within a single request, the pipeline tries
-mechanisms in increasing order of cost and decreasing order of determinism: it
-first queries the \emph{semantic cache} for a previously generated workflow for
-a similar intent (near-zero cost, deterministic); if no cache hit occurs, it
-falls back to \emph{LLM generation} (higher cost, stochastic); and only a
-compiled and semantically checked result is \emph{executed}. This ordering
-was chosen because the cost of each stage was found, in practice, to differ by
-several orders of magnitude (a cache lookup completes in milliseconds; LLM
-generation on a fine-tuned 27B model takes seconds; workflow execution can take
-minutes), so any request that can be served by a cheaper stage should never
-reach a more expensive one. The cache is consulted by both the command-line
-tool and the dashboard, so the benefit applies regardless of entry point; it
-is, however, deliberately the one component excluded from the offline
-evaluation pipeline used to produce the results in
-Chapter~\ref{s:evaluation}. A cache hit there would let a previously cached
-correct answer masquerade as newly generated output, inflating the reported
-compile and execution rates without reflecting the quality of the model
-actually being evaluated. The evaluation pipeline therefore always generates
-a fresh script for every intent, while still exercising the same
-decomposition and retrieval steps as both deployed entry points, so that the
-metrics it reports characterise the model and the retrieval-augmented
-prompt, not the cache.
+One consequence is worth naming explicitly: decomposition never produces
+code, and its rules ask for none, capping output at a bare numbered list
+(``No code. No explanations.''). A malformed or partial decomposition
+therefore cannot itself produce an invalid BraneScript program, as at worst
+it may weaken the sub-task queries retrieval subsequently runs, degrading which
+context is retrieved instead of corrupting the model's actual generation
+target directly. The step reuses the generation model already loaded in
+memory rather than loading a second one, so its cost is one extra
+generation call rather than one extra model; a \texttt{--skip-decomposition}
+flag (\texttt{pipeline.py}, \texttt{evaluate.py}) disables the step outright,
+isolating its cost from the rest of the pipeline so its effect on the
+generated BraneScript can be assessed independently of retrieval and
+generation.
 
-\section{Retrieval Design}
+\section{Retrieval Design}\label{s:retrieval-design}
 
-Gap G2 identified in Chapter~\ref{s:background} requires grounding
+The sub-tasks produced by decomposition (Section~\ref{s:decomposition}) are what this stage retrieves against. Gap G2 identified in Chapter~\ref{s:background} requires grounding
 natural-language translation in the concrete capabilities of the target WMS.
 This capability surface has two very different shapes, and the design treats
 them differently rather than folding both into a single retrieval mechanism:
 
 \begin{itemize}
-    \item \textbf{BraneScript syntax} (control flow, function declarations,
-        the \texttt{parallel} construct, typed \texttt{class} declarations) is
-        small, stable across packages, and shared by every intent regardless
-        of which packages it invokes. The design therefore injects the full
-        syntax reference (\texttt{data/syntax\_reference.md}) as static text
-        into every generation prompt, rather than retrieving it: at this size,
-        retrieval would add latency and the risk of omitting a construct the
-        intent needs, for no benefit over simply always including it in full.
-    \item \textbf{Package and dataset context}, by contrast, grows with every
-        package registered with Brane and cannot be included in full without
-        making the prompt intractably long. This is where retrieval earns its
-        cost: the \textbf{package/dataset retriever}
+    \item \textbf{BraneScript syntax} --- control flow, function declarations,
+        typed \texttt{class} declarations, the \texttt{parallel} and
+        \texttt{on} constructs --- is fixed by the language and identical for
+        every intent regardless of which packages it invokes. The full
+        reference (\texttt{data/syntax\_reference.md}) is about 450 lines
+        (roughly 2,000 tokens), small enough to inject as static text into
+        every generation prompt rather than retrieve. Because the reference
+        does not vary with the intent, a retriever over it could only return
+        a subset of a fixed, already-small document: it would save at most a
+        few hundred tokens per prompt, at the risk of omitting a construct
+        the intent actually needs (e.g., dropping \texttt{parallel} on an
+        intent that requires multi-site execution) if the retriever ranks it
+        as irrelevant. Always including the full reference removes that
+        failure mode entirely.
+    \item \textbf{Package and dataset context}, by contrast, grows without
+        bound as more packages are registered with Brane, and only a small
+        fraction of it is relevant to any single intent --- retrieval buys a
+        real reduction in prompt size here without the correctness risk
+        above. The \textbf{package/dataset retriever}
         (\texttt{src/\allowbreak pkg\_retriever.py}, backed by the
-        \texttt{brane\_pkg\_db} ChromaDB collection) indexes function
+        \texttt{brane\_pkg\_db} ChromaDB collection, embedded with
+        \texttt{sentence-transformers/\allowbreak all-MiniLM-L6-v2}) indexes function
         signatures, parameter types, and usage examples for each package
         registered with Brane, plus metadata about registered datasets, and
-        returns only the subset relevant to a given intent. In this thesis,
-        this corpus is built from the seven packages used as the evaluation
-        testbed (Chapter~\ref{s:evaluation}), but the retriever itself is not
-        specific to those packages.
+        proceeds in two stages: it first scans the intent for a known
+        package or dataset name (or one of its aliases, see below) and, on a
+        match, retrieves \emph{every} chunk for that package via a metadata
+        filter, guaranteeing complete API coverage rather than a probabilistic
+        top-$k$ selection; only when no name is detected does it fall back to
+        embedding similarity search (top-8 over the intent, top-3 per
+        decomposed subtask), before deduplicating the combined result. In
+        this thesis, this corpus is built from the seven packages used as the
+        evaluation testbed (Chapter~\ref{s:evaluation}), but the retriever
+        itself is not specific to those packages.
 \end{itemize}
-
-\texttt{brane\_pkg\_db} is therefore the only retrieval-augmented-generation
-component in the system; there is no separate BraneScript language-specification
-store. Every entry point --- the command-line tool, the dashboard/Snellius
-path, and the offline evaluation pipeline --- decomposes the intent into
-sub-tasks before querying this single retriever (Chapter~\ref{s:overview}),
-sharpening the query by supplying the decomposed sub-tasks alongside the raw
-intent, rather than issuing a separate query per retriever, since only one
-retriever exists.
 
 \subsection{Chunking Granularity}
 
@@ -97,9 +110,8 @@ as a single chunk (28 chunks total across all packages). This was found to
 frequently cause the model to select the wrong function within a package when
 a package exposed multiple similar functions. The design was revised to
 \emph{per-function chunking}: every function in every package's specification
-becomes its own retrievable chunk (91 chunks total), annotated with a short
-``use when'' hint describing the scenario in which that specific function is
-appropriate. This increases the precision of retrieval at the cost of a larger
+becomes its own retrievable chunk (91 chunks total).
+This small change increases the precision of retrieval at the cost of a larger
 index, and was adopted because function-level ambiguity was the dominant source
 of retrieval-induced generation errors observed during development.
 
@@ -107,63 +119,197 @@ of retrieval-induced generation errors observed during development.
 
 Scientists describe their data using domain vocabulary (``heart disease data'',
 ``epidemic curve'') rather than the internal package names
-(\texttt{healthcare}, \texttt{epidemics}) that BraneScript requires. The design
-introduces a \texttt{PACKAGE\_ALIASES} mapping from such domain terms to
-package names, and a \emph{hybrid retrieval} strategy: when the intent
-decomposition stage detects a package or dataset name (directly or via an
-alias) in the intent, retrieval uses a metadata filter pinned to that name;
-otherwise, it falls back to similarity search over the embedding space (top-$k$
-with $k=8$). The hybrid strategy was chosen over pure similarity search because
-similarity search alone occasionally retrieved a semantically related but
-wrong package (e.g., \texttt{statistics} instead of \texttt{epidemics} for
-epidemic-curve intents), whereas exact name matches, when available, are
-unambiguous.
+(\texttt{healthcare}, \texttt{epidemics}) that BraneScript requires, so a
+name scan against package names alone would miss most intents. Each package
+directory can define a \texttt{keywords.txt} file listing such domain terms;
+\texttt{knowledgeBase.py} indexes it as a document tagged
+\texttt{doc\_type="package\_keywords"}, and \texttt{PkgRetriever} loads these
+aliases from the collection's metadata at startup, so a new package's aliases
+require only adding the file, not editing retriever code. The name-scan stage
+described above therefore matches on package/dataset names \emph{or} their
+aliases before falling back to similarity search. This hybrid was chosen over
+pure similarity search because similarity search alone occasionally retrieved
+a semantically related but wrong package (e.g., \texttt{statistics} instead of
+\texttt{epidemics} for epidemic-curve intents), whereas exact name or alias
+matches, when available, are unambiguous.
 
-\section{Prompt and Feedback Design}
+\section{Prompt and Feedback Design}\label{s:prompt-design}
 
 The generation prompt combines the original intent, the retrieved
 package/dataset context, the static BraneScript syntax reference, and a
 system prompt encoding BraneScript-specific rules (e.g., that empty strings
-are invalid arguments, and that \texttt{commit\_result} must be called
-exactly once per named output). These rules were derived iteratively from
+are invalid arguments, that \texttt{commit\_result} must be called
+exactly once per named output, and that the model shall only return Branescript valid syntax).
+These rules were derived iteratively from
 observed failure modes rather than specified a priori, reflecting the
 practical reality that the invalid-output space of a fine-grained DSL is best
-characterised empirically.
+characterised empirically. Both the system prompt and the user-message
+template are defined once, in \texttt{src/prompts.py}: the interactive
+pipeline, the offline evaluation script, and the dataset-preparation script
+that produces the fine-tuning corpus (Section~\ref{s:dataset-design}) all
+call the same \texttt{build\_user\_message} function, so the same inputs
+always produce byte-identical prompt text regardless of which of the three
+builds it. This matters because a fine-tuned model learns to associate its
+target output with the exact textual layout of the training prompts ---
+section headers, their order, how an empty field is rendered. If the
+dataset-preparation script formatted, say, the package/dataset context block
+differently from what the pipeline sends at inference, the model would be
+run on prompts shaped differently from the ones it was fine-tuned on; any
+resulting drop in output quality would then reflect that formatting mismatch
+rather than the model's actual capability.
 
-When a candidate workflow fails syntax or semantic checking, the design
-reuses the same prompt-construction stage for a bounded number of retries
-(\texttt{MAX\_RETRIES}~$=3$ in \texttt{pipeline.py}): the failing script and the
-associated error message are injected into the next prompt as corrective
-context (``previous attempt failed: fix this script''), rather than starting
-generation from scratch. This closed-loop design was chosen because compiler
-and runtime error messages are highly specific (e.g., naming the exact
-undefined variable or type mismatch), giving the LLM a much stronger correction
-signal than a bare retry would.
+\subsection{Failure Modes and Corrective Feedback}
+When a candidate workflow fails validation, the design reuses the same
+prompt-construction stage for a bounded number of retries
+(\texttt{MAX\_RETRIES}~$=3$ in \texttt{pipeline.py}): the failing script and
+the error that caused it to fail are injected into the next prompt as
+context, rather than starting generation from scratch. \texttt{MAX\_RETRIES}
+is deliberately small and fixed rather than unbounded: if a model has not
+produced a valid script after three corrective attempts, the failure is
+treated as a genuine generation failure to be recorded and reported
+(Chapter~\ref{s:evaluation}), rather than something an arbitrarily long retry
+budget should paper over.
 
-\section{Typed Data Representation}
+Compiler and runtime error messages from Brane itself are injected verbatim,
+rather than replaced with a generic ``previous attempt failed'' message,
+since Brane already reports which line and construct is at fault. The
+quality of this feedback matters directly for retry success: a message
+naming the exact undefined variable or type mismatch gives the model a much
+stronger signal to correct against than a vague failure would, so the more
+descriptive Brane's own error output is, the more likely the next generation
+attempt is to succeed.
+
+\section{Typed Data Representation}\label{s:typed-data}
 
 BraneScript functions that return structured data represent it as tagged class
 instances (\texttt{["ClassName", \{field: value, ...\}]}) rather than as
 opaque JSON-encoded strings passed between functions. This design decision was
 adopted after observing that requiring the model to construct and parse ad hoc
 JSON strings inside BraneScript led to substantially more hallucinated or
-malformed intermediate values; typed class instances give the model a smaller,
-more constrained surface to generate correctly, and let the semantic checker
-validate field access against the declared type.
+malformed intermediate values; typed class instances give the model a
+smaller, more constrained surface to generate correctly than free-form JSON
+would.
 
-\section{Fine-Tuning Design}
+The alternative -- letting the model serialise structured values as
+backslash-escaped JSON strings (e.g.,
+\texttt{let p := "\{\textbackslash"iterations\textbackslash": 100\}";}) --
+was the specific failure pattern the fine-tuned models kept reverting to,
+likely because it is the natural way to represent structured data in the
+general-purpose code the base models were originally trained on. The design
+responds to this on two levels: every structured value a package function
+accepts or returns is expressed as a declared \texttt{class}, giving a
+well-typed alternative wherever a JSON string might otherwise be used; and a
+dedicated check (\texttt{detect\_json\_string\_assignment} in
+\texttt{pipeline.py}) inspects each candidate script for this specific
+antipattern, triggering a retry whose corrective prompt shows the wrong
+pattern directly next to the correct typed-class equivalent.
 
-Two design decisions shape the fine-tuning approach used to produce
+The same typed representation is also why the design treats certain Brane
+values -- \texttt{Data} references to registered datasets and
+\texttt{IntermediateResult} values produced by package functions -- as opaque
+to BraneScript itself: the model is never asked to inspect or reconstruct
+their contents from within a script, only to pass them by reference between
+function calls and, when a result should be persisted, name it once via
+\texttt{commit\_result}. Keeping these values opaque removes an entire class
+of intermediate outputs the model would otherwise have to represent
+correctly, at the cost of the model being unable to branch on their contents
+inside a script -- a limitation accepted because none of the evaluated
+intents in this thesis required that capability.
+
+\section{Dataset Design}\label{s:dataset-design}
+
+The training and retrieval corpus is built around the seven packages
+described in Chapter~\ref{s:implementation}. An intent/BraneScript pair is
+included in the fine-tuning corpus only if it is either absent from the
+recorded batch-execution results (Chapter~\ref{s:implementation}), or present
+there with a successful exit code; a pair recorded as having failed
+execution is dropped. Training on every authored example regardless of
+outcome was considered and rejected, since it would have taught the model,
+by direct example, that scripts known not to run are acceptable targets to
+reproduce, precisely at the one stage, training, where such an error is
+hardest to detect later. The resulting corpus is split into
+training and validation sets with a fixed
+$85/15$ split and a fixed random seed, so that different fine-tuning runs
+compared in Chapter~\ref{s:evaluation} are trained and validated on the exact
+same partition rather than one that varies run to run.
+
+The corpus above is assembled from nine separately authored \texttt{.jsonl}
+files (Chapter~\ref{s:implementation}); a fixed deduplication pass keeps
+exactly one copy of any near-identical intent that reappears across files,
+using a fixed file-priority order, so that no single request is
+over-represented in the resulting train/val split.
+
+A more subtle problem surfaced specifically around the \texttt{datetime}
+package: nearly every one of its functions is, by design, a thin wrapper
+around the machine's current wall-clock time, so its output necessarily
+differs between the moment a training example's reference output was
+authored and any later moment the same BraneScript is re-executed. Early
+evaluation runs surfaced this directly: a generated script that was
+functionally identical to the reference would still be marked as an output
+mismatch, since the reference's stored timestamp could never match a
+timestamp produced at execution time, regardless of the model's actual
+competence, silently deflating the output-match rate for a reason entirely
+unrelated to translation quality. Since no BraneScript-level fix can make
+wall-clock time reproducible, the design instead removed the affected
+examples from the corpus outright, alongside stripping incidentally
+non-deterministic timestamp fields returned by other packages (e.g.\ a
+generation timestamp inside the epidemics package's report output), so that
+the fine-tuning and output-match evaluation metrics reported in
+Chapter~\ref{s:evaluation} only ever compare against genuinely reproducible
+ground truth.
+
+\section{Fine-Tuning Design}\label{s:fine-tuning-design}
+
+Several design decisions shape the fine-tuning approach used to produce
 domain-adapted alternatives to the base LLMs.
 
 \textbf{Parameter-efficient fine-tuning (QLoRA).} Full fine-tuning of a 27B
 model is infeasible within the available HPC allocation. The design instead
-uses 4-bit quantisation (via \texttt{bitsandbytes}) combined with Low-Rank
-Adaptation (LoRA, rank 16), which updates a small number of adapter parameters
-while keeping the base weights frozen and quantised. This makes fine-tuning
-the largest evaluated model (Qwen3.6-27B) tractable on the available GPU
-hardware, at the cost of a lower-rank approximation of the full fine-tuning
-update.
+uses 4-bit quantisation combined with Low-Rank Adaptation (LoRA), which
+updates a small number of adapter parameters while keeping the base weights
+frozen and quantised (exact quantisation and adapter hyperparameters are
+given in Chapter~\ref{s:implementation}). This makes fine-tuning the largest
+evaluated model (Qwen3.6-27B) tractable on the available GPU hardware, at the
+cost of a lower-rank approximation of the full fine-tuning update.
+
+\textbf{Full-coverage LoRA targeting.} The adapter is attached to every
+linear projection in each transformer block -- the four attention
+projections (query, key, value, output) and the three feed-forward
+projections (gate, up, down) -- rather than to attention alone, which is a
+common narrower default. BraneScript is a small, rigid DSL whose difficulty
+for the base model is not primarily about attending to the right tokens in
+context (what the attention projections adapt) but about reproducing exact
+syntax, keyword names, and package call signatures token by token, which is
+governed at least as much by the feed-forward projections; restricting
+adaptation to attention only was rejected because it would have left the
+feed-forward pathway -- the more likely source of the syntactic and
+package-signature errors this thesis specifically aims to reduce -- frozen. The
+rank is kept the same across every attention and feed-forward matrix rather
+than allocated unevenly, and the LoRA scaling factor $\alpha$ is fixed at
+twice the rank throughout, following the widely used convention that keeps
+the effective adaptation strength comparable as rank is changed --
+avoiding introducing a second hyperparameter that would otherwise need its
+own justification and tuning budget alongside rank itself.
+
+\textbf{Training-inference prompt parity.} The fine-tuning corpus is not
+built from raw text but from the exact chat-formatted message list that
+\texttt{prepare\_dataset.py} constructs by calling the same
+\texttt{build\_user\_message} function used at inference time
+(Section~\ref{s:prompt-design}): a \texttt{system} turn carrying the
+BraneScript rules and syntax reference, a \texttt{user} turn carrying the
+intent and retrieved package/dataset context, and an \texttt{assistant} turn
+holding the reference BraneScript itself, standing in for the reply the
+model is being trained to produce. The training script itself does no
+prompt construction of its own; it only applies the tokenizer's chat
+template to whatever messages the dataset already contains. This was a
+deliberate consequence of centralising prompt construction in
+\texttt{src/prompts.py} rather than a separate design decision made inside
+\texttt{train.py}: since fine-tuning teaches the model to associate the
+reference BraneScript with the exact prompt text surrounding it, routing
+training data through the identical function used by the pipeline and the
+evaluation script guarantees that whatever the model learns from is the same
+distribution of prompts it is later evaluated and used on, rather than a
+separately maintained approximation of it.
 
 \textbf{Response-only loss masking.} An early version of the training loop
 computed the language-modelling loss over the entire prompt, including the
@@ -175,44 +321,215 @@ tokens (the reference BraneScript), which is the standard approach for
 instruction-style fine-tuning and directly fixed the over-generation problem
 observed during development.
 
-The design additionally provisions for reinforcement-learning-based refinement
-(GRPO) as a further training stage beyond supervised fine-tuning, with a reward
-signal based on compilation and execution success. This infrastructure is
-implemented (Chapter~\ref{s:implementation}) but had not been run to produce
-evaluated models at the time of writing (Chapter~\ref{s:evaluation}).
+\textbf{Model-agnostic training across scales.} The training script reads the
+base model from an environment variable rather than hard-coding it, so the
+same training procedure -- data, prompt template, LoRA configuration, loss
+masking -- applies unchanged to every model size. This is what makes the
+three-way comparison in Chapter~\ref{s:evaluation} (Qwen3.5-4B, Qwen3.5-9B,
+and Qwen3.6-27B, each fine-tuned independently) a precise and reliable controlled comparison of
+model scale.
 
-\section{Semantic Cache Design}
+\textbf{Resumable training and checkpoint selection.} HPC allocations are
+time-bounded and jobs can be pre-empted before training completes, so the
+design checkpoints periodically and, on restart, resumes automatically from
+the latest checkpoint for that run rather than restarting from the base
+model (an explicit flag is available to force a clean restart when needed).
+Checkpoints are evaluated against the held-out validation split at the same
+interval, and the checkpoint kept at the end of a run is the one with the
+lowest validation loss, not necessarily the last one written -- guarding
+against the case where additional epochs overfit the training split rather
+than continuing to improve. Each run also writes its own configuration
+(base model, LoRA settings, learning rate, dataset sizes) alongside its
+checkpoints, so that a given adapter's provenance is not dependent on
+external notes.
 
-The semantic cache addresses reusability (Section~\ref{s:background}, FAIR
-principles) and offers a candidate answer to the intent-reproducibility gap
-(G3): if the same or a paraphrased intent is submitted again, the cached
-BraneScript is returned deterministically instead of re-invoking a stochastic
-LLM. The cache is implemented as a ChromaDB collection keyed by sentence
+\section{Intent Provenance}\label{s:design-provenance}
+
+In Section~\ref{s:provenance} we defined \emph{intent provenance} the mapping
+from a natural-language request to the workflow it produced, alongside the
+standard retrospective record of how that workflow executed. This type of provenance is identified as a gap no
+existing provenance format addresses (gap G1). This thesis also aims to contribute to a design that records this
+mapping for every submitted request. The pipeline,
+when run with data collection enabled, writes a per-request record containing the same fields: the original intent,
+the generated BraneScript, the model that produced it and which retry
+attempt it was, the pass/fail verdict, the specific error type on failure
+(a JSON-decoding antipattern, a Brane compilation failure, or a runtime
+failure), and the captured
+\texttt{stdout}/\texttt{stderr}/exit code (\texttt{TrainingCollector} in
+\texttt{training\_collector.py} for the command-line tool;
+\texttt{save\_to\_dashboard} in \texttt{job\_watcher.py} for the
+dashboard/Snellius path). Every generation event therefore leaves behind an
+explicit, machine-readable link between the intent entity, the generation
+activity, and the resulting workflow entity.
+
+These per-request records are serialised as a PROV-DM document by
+\texttt{prov\_export.py}, built on the Python \texttt{prov} library. For this, we
+defined a small vocabulary that specialises PROV-DM's existing entities and activities
+for this system, in the same way CWLProv and ProvONE specialise them for
+their own domains (Section~\ref{s:provenance}). An intent is a
+\texttt{prov:Entity} \texttt{used} by a \texttt{TranslationActivity}, which
+\texttt{wasGeneratedBy}-relates to a \texttt{BraneScriptWorkflow} entity and
+is \texttt{wasAssociatedWith} the model that produced it; when the workflow
+is executed, an \texttt{ExecutionActivity} \texttt{wasInformedBy} that
+translation \texttt{used}s the workflow entity and \texttt{wasGeneratedBy}-relates
+to an \texttt{ExecutionResult} entity carrying the exit code and verdict.
+Entities and activities are identified by qualified names derived from the
+originating request's id (e.g.\ \texttt{bt:workflow-<id>}), so that exporting
+many records into one document folds shared nodes -- the same workflow
+referenced from two different records -- into a single node rather than
+duplicating it, instead of requiring a separate reconciliation step.
+Figure~\ref{fig:intent-provenance} shows this graph for a single request,
+together with the cache-hit extension described next.
+
+\begin{figure}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        entity/.style={ellipse, draw=black, thick, fill=yellow!55,
+            minimum width=2.6cm, minimum height=1.1cm, align=center, font=\small},
+        activity/.style={rectangle, draw=black, thick, fill=blue!25,
+            minimum width=2.6cm, minimum height=1.1cm, align=center, font=\small},
+        agent/.style={regular polygon, regular polygon sides=5,
+            shape border rotate=90, draw=black, thick, fill=orange!55,
+            minimum size=2.1cm, align=center, font=\small, inner sep=1pt},
+        rel/.style={-{Latex[length=2.2mm]}, thick},
+        relalt/.style={-{Latex[length=2.2mm]}, thick, dashed, teal!70!black},
+    ]
+        % Main generation + execution row
+        \node[entity]                       (intent)   at (0,0)   {Intent\\\emph{(Entity)}};
+        \node[activity]                     (transl)   at (3,0)   {Translation\\\emph{(Activity)}};
+        \node[entity]                       (workflow) at (6,0)   {Workflow\\\emph{(Entity)}};
+        \node[activity]                     (exec)     at (9,0)   {Execution\\\emph{(Activity)}};
+        \node[entity]                       (result)   at (12,0)  {Result\\\emph{(Entity)}};
+        \node[agent]                        (agent)    at (3,-2.6) {Model\\\emph{(Agent)}};
+
+        \draw[rel] (transl) -- node[above, font=\scriptsize]{used} (intent);
+        \draw[rel] (workflow) -- node[above, font=\scriptsize]{wasGeneratedBy} (transl);
+        \draw[rel] (transl) -- node[left, font=\scriptsize]{wasAssociatedWith} (agent);
+        \draw[rel] (workflow) to[bend left=18] node[right, font=\scriptsize, xshift=1mm]{wasAttributedTo} (agent);
+        \draw[rel] (exec) -- node[above, font=\scriptsize]{used} (workflow);
+        \draw[rel] (exec) to[bend right=25] node[above, font=\scriptsize]{wasInformedBy} (transl);
+        \draw[rel] (result) -- node[above, font=\scriptsize]{wasGeneratedBy} (exec);
+
+        % Cache-hit row, below
+        \node[entity, fill=yellow!30]        (nintent) at (0,-5.2) {New Intent\\\emph{(Entity)}};
+        \node[activity, fill=blue!12]        (lookup)  at (3,-5.2) {Cache\\Lookup\\\emph{(Activity)}};
+        \node[entity, fill=yellow!30]        (served)  at (6,-5.2) {Reused\\Workflow\\\emph{(Entity)}};
+
+        \draw[rel] (lookup) -- node[below, font=\scriptsize]{used} (nintent);
+        \draw[rel] (served) -- node[below, font=\scriptsize]{wasGeneratedBy} (lookup);
+        \draw[relalt] (nintent) -- node[left, font=\scriptsize]{alternateOf} (intent);
+        \draw[relalt] (served) -- node[right, font=\scriptsize]{wasDerivedFrom} (workflow);
+    \end{tikzpicture}}
+    \caption{The PROV-DM graph produced for one request (solid, top row and
+        agent) and for a cache hit against it (dashed, bottom row). The
+        \texttt{Workflow} entity is typed \texttt{BraneScriptWorkflow} and
+        the \texttt{Result} entity \texttt{ExecutionResult} in the exported
+        document; both are shortened here for space. A cache hit does not
+        run a new \texttt{TranslationActivity}: its intent is
+        \texttt{alternateOf} the one that was already served, and the
+        workflow it reuses \texttt{wasDerivedFrom} the original, rather than
+        being generated independently.}
+    \label{fig:intent-provenance}
+\end{figure}
+
+In fact, a cache hit so far leaves no trace of its own: the pipeline returnes the
+cached script directly without writing a record, so the
+intent-reproducibility relationship described in Section~\ref{s:provenance}
+had nothing to serialise. We try to \texttt{TrainingCollector.log\_cache\_hit} close
+this gap by recording, for every cache hit, the new intent, the id of the
+run whose cache entry matched it, and the similarity score; the exporter then
+with this implementation, on a fresh generation now also which run produced the entry it is
+caching is being recorded, rather than leaving that link empty. With both sides now recorded, the
+export represents a cache hit as its own small graph: the new intent is
+\texttt{alternateOf} the original one, and the workflow served in response to
+it \texttt{wasDerivedFrom} the workflow entity of the run that originally
+generated it, rather than from a fresh translation activity, exactly the
+relationship Section~\ref{s:provenance} identifies as missing from every
+existing provenance format. The exporter can serialise a single request or
+merge every run and cache hit under \texttt{TRAINING\_DATA\_DIR} into one
+document, in PROV-N, PROV-JSON, PROV-XML, or a Graphviz rendering for
+inspection. What is not being attempted in this thesis is a queryable provenance store: the
+export is a file produced on demand, not a graph database a researcher can
+query directly, and stable identifiers are scoped to a single run rather
+than persisting across the lifetime of a deployment; both are left as future
+work (Chapter~\ref{s:discussion}).
+
+\section{Semantic Cache Design}\label{s:semantic-cache-design}
+
+Recording intent provenance, as described above, is not by itself enough to
+make the system reproducible: the generation activity it records is
+performed by a non-deterministic LLM, so submitting the same intent again --
+or the same request paraphrased differently -- could still produce a
+different workflow entity each time, with no relation recorded between the
+two events. The semantic cache is the mechanism that closes this gap (the
+intent-reproducibility gap, G3, Section~\ref{s:provenance}): the pipeline
+queries the cache before invoking the LLM at all, and if the same or a
+paraphrased intent has been served before, the cached BraneScript is
+returned deterministically instead of triggering a fresh, potentially
+divergent generation event. Only on a cache miss does the pipeline fall back
+to LLM generation. This is a single fixed lookup-then-generate ordering, not
+an adaptive or learning mechanism: the cache does not become more or less
+trusted over time, and no component of the pipeline tracks confidence across
+requests; a request that can be served from the cache simply never reaches
+the LLM, which also means it is never re-generated at a fraction of the
+cost. The cache is consulted by both the command-line tool and the
+dashboard, but is deliberately excluded from the offline evaluation pipeline
+used to produce the results in Chapter~\ref{s:evaluation}: a cache hit there
+would let a previously generated correct answer masquerade as freshly
+generated output, inflating the reported compile and execution rates without
+reflecting the quality of the model actually being evaluated.
+
+The cache is implemented as a ChromaDB collection keyed by sentence
 embeddings of the intent text (using the same \texttt{all-MiniLM-L6-v2} model
 as the retrieval subsystem, for embedding-space consistency), with a
 configurable similarity threshold (default $0.92$) above which a cached entry
 is considered a hit.
 
-This design embeds a deliberate trade-off rather than a settled solution: the
-same embedding space that enables useful generalisation across paraphrases also
-maps intents that differ only in a specific parameter (e.g., a numeric
+An exact-string-match cache -- looking up the intent verbatim rather than by
+embedding similarity -- was considered and rejected as the primary mechanism.
+It avoids the false-positive risk discussed below, but only ever hits on the
+literal same sentence being submitted twice, defeating the purpose in a
+system whose stated premise (Chapter~\ref{s:overview}) is that a researcher
+can phrase a request however feels natural to them; two researchers
+describing the same analysis in different words would never share a cache
+entry under exact matching.
+
+This is a genuine trade-off, not a settled solution: the same embedding
+space that enables useful generalisation across paraphrases also maps intents that differ only in a specific parameter (e.g., a numeric
 threshold or a dataset name) to very high similarity, since sentence embeddings
 capture propositional meaning rather than exact parameter values. The cache
 threshold is therefore not a free design parameter to be tuned away, but an
 explicit precision--recall operating point whose limits are characterised
 empirically in Chapter~\ref{s:evaluation}.
 
-\section{Dataset Design}
+Characterising that operating point requires intents that are genuine
+paraphrases of an existing cache entry -- worded differently but referring
+to the same underlying request -- which the curated dataset does not provide
+on its own, since it was authored to be varied rather than to contain
+near-duplicates. \texttt{scripts/generate\_paraphrases.py} closes this gap by
+prompting an LLM (Qwen3.5-4B) to reword every training intent several times
+while keeping its reference BraneScript unchanged, writing the result to
+\texttt{data/training/paraphrases.jsonl}. Each paraphrase is only ever
+compared against the cache, never merged into the fine-tuning corpus itself
+(Section~\ref{s:dataset-design}): its purpose is exclusively to sweep the
+similarity threshold and measure, for each candidate value, how often a
+paraphrase is matched to any cache entry at all and how often it is matched
+to the \emph{correct} one, giving the precision--recall figures reported in
+Section~\ref{s:eval-cache} from which the deployed threshold was chosen.
 
-The training and retrieval corpus is organised around the seven packages
-listed in Chapter~\ref{s:overview}, with intents authored to cover a range of
-control-flow complexity (basic single-function calls, class and array usage,
-control flow, multi-function compositions, and package-specific advanced
-scenarios). Because multiple source files were authored somewhat
-independently over the course of the project, near-duplicate intents
-accumulated across files; the design applies a deterministic deduplication
-pass with an explicit file-priority order (domain-specific files such as
-\texttt{packages.jsonl} and \texttt{genomics.jsonl} take precedence over the
-earlier, more generic \texttt{training\_500.jsonl}), so that the more
-carefully curated examples are retained when a duplicate is detected.
-
+A cache entry is written only once a candidate script has cleared syntax and
+semantic checking (or, when execution is requested, only once it has also
+executed successfully), so a script that the pipeline itself rejected can
+never be served back as a cache hit later. Because the threshold is a
+similarity cutoff rather than an exact match, the design also has to account
+for the case where a cached entry turns out to be wrong for reasons outside
+the pipeline's own checks (e.g., an underlying package or dataset changes
+after the script was cached, so a previously correct answer no longer holds).
+Rather than leave stale entries to accumulate indefinitely, the cache exposes
+an explicit \texttt{invalidate} operation, reachable through the dashboard
+backend's \texttt{/api/cache/invalidate} endpoint, that removes every entry
+within the similarity threshold of a given intent, giving a way to correct
+the cache without needing direct database access. Each entry additionally tracks a hit
+counter, incremented on every cache hit, giving a simple, low-cost measure of
+how much reuse a given cached answer is actually getting.

@@ -465,9 +465,23 @@ def run_pipeline(user_query: str,
                                                model_name=model_name, attempt_number=1)
                 if exec_result["success"]:
                     try:
-                        cache.store(intent=user_query, branescript=code, execution=exec_result)
+                        cache.store(intent=user_query, branescript=code, execution=exec_result,
+                                   job_id=hit.get("job_id"))
                     except Exception as e:
                         print(f"   ⚠️  Cache store error: {e}")
+
+            if collector:
+                try:
+                    collector.log_cache_hit(
+                        intent=user_query,
+                        matched_intent=hit["intent"],
+                        matched_job_id=hit.get("job_id", ""),
+                        branescript=code,
+                        similarity=hit["similarity"],
+                        model=model_name,
+                    )
+                except Exception as e:
+                    print(f"   ⚠️  Cache-hit logging error: {e}")
 
             if code.strip():
                 save_branescript_to_folder(code, user_query)
@@ -645,8 +659,9 @@ def run_pipeline(user_query: str,
         t_execution_total += time.time() - t0
         if exec_result["success"]:
             print(f"\n✅ Workflow executed successfully.")
+            run_id = None
             if collector:
-                collector.log_pass(intent=user_query, generated_code=code,
+                run_id = collector.log_pass(intent=user_query, generated_code=code,
                                    stdout=exec_result["stdout"],
                                    committed_data=exec_result.get("committed_data"),
                                    execution_result=exec_result,
@@ -654,7 +669,8 @@ def run_pipeline(user_query: str,
                                    timing=_timing_snapshot())
             if cache is not None:
                 try:
-                    cache.store(intent=user_query, branescript=code, execution=exec_result)
+                    cache.store(intent=user_query, branescript=code, execution=exec_result,
+                               job_id=run_id)
                 except Exception as e:
                     print(f"   ⚠️  Cache store error: {e}")
             break
