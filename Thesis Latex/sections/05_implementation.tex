@@ -1,34 +1,8 @@
 \chapter{Implementation}\label{s:implementation}
 
-Chapter~\ref{s:design} justified why each component of the system looks the
-way it does; this chapter is the corresponding record of how each of those
-decisions was actually realised in code. It follows the same component
-breakdown introduced in Chapter~\ref{s:overview}, describing, for every
-component, which module implements it, the concrete libraries and external
-tools it depends on, and any implementation detail that shapes what the
-component can and cannot do but was not itself a design decision worth
-separate justification in Chapter~\ref{s:design}.
-
-The chapter is organised around the same three concerns that structure the
-codebase itself. It begins with the components exercised on every single
-request, in the order a request actually moves through them: the
-orchestrator tying the whole cycle together (Section~\ref{s:pipeline-impl}),
-the knowledge base and package retriever it queries
-(Section~\ref{s:kb-impl}), and the Brane packages that retrieval and
-generation both target (Section~\ref{s:brane-packages}). It then turns to
-the components that exist to \emph{produce} the model and corpus used at
-request time rather than to serve a request directly: the fine-tuning
-infrastructure and the training dataset it consumes
-(Section~\ref{s:finetune-impl}), and the semantic cache together with the
-harness used to evaluate it (Section~\ref{s:cache-impl}). It closes with the
-two components that connect the pipeline to a researcher across a network
-boundary rather than within a single process: the job watcher bridging
-Snellius-side generation to local Brane execution
-(Section~\ref{s:job-watcher}), and the dashboard through which a researcher
-submits requests and inspects results (Section~\ref{ss:frontend}), followed
-by the supporting infrastructure --- output layout, service management, and
-SLURM submission scripts --- that ties every other component together into
-one runnable system (Section~\ref{s:infra-impl}).
+This chapter details how the design decisions of Chapter~\ref{s:design} are
+realised in code. It follows the same component breakdown introduced in
+Chapter~\ref{s:overview}.
 
 \section{Pipeline Orchestrator}\label{s:pipeline-impl}
 
