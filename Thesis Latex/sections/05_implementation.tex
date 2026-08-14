@@ -6,36 +6,32 @@ Chapter~\ref{s:overview}.
 
 \section{Pipeline Orchestrator}\label{s:pipeline-impl}
 
-The orchestrator (\texttt{src/pipeline.py}) implements \texttt{run\_pipeline()},
-which loops over the generation--validation--execution cycle described in
-Chapter~\ref{s:overview} for at most \texttt{MAX\_RETRIES}~$=3$ attempts. Before
+The orchestrator (\texttt{src/pipeline.py}) loops over the
+generation--validation--execution cycle described in
+Chapter~\ref{s:overview} for at most three attempts per request. Before
 attempting generation, it queries the semantic cache
 (Section~\ref{s:cache-impl}) for the intent and returns the cached script and
 result immediately on a hit; on a miss, it decomposes the intent into
-sub-tasks via \texttt{IntentDecomposer} (\texttt{src/intent\_decomposer.py})
-before retrieval. Key
-functions include \texttt{check\_semantic()}, which validates function and
-argument usage against the retrieved package context before execution is
-attempted; and \texttt{execute\_workflow()}, which submits the candidate
-workflow to the Brane runtime --- which compiles and executes it as a single
-\texttt{brane workflow run} command --- and captures \texttt{stdout},
-\texttt{stderr}, and the exit code, distinguishing a compilation failure from
-a runtime failure. On success, the (intent, script, result) triple is
-written back to the semantic cache. Ambiguous intents are detected via
-\texttt{is\_clarification\_request()} and handled by
-\texttt{ask\_for\_clarification()}, which returns a question to the user
-instead of attempting generation. Successful workflows are persisted with
-\texttt{save\_branescript\_to\_folder()} for later inspection and reuse as
-training or cache-seeding data. \texttt{build\_pipeline\_components()}
-initialises the embedding model
-(\texttt{sentence-transformers/all-MiniLM-L6-v2}), the single
-\texttt{PkgRetriever} instance shared across a pipeline run, and the
-\texttt{SemanticCache} instance (constructed defensively: a failure to reach
-the cache's ChromaDB collection is caught and logged, and the pipeline
-proceeds with caching disabled rather than failing outright); the
-BraneScript syntax reference is loaded once as plain text and requires no
-embedding model at all. A \texttt{--no-cache} command-line flag allows the
-cache to be bypassed explicitly for a given invocation.
+sub-tasks via \texttt{IntentDecomposer} before retrieval, as described in
+Chapter~\ref{s:design}. A candidate workflow is checked for valid function
+and argument usage against the retrieved package context before
+\texttt{execute\_workflow()} ever submits it to Brane, which compiles and
+executes it as a single command and returns \texttt{stdout},
+\texttt{stderr}, and an exit code that distinguishes a compilation failure
+from a runtime failure. On success, the (intent, script, result) triple is
+written back to the semantic cache and also persisted to disk for later
+inspection and reuse as training or cache-seeding data. Intents the
+orchestrator judges too ambiguous to act on are handled separately: rather
+than attempting generation, it returns a clarifying question to the user.
+
+Setting up a pipeline run once at start-up rather than per-request loads
+the embedding model, builds the single package retriever shared across the
+run, and connects to the semantic cache's ChromaDB collection; if that
+connection fails, the failure is caught and logged and the run proceeds
+with caching disabled rather than failing outright, while the BraneScript
+syntax reference is loaded once as plain text and needs no embedding model
+at all. A command-line flag allows the cache to be bypassed explicitly for
+a given invocation.
 
 \section{Knowledge Base and Retrieval}\label{s:kb-impl}
 
@@ -53,27 +49,28 @@ loaded as its own short, unchunked document tagged with the owning package
 name; \texttt{PkgRetriever} reads these documents back out of the collection
 at startup and builds an in-memory alias table from them, so the hybrid
 retrieval strategy described in Chapter~\ref{s:design} never has to guess a
-package's domain vocabulary from its function signatures alone. There is no
-separate store for BraneScript syntax: \texttt{load\_system\_prompt()}
-(\texttt{src/prompts.py}) reads \texttt{data/syntax\_reference.md} once and
-formats it directly into the generation system prompt for every request.
+package's domain vocabulary from its function signatures alone. BraneScript syntax is
+instead loaded  \texttt{load\_system\_prompt()} via \texttt{data/syntax\_reference.md} and
+formatted directly into the generation system prompt for every request.
 
-The knowledge base is not built incrementally: running
-\texttt{python src/knowledgeBase.py} deletes the existing
-\texttt{brane\_pkg\_db} directory outright and re-embeds every package and
-dataset document from scratch into a new collection, rather than inserting
-or updating individual entries. This is a deliberate simplification rather
-than an oversight -- the corpus is small enough (on the order of a hundred
-chunks, Chapter~\ref{s:design}) that a full rebuild completes quickly, so
-the added complexity of an incremental upsert path (tracking which chunks
-changed, handling deletions of removed functions) was not judged worth
-avoiding a rebuild that is already fast enough to run on demand. In
-practice this means that adding a new package, or editing an existing
-package's \texttt{container.yml}, \texttt{keywords.txt}, or \texttt{README.md},
-requires re-running the script once before the change is visible to
-retrieval; nothing in the pipeline detects a stale knowledge base
-automatically, so this rebuild step is a manual part of the package-authoring
-workflow rather than one triggered by pipeline startup.
+As mentioned in (Section~\ref{s:retrieval-design}), in order to support the 
+continuous development of the systems, the knowledge base does not need
+to be rebuilt from scratch when new package or dataset content is added.
+\texttt{knowledgeBase.py} allows the addition of embeddings directly to the existing \texttt{brane\_pkg\_db}
+collection, so registering a new package only requires embedding that
+package's own documents and inserting them, leaving every previously
+indexed package untouched. This means that adding a new
+package, or editing an existing package's \texttt{container.yml},
+\texttt{keywords.txt}, or \texttt{README.md}, only costs the time to embed
+the changed content itself and not the whole catalogue. 
+The current implementation of the pipeline doesn't detects a stale knowledge base automatically, so re-running the
+update is still a manual part of the package-authoring workflow rather
+than one triggered by pipeline startup, but it no longer requires
+discarding and re-embedding every package already registered. This is the
+scaling path referred to in Chapter~\ref{s:design}: as the number of
+registered packages grows well beyond the few used in this thesis, the
+cost of registering one more package stays proportional to that package
+alone.
 
 \section{Brane Packages}\label{s:brane-packages}
 
@@ -84,22 +81,17 @@ testbed for this thesis: \texttt{healthcare}, \texttt{genomics},
 retriever is specific to these seven: both operate against whatever typed
 functions are published in the Brane package registry a given deployment is
 configured against, and the testbed packages exist to provide a concrete,
-end-to-end domain on which to train and evaluate the system, not to bound
-its scope.
+end-to-end domain on which to train and evaluate the system. 
 
 Every package directory follows the same layout: a \texttt{container.yml}
-declaring the package's functions, their typed parameters and return values,
+declaring the package's functions, their typed input parameters and return values,
 and any custom \texttt{class} types it exposes to BraneScript; a single
 Python source file implementing the actual logic; and a \texttt{keywords.txt}
 listing the domain vocabulary a scientist might use to refer to the package
 without naming it directly (Section~\ref{s:retrieval-design}). Six of the
 seven packages additionally include a \texttt{README.md} documenting, in
 prose, the package's Brane dispatch conventions and the meaning of each
-exposed function and class -- written for a human maintainer extending the
-package, not consumed by the pipeline itself. The \texttt{healthcare}
-package additionally ships a small \texttt{unittest} suite exercising its
-core risk-scoring logic directly in Python, independently of any
-BraneScript workflow or Brane runtime.
+exposed function and class, written for a human maintainer with the goal of extending the package documentation.
 
 Each package follows a common dispatch convention: the
 container's entry point reads the invoked function name from
@@ -109,65 +101,47 @@ the corresponding Python function. Structured return values are serialised as
 tagged class instances (\texttt{["ClassName", \{...\}]}), consistent with the
 typed data representation decision in Chapter~\ref{s:design}. Every package is
 of Brane's \texttt{ecu} (\emph{executable code unit}) kind, for which Brane
-itself generates the container image from the \texttt{dependencies},
+itself generates the Docker container image from the \texttt{dependencies},
 \texttt{install}, and \texttt{files} fields declared in
-\texttt{container.yml} -- no package maintains its own \texttt{Dockerfile}.
+\texttt{container.yml}.
 
 \section{Fine-Tuning Infrastructure}\label{s:finetune-impl}
 
-\subsection{Training Dataset}
+\subsection{Training and Evaluation Scripts}
 
-The training corpus is assembled from several \texttt{.jsonl} intent files
-authored over the course of the project, most of them domain-specific
-(e.g., \texttt{packages.jsonl}, \texttt{genomics.jsonl}) and one earlier,
-more generic file (\texttt{training\_500.jsonl}). A deduplication script
-merges them into a single corpus, keeping one copy of each near-duplicate
-intent according to an explicit file-priority order --- the domain-specific
-files take precedence over \texttt{training\_500.jsonl} --- so that the more
-carefully curated examples are retained where the same intent appears in
-more than one file, implementing the dataset design described in
-Chapter~\ref{s:design}.
+\texttt{src/fine\_tuning/train.py} runs fine-tuning with the base model
+supplied as a configuration value rather than hard-coded, so the same training code
+produced the Qwen3.5-4B, Qwen3.5-9B, and Qwen3.6-27B adapters compared in
+Chapter~\ref{s:evaluation} without any per-model changes. Default
+hyperparameters are LoRA rank~16 (alpha~32), 3 epochs, an effective batch
+size of~8, and a learning rate of $2\times10^{-4}$ on a cosine schedule,
+using 4-bit quantisation through Unsloth where available and a plain
+Hugging Face/PEFT fallback otherwise; the response-only loss masking
+described in Chapter~\ref{s:design} is applied at this stage. Training runs
+on Snellius H100 GPUs and resumes automatically from the latest checkpoint
+if a job is pre-empted, rather than restarting from the base model, and
+every run's full hyperparameter set and training progress are logged
+alongside the resulting adapter so that multiple SFT runs against the same
+base model remain distinguishable later.
 
-\texttt{src/fine\_tuning/train.py} implements supervised fine-tuning (SFT).
-Default hyperparameters are LoRA rank~16 (alpha~32), 3 epochs, batch
-size~2 with gradient accumulation~4 (effective batch size~8), learning rate
-$2\times10^{-4}$ with a cosine schedule, using 4-bit quantisation through
-Unsloth where available, with a plain Hugging Face/PEFT fallback otherwise.
-The base model is read from an environment variable rather than hard-coded,
-so the same script fine-tuned Qwen3.5-4B, Qwen3.5-9B, and Qwen3.6-27B
-independently for the comparison in Chapter~\ref{s:evaluation}. A
-\texttt{DataCollatorForCompletionOnlyLM}/\texttt{train\_on\_responses\_only()}
-path implements the response-only loss masking described in
-Chapter~\ref{s:design}. Training runs on Snellius H100 GPUs via
-\texttt{sbatch\_finetune.sh}; checkpoints are saved and evaluated against the
-validation split periodically, and training resumes automatically from the
-latest checkpoint on restart unless a clean run is explicitly requested, so
-that a pre-empted HPC job does not have to restart from the base model. A
-\texttt{MetricsCallback} logs loss, gradient norm, learning rate, and epoch to
-\texttt{outputs/metrics/\textit{model}\_training\_metrics.jsonl} after every
-step, and \texttt{\_save\_training\_config()} records the full hyperparameter
-set alongside the resulting adapter, so that multiple SFT runs against the
-same base model remain distinguishable.
-
-\texttt{src/fine\_tuning/evaluate.py} computes the three metrics used
-throughout Chapter~\ref{s:evaluation}: \emph{compile rate} (the fraction of
-generated scripts accepted by the Brane compiler), \emph{execution rate} (the
-fraction that run to completion with exit code~0), and \emph{output match
-rate} (the fraction of executed scripts, among those with a stored reference
-output, whose \texttt{stdout} matches the reference exactly). It decomposes
-each intent into sub-tasks before retrieval by default, via the same
-\texttt{IntentDecomposer} built from the model already loaded for
-generation; a \texttt{--skip-decomposition}
-flag disables this step so that its effect on the reported metrics can be
-measured directly (Chapter~\ref{s:evaluation}). It deliberately never
-consults the semantic cache, for the reason given in Chapter~\ref{s:design}:
-a cache hit would let a previously generated correct answer masquerade as
-freshly generated output, inflating the reported rates without reflecting
-the model actually being evaluated. The script
-embeds the corresponding \texttt{training\_config.json} into each evaluation
-result file, which lets the dashboard (Section~\ref{ss:frontend}) distinguish
-between multiple SFT runs of the same base model without additional
-bookkeeping.
+Evaluation is handled by \texttt{evaluate.py}, which computes the three
+metrics used throughout Chapter~\ref{s:evaluation}: \emph{compile rate} (the
+fraction of generated scripts accepted by the Brane compiler),
+\emph{execution rate} (the fraction that run to completion with exit
+code~0), and \emph{output match rate} (the fraction of executed scripts,
+among those with a stored reference output, whose \texttt{stdout} matches
+the reference exactly). It decomposes each intent into sub-tasks before
+retrieval by default, using the same decomposition step described in
+Chapter~\ref{s:design}, but can optionally skip this step so that its
+effect on the reported metrics can be measured directly
+(Chapter~\ref{s:evaluation}). It also deliberately never consults the
+semantic cache, for the reason given in Chapter~\ref{s:design}: a cache hit
+would let a previously generated correct answer masquerade as freshly
+generated output, inflating the reported rates without reflecting the
+model actually being evaluated. Each evaluation run records which training
+configuration produced the model under test, so that the dashboard
+(Section~\ref{ss:frontend}) can distinguish between multiple SFT runs of
+the same base model without additional bookkeeping.
 
 \section{Semantic Cache}\label{s:cache-impl}
 
@@ -185,7 +159,7 @@ any decomposition or retrieval work is done, by \texttt{run\_pipeline()} and
 by \texttt{generate\_single.py} alike, so that a cache hit avoids
 model-loading and inference cost entirely, in line with the
 progressive-trust ordering. \texttt{evaluate.py} is the one caller that
-deliberately never touches the cache (Chapter~\ref{s:design}).
+deliberately never touches the cache, as its whole purpose is to evaluate the actual model performance (Chapter~\ref{s:evaluation}).
 
 \subsection{Cache Evaluation Harness}
 

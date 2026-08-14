@@ -103,6 +103,19 @@ them differently rather than folding both into a single retrieval mechanism:
         itself is not specific to those packages.
 \end{itemize}
 
+The retriever's index is built to grow one package at a time rather than
+being rebuilt whole. Treating package registration as a full rebuild would
+have been the simpler alternative: re-embed every package document into a
+fresh collection any time a package is added, edited, or removed. That
+alternative was rejected because it ties the cost of adding a single
+package to the size of the entire catalogue, which works against the
+premise of the second bullet above --- that package context should scale to
+as many packages as a Brane deployment chooses to register. Instead, a
+newly registered package is embedded and inserted into the existing
+collection on its own, leaving every previously indexed package untouched,
+so the cost of registering one more package does not grow with how many
+are already registered.
+
 \subsection{Chunking Granularity}
 
 An earlier design indexed each package's \texttt{container.yml} specification
