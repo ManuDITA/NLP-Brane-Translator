@@ -67,7 +67,7 @@ EVAL_DIR       = PROJECT_ROOT / "outputs" / "eval"
 BRANE_INSTANCE = os.environ.get("BRANE_INSTANCE", "local-instance")
 BRANE_TIMEOUT  = 30
 BRANE_WORKERS  = 8
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 1024
 TEMPERATURE    = 0.0   # greedy for reproducible evaluation
 
 # Built once at module load — includes full syntax_reference.md
