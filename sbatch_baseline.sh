@@ -62,8 +62,9 @@ echo "HF cache : ${HF_HOME}"
 #   Medium (8B)  → Qwen/Qwen3-8B
 #   Large  (32B) → Qwen/Qwen3-32B
 export EVAL_MODEL="${EVAL_MODEL:?ERROR: EVAL_MODEL not set. Example: EVAL_MODEL=Qwen/Qwen3-4B sbatch sbatch_baseline.sh}"
-export EVAL_LABEL="${EVAL_LABEL:-}"   # optional — auto-derived from model path if empty
+export EVAL_LABEL="${EVAL_LABEL:-}"
 export EVAL_TEST_FILE="${EVAL_TEST_FILE:-${PROJECT_DIR}/data/training/train.jsonl}"
+export EVAL_SKIP_DECOMPOSITION="${EVAL_SKIP_DECOMPOSITION:-0}"
 
 echo "Model    : ${EVAL_MODEL}"
 echo "Label    : ${EVAL_LABEL:-<auto>}"
@@ -84,7 +85,8 @@ python "${PROJECT_DIR}/src/fine_tuning/evaluate.py" \
     ${EVAL_LABEL:+--label "${EVAL_LABEL}"} \
     --test-file     "${EVAL_TEST_FILE}" \
     --generate-only \
-    --resume
+    --resume \
+    $([[ "${EVAL_SKIP_DECOMPOSITION}" == "1" ]] && echo "--skip-decomposition")
 
 echo ""
 echo "✅ Baseline evaluation finished at $(date)"
