@@ -80,13 +80,16 @@ echo ""
 echo "🔍 Starting baseline evaluation at $(date)"
 echo "──────────────────────────────────────────────────────"
 
+DECOMP_FLAG=""
+[[ "${EVAL_SKIP_DECOMPOSITION}" == "1" ]] && DECOMP_FLAG="--skip-decomposition"
+
 python "${PROJECT_DIR}/src/fine_tuning/evaluate.py" \
     --model         "${EVAL_MODEL}" \
     ${EVAL_LABEL:+--label "${EVAL_LABEL}"} \
     --test-file     "${EVAL_TEST_FILE}" \
     --generate-only \
     --resume \
-    $([[ "${EVAL_SKIP_DECOMPOSITION}" == "1" ]] && echo "--skip-decomposition")
+    ${DECOMP_FLAG}
 
 echo ""
 echo "✅ Baseline evaluation finished at $(date)"

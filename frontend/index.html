@@ -1806,7 +1806,18 @@ function evalTagClass(label) {
 // Store training configs keyed by slug for modal access
 const _evalTrainingConfigs = {};
 
+let _evalSortKey = 'model';
+let _evalSortDir = 1; // 1 = asc, -1 = desc
+let _evalSummaries = [];
+
+function sortEvalTable(key) {
+  if (_evalSortKey === key) _evalSortDir *= -1;
+  else { _evalSortKey = key; _evalSortDir = 1; }
+  renderEvalCmpTable(_evalSummaries);
+}
+
 function renderEvalCmpTable(summaries) {
+  _evalSummaries = summaries;
   const wrap = document.getElementById('eval-cmp-wrap');
   const rows = summaries.map(s => {
     // Cache info for click handler (always, even without training_config)
@@ -1853,7 +1864,7 @@ function renderEvalCmpTable(summaries) {
          </span>`
       : `<span class="model-label-tag ${tc}">${escHtml(s.model || s.slug)}</span>`;
 
-    return `<tr>
+    return { html: `<tr>
       <td>${labelEl}</td>
       <td>${cr}</td>
       <td>${er}</td>
@@ -1861,21 +1872,29 @@ function renderEvalCmpTable(summaries) {
       <td>${cmr}</td>
       <td style="color:var(--muted);font-family:var(--font-mono);font-size:12px">${s.total ?? '—'}</td>
       <td style="color:var(--muted);font-size:12px">${ts}</td>
-    </tr>`;
-  }).join('');
+    </tr>`, _model: (s.model || s.slug).toLowerCase(), _compile: s.compile_rate ?? -1,
+      _exec: s.execution_rate ?? -1, _match: s.output_match_rate_total ?? -1, _ts: s.timestamp ?? '' };
+  });
+
+  const sortFns = { model: r => r._model, compile: r => r._compile, exec: r => r._exec, match: r => r._match, ts: r => r._ts };
+  const fn = sortFns[_evalSortKey] || sortFns.model;
+  rows.sort((a, b) => { const av = fn(a), bv = fn(b); return av < bv ? -_evalSortDir : av > bv ? _evalSortDir : 0; });
+
+  const arrow = k => _evalSortKey === k ? (_evalSortDir === 1 ? ' ▲' : ' ▼') : '';
+  const th = (label, key) => `<th style="cursor:pointer;user-select:none" onclick="sortEvalTable('${key}')">${label}${arrow(key)}</th>`;
 
   wrap.innerHTML = `<div style="overflow-x:auto">
     <table class="cmp-table">
       <thead><tr>
-        <th>Model</th>
-        <th>Compile %</th>
-        <th>Execute %</th>
-        <th>Output Match %</th>
+        ${th('Model','model')}
+        ${th('Compile %','compile')}
+        ${th('Execute %','exec')}
+        ${th('Output Match %','match')}
         <th>Committed Match %</th>
         <th>Examples</th>
-        <th>Evaluated</th>
+        ${th('Evaluated','ts')}
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${rows.map(r => r.html).join('')}</tbody>
     </table>
   </div>`;
 }
