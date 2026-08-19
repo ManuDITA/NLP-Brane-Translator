@@ -3,18 +3,83 @@
 This chapter interprets the results of Chapter~\ref{s:evaluation} in light of
 the research questions and the motivation set out in Chapter~\ref{s:intro}.
 
-\section{RQ1/RQ2 --- Engineering Effort Dominates Model Scale}
+% ──────────────────────────────────────────────────────────────────────────────
+\section{RQ1 --- Scale Shifts Failure Modes, Not Just Rates}
+
+\subsection{The ceiling problem}
+
+The most striking aspect of the RQ1 results is not the improvement in compile
+and execution rates across model scales, but the ceiling on output match rate.
+Even at 27B parameters --- a model that compiles 95.6\% of scripts and
+executes 93.2\% --- only 49.6\% of generated workflows produce output that
+matches the reference. This means that for every two scripts the 27B model
+generates and successfully executes, one produces a wrong answer.
+
+The gap between execution rate (93.2\%) and output match rate (49.6\%) at 27B
+is 43.6 percentage points, substantially larger than the same gap at 4B
+(30.5 points) and 9B (35.9 points). As the model grows more capable at
+producing syntactically valid BraneScript, the bottleneck shifts: rather than
+failing to write code the compiler accepts, the model increasingly writes code
+that is structurally correct but logically wrong. This pattern is consistent
+with findings in code generation research more broadly, where larger models
+outperform smaller ones on syntax-heavy benchmarks far more readily than on
+semantic-correctness benchmarks requiring precise parameter passing and
+multi-step reasoning.
+
+\subsection{What the error breakdown reveals}
+
+The error type analysis in Section~\ref{s:eval-errors} provides a finer-grained
+picture of this shift. At 4B, the dominant failure category is compile-time
+undefined variable errors (24.1\% of all examples), which are straightforward
+structural failures: the model emits a reference to a variable it never
+declared. These errors suggest the model has not reliably internalised the
+BraneScript scoping rules, where every variable must be declared with
+\texttt{let} before use.
+
+At 9B, undefined variable errors persist at nearly the same rate (24.5\%),
+but syntax errors drop sharply from 17.5\% to 4.8\%. The 9B model appears to
+handle BraneScript grammar more reliably while still struggling with state
+tracking across multi-step workflows. The rise in undefined function errors
+(from 1.4\% to 3.8\%) suggests the model is becoming more ambitious in what
+it attempts --- calling package functions it has not verified are available ---
+even as its basic syntax improves.
+
+At 27B, compile failures are almost entirely eliminated (syntax: 1.4\%,
+undefined variables: 0.2\%, undefined functions: 2.4\%), but output mismatch
+rises to 43.6\%. The model produces structurally valid workflows that execute
+without error yet return incorrect output. These are the hardest failures to
+detect and correct: unlike a compile error, which is immediately surfaced, a
+semantically wrong but syntactically valid BraneScript would silently return
+wrong results to a researcher relying on the pipeline. This class of failure
+--- confident, plausible-looking, but incorrect output --- is arguably the
+most practically dangerous failure mode for a system used in scientific data
+analysis.
+
+\subsection{Implications for deployment without a compiler}
+
+An important practical implication of the error profile shift is that compile
+rate is only a reliable quality signal for smaller models. For a 27B-class
+model, a script that compiles is not substantially more likely to be correct
+than one that does not: 43.6\% of examples mismatch even after successful
+execution. Any deployment of this system must therefore include an execution
+step and output verification, not just compilation checking.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\section{RQ2 --- Engineering Effort Dominates Model Scale}\label{s:disc-rq2}
+
+\subsection{Prompt engineering is real}
 
 The single largest effect observed in this thesis is not a modelling result at
 all: correcting the system prompt and RAG configuration moved the 27B model's
-execution rate from 37.9\% to 92.7\% with no change to model weights
-(Figure~\ref{fig:baseline-first-run} vs.\ Figure~\ref{fig:base-model-comparison}). A naive reading
-of the July results alone would have concluded that even a 27B model is
-unreliable at BraneScript generation, and that only a much larger model could
-close the gap; the August results show that this conclusion would have been
-wrong, and that the actual bottleneck was grounding and instruction quality.
+execution rate from 37.9\% to 93.2\% with no change to model weights as represented in Figure~\ref{fig:baseline-first-run}.
+A naive reading of the first evaluation round alone would have concluded that
+even a 27B model is unreliable at BraneScript generation, and that only a
+much larger commercial-grade model could close the gap. After the second round,
+it is clear that this conclusion would have been wrong, and that the actual
+bottleneck was grounding and instruction quality.
+
 This has a direct practical implication for anyone deploying an LLM-based
-translator for a low-resource DSL: invest first in precise retrieval and an
+translator for a low-resource DSL: investing first in precise retrieval and an
 unambiguous system prompt, and only then in model size or further fine-tuning.
 Because the prompt, retrieval aliases, and output post-processing were all
 revised together between the two evaluation rounds, this finding should be
@@ -26,48 +91,102 @@ validates gap G2 as identified in the literature review
 translation is not raw model capability but a carefully engineered bridge
 between the two.
 
+\subsection{The decomposition contribution}
+
+The ablation in Section~\ref{s:eval-decomp} isolates one specific component
+of that bridge: the intent decomposer. Removing it reduces compile rate from
+66.1\% to 52.9\%, execution rate from 64.9\% to 48.1\%, and output match from
+36.9\% to 26.0\% on the 9B model. The consistent degradation across all three
+metrics indicates that the decomposer contributes positively at every stage of
+the pipeline, not just at one particular failure mode.
+
+The most likely mechanism is retrieval quality: without decomposition, the
+RAG retriever receives a long, multi-clause natural-language intent as its
+query. This is a poor match for the chunked package documentation and example
+fragments in the retrieval index, which are written around individual function
+signatures and use cases. By breaking the intent into sub-tasks with explicit
+package and function candidates, the decomposer converts an ambiguous semantic
+query into a precise set of structured queries that align much better with
+the retrieval index's granularity. The decomposer therefore amplifies the
+value of RAG: it makes retrieved context more relevant, which in turn makes
+the generator's task easier.
+
+It is also notable that the output match rate under no-decomposition (26.0\%)
+remains well above zero, meaning the generator can still produce correct
+workflows from unstructured input in roughly one in four cases. This suggests
+the base model has absorbed enough BraneScript knowledge from its pretraining
+to handle simple, single-package intents without decomposition, while the
+multi-package and multi-step cases, which require precise package selection
+and function chaining, are the primary beneficiaries of decomposition.
+
+% ──────────────────────────────────────────────────────────────────────────────
 \section{RQ3 --- Fine-Tuning Requires Train/Inference Consistency}
 
-The regression observed for the first SFT model (49.5\% execution vs.\ 63.4\%
-for the corresponding base model, Section~\ref{s:evaluation}) is, on its own
-terms, a negative result for naively applying supervised fine-tuning. However,
-its cause --- a mismatch between the prompt format used during training and the
-one used at evaluation time --- generalises beyond this project: any
-fine-tuned model is only as reliable as the consistency between how it was
-trained and how it is subsequently prompted. Because BraneScript-generation
-prompts are themselves a moving target during development (the system prompt
-was revised multiple times to fix concrete failure modes, Section~\ref{s:design}),
-a fine-tuned model is effectively coupled to the exact prompt version it was
-trained against, which has implications for how such systems should be
-maintained in production: a prompt change should be treated as invalidating
-existing fine-tuned adapters until they are retrained. The retrained models
-(\texttt{qwen3.5-9b-ep5}, \texttt{qwen3.6-27b-ep5}) are expected to close this
-gap, but their evaluation was not complete at the time of writing
-(Section~\ref{s:evaluation}), so RQ3 can currently only be answered
-qualitatively: fine-tuning has the potential to improve translation accuracy
-further, but only if paired with disciplined prompt version control.
+The regression observed for the 3ep SFT model (49.4\% execution vs.\ 64.9\%
+for the corresponding base model) is, on its own terms, a negative result for
+naively applying supervised fine-tuning. However, its cause --- a mismatch
+between the prompt format used during training and the one used at evaluation
+time --- generalises beyond this project: any fine-tuned model is only as
+reliable as the consistency between how it was trained and how it is
+subsequently prompted. Because BraneScript-generation prompts are themselves a
+moving target during development (the system prompt was revised multiple times
+to fix concrete failure modes, Section~\ref{s:design}), a fine-tuned model is
+effectively coupled to the exact prompt version it was trained against, which
+has implications for how such systems should be maintained in production: a
+prompt change should be treated as invalidating existing fine-tuned adapters
+until they are retrained.
 
-\section{RQ4 --- Semantic Caching Has a Fundamental, Not Just an Engineering, Limit}
+% ──────────────────────────────────────────────────────────────────────────────
+\section{RQ4 --- Semantic Caching Has a Fundamental, Not Just an Engineering, Limit}\label{s:disc-rq4}
+
+\subsection{The false-positive floor}
 
 The cache threshold sweep (Section~\ref{s:eval-cache}) shows an irreducible
-false-positive floor of approximately 0.9\% across a wide range of thresholds.
-Unlike the RQ1/RQ2 finding above, this is not attributable to fixable
-engineering choices: it follows from the fact that a general-purpose sentence
-embedding model encodes what an intent is \emph{about}, not the exact parameter
-values within it. Two intents that differ only in a threshold value or a
-column name are, for most practical purposes, requests for different
-computations, yet they are nearly indistinguishable in embedding space. This is
-a direct, empirical instance of gap G3 (no agreed definition of intent
+false-positive floor of approximately 0.9\% across thresholds from 0.80 to
+0.92. Unlike the RQ1/RQ2 finding above, this floor is not attributable to
+fixable engineering choices: it follows from the fact that a general-purpose
+sentence embedding model encodes what an intent is \emph{about}, not the
+exact parameter values within it. Two intents that differ only in a threshold
+value, a column name, or a dataset identifier are, for most practical purposes,
+requests for different computations, yet they are nearly indistinguishable in
+embedding space. Raising the threshold above 0.92 reduces the false-positive
+rate only marginally (from 0.8\% to 0.1\% at 0.98) while collapsing the hit
+rate from 99.1\% to 59.1\% --- an extremely poor trade-off that essentially
+defeats the purpose of the cache.
+
+This is a direct, empirical instance of gap G3 (no agreed definition of intent
 reproducibility, Chapter~\ref{s:background}): the semantic cache implicitly
 assumes that ``reproducible'' means ``the same workflow for the same
 \emph{propositional} intent'', while for scientific correctness it must mean
-``the same workflow for the same intent \emph{including all parameter
-values}''. The recommendation to keep the threshold near 0.90--0.92 rather
-than try to eliminate false positives entirely reflects an acceptance of this
-trade-off rather than a solution to it; a more complete solution would likely
-require entity/parameter extraction layered on top of sentence embeddings, which
-is left as future work (Chapter~\ref{s:conclusion}).
+``the same workflow for the same intent \emph{including all parameter values}''.
 
+\subsection{The operating point and its practical meaning}
+
+At the default threshold of 0.92, the cache achieves a hit rate of 99.1\% and
+a correct rate of 98.3\% over the 1974 paraphrase intents. The remaining
+0.8\% false-positive rate means that for every 125 cache hits, approximately
+one will return a workflow intended for a semantically similar but distinct
+intent. In a scientific computing context, this is not a negligible risk: a
+wrong workflow executed silently on a dataset could produce results that look
+plausible but are derived from the wrong analysis. The cache therefore should
+not be used as the sole quality gate; it should be treated as a performance
+optimisation that removes redundant LLM calls for clearly equivalent intents,
+while the execution and output verification steps remain active for all
+workflows, cached or not.
+
+\subsection{Why the hit rate is so high}
+
+The 99.1\% hit rate at threshold 0.92 deserves some scrutiny: it is
+evaluated against paraphrases generated by the same LLM (Qwen3.5-4B) that
+was used to build the cache, using the same embedding model
+(\texttt{all-MiniLM-L6-v2}). Paraphrases from the same model family are
+likely to produce embeddings that cluster more tightly than paraphrases from
+a human or a different model would. The hit rate in real deployment, where
+users rephrase requests with genuinely diverse vocabulary and sentence
+structure, may be lower. This is a limitation discussed further in
+Chapter~\ref{sec:threats}.
+
+% ──────────────────────────────────────────────────────────────────────────────
 \section{Revisiting the Choice of Brane}
 
 The motivation for using Brane as the testbed for this work
@@ -83,21 +202,52 @@ that motivation: every one of the seven packages used in this work
 \texttt{datetime}) executes against data registered locally, and at no point
 does the generation pipeline --- which may call out to a shared or remote LLM
 service --- receive raw patient or genomic records; it only ever sees the
-intent text and package/dataset \emph{metadata}. The translation problem
-studied here is thus additive to Brane's existing privacy guarantees rather
-than a replacement for them: a correct BraneScript workflow inherits Brane's
-data-locality enforcement automatically, simply by virtue of being expressed
-in BraneScript rather than in a Python script with unrestricted file access.
+intent text and package and dataset \emph{metadata}. The translation problem
+studied here is therefore additive to Brane's existing privacy guarantees
+rather than a replacement for them: a correct BraneScript workflow inherits
+Brane's data-locality enforcement automatically, simply by virtue of being
+expressed in BraneScript rather than in a Python script with unrestricted file
+access.
 
+The static typing of BraneScript has a secondary benefit that emerged
+empirically through this thesis: it makes evaluation cleaner than it would be
+for a dynamically typed target language. Because the compiler rejects undefined
+variables, undefined functions, and type mismatches at compile time, compile
+rate is a meaningful and automatically computable proxy for a large class of
+semantic errors, without requiring execution. This is not a property of most
+target languages used in comparable NL-to-code work (Python, SQL, Bash), where
+many structural errors only surface at runtime or not at all. The strictness
+that makes BraneScript difficult to generate correctly is the same property
+that makes incorrect generation immediately detectable.
+
+% ──────────────────────────────────────────────────────────────────────────────
 \section{Summary}
 
 Taken together, the results suggest a layered picture of where accuracy comes
-from in intent-based scientific workflow generation: retrieval and prompt
-engineering account for the largest single improvement observed, fine-tuning
-offers a further, but consistency-dependent, improvement, and semantic caching
-offers a strong but fundamentally bounded reproducibility mechanism. None of
-these three layers is a substitute for the others, and each addresses a
-different failure mode: retrieval and prompting address the model's lack of
+from in intent-based scientific workflow generation.
+
+Retrieval and prompt engineering account for the largest single improvement
+observed, and should be the first investment for anyone building a similar
+system for a low-resource DSL. The decomposer contributes a further, consistent
+improvement by converting vague multi-clause intents into structured retrieval
+queries; its removal degrades all three metrics by 10--17 percentage points.
+
+Scaling the base model from 4B to 27B brings substantial compile and execution
+rate improvements, but the output match ceiling at 49.6\% reveals that scale
+alone cannot solve the semantic accuracy problem. The dominant failure mode at
+27B is no longer structural but semantic: the model generates plausible,
+executable workflows that return the wrong answer, a failure class that is
+harder to detect and more dangerous in practice than a compile error.
+
+Semantic caching provides a strong and computationally cheap reproducibility
+mechanism for repeated or paraphrased intents, but has an irreducible
+false-positive floor imposed by the limitations of sentence embeddings as a
+proxy for computational equivalence. The threshold of 0.92 represents an
+acceptable operating point, not a principled solution to the parameter
+sensitivity problem.
+
+None of these three layers is a substitute for the others, and each addresses
+a different failure mode: retrieval and prompting address the model's lack of
 BraneScript-specific knowledge, fine-tuning addresses residual syntactic and
-package-usage errors, and caching addresses redundant computation and
-partial reproducibility for repeated intents.
+package-usage errors, and caching addresses redundant computation and partial
+reproducibility for repeated intents.

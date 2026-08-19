@@ -2,8 +2,8 @@
 
 This chapter presents the system built to address the problem stated in
 Chapter~\ref{s:intro}: translating a natural-language scientific intent into a
-correct, executable BraneScript workflow. We describe the system from the
-perspective of a researcher submitting an intent, and present the resulting
+correct, executable and reproducible BraneScript workflow within a set of privacy boundaries.
+We describe the system from the perspective of a researcher submitting an intent, and present the resulting
 architecture as it appears from that same vantage point; the design
 rationale behind these choices is developed in Chapter~\ref{s:design}, and
 their implementation in Chapter~\ref{s:implementation}.
@@ -11,34 +11,25 @@ their implementation in Chapter~\ref{s:implementation}.
 \section{User Perspective}\label{s:user-perspective}
 
 The researcher uses the system by typing what they want done in plain English: 
-\emph{``I want to analyse all heart-disease data using package
-Healthcare''}. Nothing about BraneScript's syntax, a package's function
+\emph{``I want to analyse all heart-disease data from the patients of the Amsterdam UMC''}. 
+No knowledge about BraneScript's syntax, package's function
 signatures, or how Brane actually executes the workflow needs to be known
 beforehand or added to the request.
 
-\paragraph{Entry points.} Two entry points expose this interaction, both
-built around the same cache-lookup, decomposition, retrieval, and generation
-steps (Section~\ref{s:pipeline-variants} and Chapter~\ref{s:implementation}
-give the full detail), but aimed at different use cases:
+\paragraph{Entry points.} Two entry points expose this interaction, aimed at different use cases:
 
 \begin{itemize}
-    \item \textbf{Command-line tool} (\texttt{src/pipeline.py}). Intended for
+    \item \textbf{Command-line tool}. Intended for
         local development, debugging, and batch experimentation, this entry
         point is invoked directly on a machine with the model loaded locally,
         either for a single intent or for a file of intents processed one
         after another. It runs synchronously to completion, submitting the
         generated script for execution once ready.
 
-    \item \textbf{Web dashboard} (\texttt{frontend/}). This is the entry
-        point intended for interactive day-to-day use. Its \emph{Generate}
-        page is where a researcher types an intent and picks a model; the
-        dashboard submits a batch job to the Snellius HPC cluster on a cache
-        miss, polls for completion, and forwards the generated script and
-        any compiler or runtime errors back to the researcher. On failure, it
-        automatically resubmits the request with the error appended as
-        corrective context, up to a fixed number of attempts, without the
-        researcher having to intervene. Generation is only one of the
-        dashboard's roles, however: Section~\ref{s:dashboard-monitoring}
+    \item \textbf{Web dashboard}. Intended for interactive day-to-day use. Its \emph{Generate}
+        page is where a researcher types an intent, picks a model and
+        sees the generated script and its execution result. 
+        Generation is only one of the dashboard's roles, however: Section~\ref{s:dashboard-monitoring}
         describes the further pages through which a researcher browses past
         intents, the package/dataset catalog, and model evaluation results.
 \end{itemize}
@@ -66,11 +57,6 @@ eventually resolves to one of three outcomes:
         missing information (e.g., a dataset name) supplied explicitly.
 \end{enumerate}
 
-Figure~\ref{fig:sequence-diagram} (Section~\ref{s:interaction-sequence}) traces
-the interactive (dashboard) case in detail, showing the full sequence of
-messages between the researcher, the dashboard, the semantic cache, the
-generation worker running on Snellius, and the Brane runtime that ultimately
-compiles and executes the workflow.
 
 \section{Process Architecture}\label{s:pipeline-variants}
 
@@ -81,7 +67,7 @@ organised around the six logical components that follow:
 \begin{enumerate}
     \item The \textbf{semantic cache} is consulted first, before any other
         work is done. It holds previously generated (intent, workflow,
-        result) triples and returns one immediately if the incoming intent
+        result) triples and returns it immediately if the incoming intent
         is close enough, in embedding space, to one already seen.
     \item On a miss, \textbf{intent decomposition} breaks the (often
         compound) natural-language intent into a short list of concrete
@@ -99,9 +85,9 @@ organised around the six logical components that follow:
         whether the generated workflow is valid: a single \texttt{brane
         workflow run} invocation compiles the script and, if compilation
         succeeds, executes it against the real, federated data the
-        workflow's functions address.
+        workflow's functions address. The result is returned to the researcher.
     \item A \textbf{feedback loop} connects the last component back to the
-        fourth: a compilation or runtime failure is captured and fed into
+        fourth in case a compilation or runtime failure is captured. The error is fed into
         the next generation attempt as corrective context, for a bounded
         number of retries, before the researcher sees anything.
 \end{enumerate}
@@ -180,37 +166,26 @@ on, and how that placement enforces the privacy motivation behind this work
 
 The six logical components fall into three tiers of physical infrastructure.
 The \textbf{dashboard server} is the only tier a researcher's browser talks
-to directly; it hosts the frontend and local API process
-(\texttt{server.py}), but holds no model weights and no package or dataset
-data of its own. On a cache miss, it submits a batch job over SSH to the
+to directly as it hosts the frontend and local API process.
+On a cache miss, it submits a batch job over SSH to the
 \textbf{Snellius HPC cluster}, where the semantic cache, intent
 decomposition, package/dataset retrieval, and the fine-tuned LLM all run
 together as a single SLURM job. These four components are always
-co-located as the cache gates whether the (expensive) LLM is loaded at all. 
-The command-line entry point collapses the dashboard-server and Snellius-cluster tiers into whichever
-single machine the researcher runs \texttt{pipeline.py} on, but is otherwise
-architecturally identical.
+co-located as the cache gates whether the (expensive) LLM is invoked at all. 
 
-Downstream of generation sits the \textbf{Brane control node}: the
-dashboard/Snellius path and the command-line path both hand their generated
-script to it via one \texttt{brane workflow run} call. The control node
+Downstream of generation sits the \textbf{Brane control node}: the user
+translated intent is executed on this node via a \texttt{brane workflow run} call. The control node
 compiles the script and schedules each function's execution to whichever
 federated site actually holds the data that function needs and by following Brane's philosopy,
 it is not (always) a data-holding site itself. Figure~\ref{fig:deployment-topology} shows two
-such sites, Site A and Site B, as independent examples: each runs its own
-Brane runtime worker against its own local data, and that runtime, not the
-control node, is what actually reads the data in place. The control node
-coordinates and audits every call it schedules, but a site's data is never
-routed back through it (unless specifically committed), nor through the Snellius cluster or the dashboard
-server that produced the script asking for it. This three-tier separation --
-user interface, LLM-hosting compute, and per-site Brane runtimes -- is what lets
-the LLM-facing part of the system run on whichever hardware is convenient
+such sites, Site A and Site B, as independent examples, where each runs its own
+Brane runtime worker against its own local data without exposing it to other entities. 
+ 
+This three-tier separation, composing of user interface, LLM-hosting compute, 
+and per-site Brane runtimes, is what lets the LLM-facing 
+part of the system run on whichever hardware is convenient
 (a laptop, a shared HPC cluster, eventually a cloud-hosted API) without that
-choice ever placing raw data outside the site that owns it: the LLM never
-sees a site's actual data, only the natural-language intent and the
-package/dataset \emph{metadata} retrieved for it, while the site's Brane
-runtime never has to leave its own network to do anything the workflow asks
-of it.
+choice ever placing raw data outside the site that owns it
 
 \begin{figure}[htbp]
     \centering
@@ -271,109 +246,8 @@ of it.
         \draw[rel] (brt-b) -- (data-b);
     \end{tikzpicture}}
     \caption{Physical deployment of the components shown in
-    Figure~\ref{fig:pipeline-architecture}, for the interactive (dashboard)
-    entry point; discussed in the text above. Site A and Site B are shown as
-    two independent examples of federated sites reachable from the same
-    Brane control node.}
+    Figure~\ref{fig:pipeline-architecture}}
     \label{fig:deployment-topology}
-\end{figure}
-
-\FloatBarrier
-
-\section{Interaction Sequence}\label{s:interaction-sequence}
-
-Figure~\ref{fig:pipeline-architecture} shows the components involved in a
-single request but not the timing of the messages between them, in
-particular the asynchronous submit/poll/retry pattern of the interactive
-dashboard entry point. Figure~\ref{fig:sequence-diagram} makes that timing
-explicit for the case a researcher exercises in day-to-day use: the
-researcher's browser, the dashboard backend, the semantic cache, the
-generation worker running as a batch job on Snellius, and the Brane runtime
-that ultimately compiles and executes the workflow.
-
-The diagram distinguishes two branches. On a \textbf{cache hit} (top frame,
-steps 1--3), the dashboard looks up the submitted intent against the
-semantic cache and, on a similarity match, returns the cached script and its
-previously recorded execution result directly to the researcher; nothing on
-Snellius or Brane is touched, and no model is loaded. On a \textbf{cache
-miss} (bottom frame, steps 4--14), the dashboard instead submits a SLURM
-batch job to Snellius and immediately hands the researcher back a request
-identifier and a ``submitted'' status (steps 5--6), rather than blocking the
-HTTP request for however long generation and execution take; the
-researcher's browser polls a status endpoint for that identifier until the
-job completes (step 7). On the Snellius side, the worker performs the
-process-architecture steps described in Section~\ref{s:pipeline-variants} in
-order -- decomposing the intent, retrieving package/dataset context, and
-generating a candidate script (step 8) -- and then submits that script to
-the Brane runtime with a single \texttt{brane workflow run} call (step 9),
-receiving back an exit code and captured stdout/stderr (step 10). The worker
-writes this result where the dashboard can find it (step 11); if execution
-failed and retries remain, the dashboard resubmits the same request with the
-failure fed back into the prompt as corrective context (step 12), returning
-to step 5. Once a script executes successfully, the result is written to
-the semantic cache (step 13) before the final script and outcome are
-returned to the researcher (step 14).
-
-The command-line entry point (\texttt{pipeline.py}) follows the same overall
-shape -- cache lookup, decomposition, retrieval, generation, cache store on
-success -- but differs from the diagram in one respect: it has no
-equivalent of step~7's polling, since it runs synchronously to completion on
-the researcher's own machine instead of via a remote batch scheduler.
-
-\begin{figure}[htbp]
-    \centering
-    \resizebox{\textwidth}{!}{%
-    \begin{tikzpicture}[
-        lifeline/.style={draw, thick, minimum width=2.6cm, minimum height=0.9cm,
-            align=center, font=\small\bfseries, fill=gray!12},
-        msg/.style={-{Latex[length=2.2mm]}, thick},
-        ret/.style={-{Latex[length=2.2mm]}, thick, dashed},
-        fb/.style={-{Latex[length=2.2mm]}, thick, dashed, red!65!black},
-        lbl/.style={font=\scriptsize, align=center},
-        seqframe/.style={draw, thick, rounded corners=1pt, inner sep=6pt},
-        frametitle/.style={draw, thick, fill=yellow!20, font=\bfseries\scriptsize,
-            align=left, anchor=north west, inner sep=3pt}
-    ]
-        \node[lifeline] (usr)   at (0, 0)    {Researcher};
-        \node[lifeline] (dash)  at (3.8, 0)  {Dashboard};
-        \node[lifeline] (cache) at (7.6, 0)  {Semantic\\Cache};
-        \node[lifeline] (gen)   at (11.4, 0) {Snellius\\worker};
-        \node[lifeline] (brane) at (15.2, 0) {Brane\\runtime};
-
-        \foreach \p in {usr, dash, cache, gen, brane}
-            \draw[dotted] (\p.south) -- ++(0,-20.6);
-
-        \draw[msg] (usr.south |- 0,-1.3) -- node[lbl, above]{1: submit intent} (dash.south |- 0,-1.3);
-
-        \draw[msg] (dash.south |- 0,-2.9) -- node[lbl, above]{2: lookup(intent)} (cache.south |- 0,-2.9);
-        \draw[ret] (cache.south |- 0,-3.7) -- node[lbl, above]{2': cached (script, result)} (dash.south |- 0,-3.7);
-        \draw[msg] (dash.south |- 0,-4.9) -- node[lbl, above]{3: return cached script + result} (usr.south |- 0,-4.9);
-
-        \node[seqframe, fit={(usr.south |- 0,-2.2) (cache.east |- 0,-5.3)}] (frameA) {};
-        \node[frametitle] at (frameA.north west) {Cache hit (similarity $\geq 0.92$)};
-
-        \draw[msg] (dash.south |- 0,-6.9) -- node[lbl, above]{4: lookup(intent) --- miss} (cache.south |- 0,-6.9);
-        \draw[msg] (dash.south |- 0,-8.0) -- node[lbl, above]{5: submit SLURM job (sbatch)} (gen.south |- 0,-8.0);
-        \draw[msg] (dash.south |- 0,-9.1) -- node[lbl, above]{6: req\_id, status=submitted} (usr.south |- 0,-9.1);
-        \draw[msg] (usr.south |- 0,-10.2) -- node[lbl, above]{7: poll GET /api/generate/req\_id (repeated)} (dash.south |- 0,-10.2);
-
-        \draw[msg] (gen.south |- 0,-11.3) -- ++(2.0,0) -- ++(0,-1.3) --
-            node[lbl, right, text width=8cm]{8: decompose intent into sub-tasks; retrieve pkg/dataset context; generate BraneScript}
-            (gen.south |- 0,-12.6);
-
-        \draw[msg] (gen.south |- 0,-14.0) -- node[lbl, above]{9: brane workflow run} (brane.south |- 0,-14.0);
-        \draw[ret] (brane.south |- 0,-14.9) -- node[lbl, above]{10: exit code, stdout/stderr} (gen.south |- 0,-14.9);
-        \draw[msg] (gen.south |- 0,-16.0) -- node[lbl, above]{11: write result} (dash.south |- 0,-16.0);
-        \draw[fb]  (dash.south |- 0,-17.5) -- node[lbl, above, text width=5.5cm]{12: on failure, attempts remain: resubmit with error feedback ($\to$ step 5)} (gen.south |- 0,-17.5);
-        \draw[msg] (dash.south |- 0,-18.8) -- node[lbl, above]{13: on success: store(intent, script, result)} (cache.south |- 0,-18.8);
-        \draw[msg] (dash.south |- 0,-19.9) -- node[lbl, above]{14: final script + execution outcome} (usr.south |- 0,-19.9);
-
-        \node[seqframe, fit={(usr.south |- 0,-6.2) (gen.east |- 0,-20.3)}] (frameB) {};
-        \node[frametitle] at (frameB.north west) {Cache miss --- generate, execute, retry ($\leq 3$ attempts)};
-    \end{tikzpicture}}
-    \caption{Sequence of interactions for the interactive (dashboard) entry
-    point, discussed in the text above.}
-    \label{fig:sequence-diagram}
 \end{figure}
 
 \FloatBarrier
@@ -381,13 +255,15 @@ the researcher's own machine instead of via a remote batch scheduler.
 \section{Dashboard: Monitoring and Catalog Browsing}\label{s:dashboard-monitoring}
 
 The Generate page mentioned in (Section~\ref{s:user-perspective}) is only one of few pages the
-dashboard exposes. The other five turn it from a pure submission form into a
-window onto the state of the whole system: what has been tried before, what
-capabilities are available to build a workflow from, and how the candidate
-models being fine-tuned actually compare. This matters for the intent-based
-framing of this thesis specifically because a non-trained researcher who does not have any prior knowledge of
-BraneScript has no other way to inspect any of this information, as packages, datasets, and model outputs are 
-all hidden behind the natural-language interface. The dashboard's other pages are:
+dashboard exposes. 
+The other five turn complete it as a dashboard that monitors the state of the whole system:
+what has been tried before, what capabilities are available to build a workflow from, and how the candidate
+models being fine-tuned actually compare. 
+This supports for the intent-based framing of this thesis, specifically
+because a non-trained researcher, who does not have any prior knowledge of
+BraneScript, has no other way to inspect any of this information
+as packages, datasets, and model outputs are all hidden 
+behind Brane CLI interface. The dashboard's other pages are:
 
 \begin{itemize}
     \item \textbf{Runs.} A searchable, sortable table of every intent
@@ -402,11 +278,8 @@ all hidden behind the natural-language interface. The dashboard's other pages ar
         handles a given class of intents before trying a new one.
     \item \textbf{Packages} and \textbf{Datasets.} Two browsable catalogs,
         read directly from the same package specifications
-        (\texttt{container.yml}) and dataset manifests (\texttt{data.yml})
-        that back the retriever (Section~\ref{s:pipeline-variants}): every
-        registered package with its exposed functions and parameter types,
-        and every registered dataset with its access method, README, and
-        example workflows. A researcher can browse what the system is
+         and dataset manifests that back the retriever (Section~\ref{s:pipeline-variants}).
+        A researcher can browse what the system is
         capable of \emph{before} writing an intent, rather than discovering
         an unsupported capability only after a generation attempt fails.
     \item \textbf{Exec Results.} A table of every real Brane execution

@@ -72,11 +72,8 @@ phase~5: the translation system introduced here is required, by the
 reproducibility and privacy constraints motivated in
 Section~\ref{s:motivation}, to record which intent produced which workflow, so
 that repeated or paraphrased requests can be related to prior executions
-rather than re-derived from scratch. Phase~5 is therefore not only a
-downstream bookkeeping step but a design target of this thesis, and it is the
-reason the remainder of this chapter treats data provenance
-(Section~\ref{s:provenance}) as a first-class topic rather than as background
-context alone.
+rather than re-derived from scratch. This requirement motivates the treatment of data provenance
+(Section~\ref{s:provenance}) as a main concern of this thesis.
 
 % ------------------------------------------------------------------
 \section{Data Provenance}\label{s:provenance}
@@ -86,8 +83,7 @@ Reproducibility in scientific computing requires not only that results can be
 recomputed, but that the precise computational history that produced those
 results is recorded and queryable. This is the domain of \emph{data
 provenance}, and it has been recognised as a first-class concern for
-scientific workflows for over a decade: workflow systems are expected not
-merely to execute a computation but to leave behind a trustworthy record of
+scientific workflows for over a decade: workflow systems are expected to record
 what was run, on what inputs, and by whom, so that results can later be
 verified, audited, or reused~\cite{davidson2008provenance}. Provenance
 therefore serves at least three distinct purposes in a scientific workflow
@@ -96,7 +92,7 @@ follows from the stated inputs and method; it lets a scientist \emph{debug} a
 workflow by tracing an unexpected output back to the step or parameter that
 produced it; and it lets a data owner or auditor \emph{attribute}
 responsibility for a computation to the specific request, user, and code
-version that caused it to run --- an attribution requirement that becomes
+version that caused it to run. This same attribution requirement becomes
 central once, as in this thesis, the request itself originates from natural
 language rather than from a hand-written script.
 
@@ -166,12 +162,14 @@ formats discussed in the remainder of this section extend or specialise.
 
 \subsection{Prospective vs.\ Retrospective Provenance}
 
-Provenance is commonly distinguished along two axes. \emph{Prospective
-provenance} captures the workflow specification---the plan of what will be
-executed---and is equivalent to the workflow definition itself.
-\emph{Retrospective provenance} captures what actually ran, including concrete
-inputs, parameter values, timestamps, and intermediate results. Full
-reproducibility requires both: the specification must be re-runnable
+Provenance is commonly distinguished along two axes: 
+\begin{itemize}
+    \item \emph{Prospective provenance} captures the workflow specification, which is the plan of what will be
+executed, and is equivalent to the workflow definition itself.
+    \item \emph{Retrospective provenance} captures what actually ran, including concrete
+inputs, parameter values, timestamps, and intermediate results.
+\end{itemize}
+Full reproducibility requires both: the specification must be re-runnable
 (prospective), and each execution must be uniquely identified (retrospective).
 \textbf{ProvONE}~\cite{cuevasvicentin2016provone} makes this distinction
 explicit as a PROV extension purpose-built for scientific workflows: it adds
@@ -184,12 +182,12 @@ both the plan and the run without conflating them.
 
 Several formats extend PROV-DM for workflows.
 \textbf{CWLProv}~\cite{soiland2018cwlprov} records the full retrospective
-execution of a CWL workflow --- every step invocation, concrete input and
-output file, and intermediate value --- as a PROV-O graph packaged inside a
+execution of a CWL workflow (every step invocation, concrete input and
+output file, and intermediate value) as a PROV-O graph packaged inside a
 Research Object (RO) bundle, so that a CWL run can be re-inspected or
 re-executed independently of the original environment.
 \textbf{RO-Crate}~\cite{soiland2022rocrate} is a more lightweight packaging
-format based on schema.org that bundles data with its metadata and
+format based on \href{https://schema.org}{schema.org} that bundles data with its metadata and
 provenance in a single, self-describing directory, enabling FAIR sharing of
 computational results without requiring the full PROV-O vocabulary. Both
 formats, however, are designed around \emph{retrospective} execution
@@ -200,9 +198,9 @@ construct that workflow in the first place.
 
 Intent-based systems add a new provenance challenge: not only must the execution
 be recorded, but the \emph{intent} that triggered the execution must also be
-captured. This is what we term \emph{intent provenance}: the mapping from a
+captured. This is what in this thesis we term \emph{intent provenance}: the mapping from a
 natural-language request to the workflow that was generated and run. Modelling
-intent within PROV-DM does not require a new top-level concept; an intent can
+intent within PROV-DM is possible thanks to the extensibility of the model: an intent can
 be represented as a specialised \emph{entity} that is \texttt{used} by a
 translation \emph{activity}, which in turn \texttt{wasGeneratedBy}-relates to
 the resulting workflow entity, mirroring how CWLProv and ProvONE specialise
@@ -214,8 +212,8 @@ step in this thesis is performed by an LLM, the same intent entity can be
 \texttt{wasGeneratedBy}-produce a different workflow entity, so
 \texttt{wasGeneratedBy} alone cannot certify that a request has been answered
 reproducibly. This gap is one of the motivating design considerations of the
-semantic cache described in this thesis (Chapter~\ref{s:design}): it is
-precisely the missing mechanism that lets a repeated or paraphrased intent be
+semantic cache described in this thesis (Chapter~\ref{s:design}), as it is 
+the missing mechanism that lets a repeated or paraphrased intent be
 related, via \texttt{wasDerivedFrom}, to a workflow entity that was already
 generated, rather than triggering an independent, potentially divergent
 generation event.
@@ -224,8 +222,8 @@ generation event.
 \section{FAIR Principles for Workflows}
 % ------------------------------------------------------------------
 
-The FAIR principles---Findable, Accessible, Interoperable, and
-Reusable---were originally articulated for scientific data, but have since been
+The FAIR principles (Findable, Accessible, Interoperable, and
+Reusable) were originally articulated for scientific data, but have since been
 extended to computational workflows~\cite{goble2020fair}. FAIR workflows require
 that workflow specifications be discoverable in registries, accessible via
 stable identifiers, portable across execution environments, and documented with
@@ -233,7 +231,7 @@ sufficient metadata to enable third-party reuse.
 
 In practice, achieving FAIR compliance for LLM-generated workflows is
 non-trivial: outputs are generated dynamically, may not be stored in a registry,
-and may vary across sessions. The semantic cache introduced in this thesis
+and may vary across sessions. The caching layer introduced in this thesis
 addresses the reusability dimension by ensuring that once a workflow is generated
 for a given intent, subsequent requests for semantically equivalent intents
 retrieve the same (or a semantically equivalent) workflow without additional
@@ -259,20 +257,70 @@ expresses an intent (``compute the GC content of this sequence''), the system
 translates it into a workflow, executes the workflow on the target
 infrastructure, and verifies that the output is correct. This framing shifts the
 cognitive burden from workflow engineering to intent expression, which is a
-task scientists are already equipped to perform.
+task that scientists are more familiar with and can perform more reliably.
 
 The MAPE-K (Monitor--Analyse--Plan--Execute with shared Knowledge) control loop
 from autonomic computing~\cite{kephart2003vision} provides a complementary
-model for adaptive orchestration: the system monitors
+model for adaptive orchestration that has also been applied to this work: the system monitors
 execution, analyses failures, re-plans the workflow, and re-executes, using a
 shared knowledge base to inform decisions. This model is relevant when LLM
 outputs fail to compile or execute, as the system can iterate on the translation
 rather than surfacing a raw error to the user.
 
-\subsection{Gaps in the Literature}
+% ------------------------------------------------------------------
+% ------------------------------------------------------------------
+\section{Large Language Models in Scientific Computing}
+% ------------------------------------------------------------------
 
-A systematic review of intent-based orchestration for scientific computing
-reveals five persistent gaps:
+\subsection{LLMs for Code and Workflow Generation}
+
+Recent LLMs have demonstrated substantial capability in code generation tasks. Models
+such as OpenAI Codex~\cite{chen2021evaluating} and its successors have been
+evaluated on programming benchmarks including HumanEval~\cite{chen2021evaluating} and MBPP~\cite{austin2021mbpp}, where they
+achieve competitive pass@k rates. More recent open-weight models (Qwen, Llama,
+Mistral families)~\cite{qwen2025,dubey2024llama3,jiang2023mistral} have closed much of the performance gap with proprietary
+systems, making local deployment on HPC infrastructure feasible.
+
+In the workflow domain, Balis~\cite{balis2024llm} demonstrated that LLMs can
+generate Parsl-based Python workflows from natural-language descriptions,
+achieving promising accuracy on domain-specific tasks. Duque et al.~\cite{duque2023llmworkflows}
+demonstrated similar results for computational scientific pipelines more broadly. These works
+established that LLMs can encode sufficient domain knowledge about workflow
+patterns to serve as initial translators, but noted that accuracy degrades
+significantly when the target WMS has a non-standard or less-common DSL, a
+challenge directly relevant to Brane used in this work.
+
+\subsection{Retrieval-Augmented Generation}
+
+Retrieval-Augmented Generation (RAG)~\cite{lewis2020rag} augments LLM inference
+by retrieving relevant context from an external knowledge base and prepending it
+to the input prompt. In the workflow translation setting, the knowledge base
+contains package documentation, such as function signatures, parameter descriptions, and
+usage examples, and the retrieval system selects the subset of packages most
+likely relevant to the current intent.
+
+RAG addresses a critical limitation of pure LLM generation: models cannot know
+the exact API of a custom execution environment such as Brane without having
+seen it in training data. By retrieving package documentation at inference time,
+the system grounds generation in the actual available capabilities, reducing
+hallucinated function calls and incorrect parameter types.
+
+\subsection{ControlA and Agentic Orchestration}
+
+Gueroudji et al.~\cite{gueroudji2025controla} introduced ControlA, a system that uses LLMs as autonomous
+agents for scientific workflow management, allowing the model to iteratively
+refine a workflow in response to execution feedback, with the model itself
+reasoning about how to diagnose and repair failures. This agentic approach
+differs from the bounded, externally-driven retry mechanism adopted in this
+thesis (Chapter~\ref{s:design}), and represents a complementary direction for
+future work.
+
+% ------------------------------------------------------------------
+\section{Gaps in the Literature}\label{s:gaps}
+% ------------------------------------------------------------------
+
+A systematic review of the scientific workflow, provenance, intent-based
+orchestration, and LLM literature reveals five persistent gaps:
 
 \begin{description}
     \item[G1 --- Intent Provenance Model.] No existing system defines a formal
@@ -287,8 +335,9 @@ reveals five persistent gaps:
 
     \item[G3 --- Intent Reproducibility Definition.] There is no agreed
         definition of what it means for an intent-based system to be
-        reproducible: does the same intent need to produce the same workflow, or
-        just a semantically equivalent one?
+        reproducible: do two semantically equivalent intents need to produce the
+        same workflow, or is it acceptable for them to produce different but
+        equally valid ones?
 
     \item[G4 --- Human-in-the-Loop Trust Checkpoints.] Existing proposals
         for LLM-based workflow generation do not provide principled mechanisms
@@ -297,61 +346,17 @@ reveals five persistent gaps:
         domains.
 
     \item[G5 --- Cross-Paradigm Benchmarks.] There are no publicly available
-        benchmarks that evaluate intent-based systems against conventional WMS
+        benchmarks that evaluate intent-based systems against conventional user-defined WMS
         approaches on the same scientific tasks.
 \end{description}
 
 This thesis addresses \textbf{G2} directly: it implements a hybrid bridge
 between natural-language intent expression and the Brane WMS via LLM-based
-BraneScript generation. It provides partial evidence towards \textbf{G3} through
-the semantic cache threshold analysis, and motivates \textbf{G1} as future work.
-
-% ------------------------------------------------------------------
-\section{Large Language Models in Scientific Computing}
-% ------------------------------------------------------------------
-
-\subsection{LLMs for Code and Workflow Generation}
-
-LLMs have demonstrated substantial capability in code generation tasks. Models
-such as OpenAI Codex~\cite{chen2021evaluating} and its successors have been
-evaluated on programming benchmarks including HumanEval and MBPP, where they
-achieve competitive pass@k rates. More recent open-weight models (Qwen, Llama,
-Mistral families) have closed much of the performance gap with proprietary
-systems, making local deployment on HPC infrastructure feasible.
-
-In the workflow domain, Balis~\cite{balis2024llm} demonstrated that LLMs can
-generate Parsl-based Python workflows from natural-language descriptions,
-achieving promising accuracy on domain-specific tasks. Shin et al.\
-demonstrated similar results for bioinformatics pipelines. These works
-established that LLMs can encode sufficient domain knowledge about workflow
-patterns to serve as initial translators, but noted that accuracy degrades
-significantly when the target WMS has a non-standard or less-common DSL---a
-challenge directly relevant to BraneScript.
-
-\subsection{Retrieval-Augmented Generation}
-
-Retrieval-Augmented Generation (RAG)~\cite{lewis2020rag} augments LLM inference
-by retrieving relevant context from an external knowledge base and prepending it
-to the input prompt. In the workflow translation setting, the knowledge base
-contains package documentation---function signatures, parameter descriptions, and
-usage examples---and the retrieval system selects the subset of packages most
-likely relevant to the current intent.
-
-RAG addresses a critical limitation of pure LLM generation: models cannot know
-the exact API of a custom execution environment such as Brane without having
-seen it in training data. By retrieving package documentation at inference time,
-the system grounds generation in the actual available capabilities, reducing
-hallucinated function calls and incorrect parameter types.
-
-\subsection{ControlA and Agentic Orchestration}
-
-Gueroudji et al.~introduced ControlA, a system that uses LLMs as autonomous
-agents for scientific workflow management, allowing the model to iteratively
-refine a workflow in response to execution feedback, with the model itself
-reasoning about how to diagnose and repair failures. This agentic approach
-differs from the bounded, externally-driven retry mechanism adopted in this
-thesis (Chapter~\ref{s:design}), and represents a complementary direction for
-future work.
+BraneScript generation. It also addresses \textbf{G1} by proposing an intent
+provenance model that records the mapping from natural-language intent to
+generated workflow alongside standard retrospective execution provenance
+(Chapter~\ref{ch:design}). Finally, it provides partial evidence towards \textbf{G3}
+through the semantic cache threshold analysis.
 
 % ------------------------------------------------------------------
 \section{Target Platform Selection: Brane and Dynamos}
@@ -370,39 +375,34 @@ registry from which packages can be invoked across participating sites.
 Each Brane package exposes a set of typed functions. A function call specifies
 a package name, a function name, and typed argument values; Brane dispatches
 the call to a site that holds the relevant data and returns the result to the
-orchestrator. This model provides strong isolation and auditability: every
-function invocation is logged, every data transfer is explicit, and every
-result is versioned.
+orchestrator. This model provides strong isolation and auditability, where every
+function invocation, data transfer, and result is logged.
 
 This federated execution model is the specific reason Brane was selected as
 the target platform for this thesis. Unlike a workflow written for a generic
 Python or shell execution environment, a BraneScript workflow can be deployed
 and executed inside a third-party organisation's own infrastructure without
 that organisation ever having to share its raw data with the party that
-authored the workflow: the workflow travels to the data, not the reverse. This
-property motivates a corresponding design constraint for the translation
+authored the workflow: the workflow is the entity that travels to the data and not the reverse. 
+This property motivates a corresponding design constraint for the translation
 system built in this thesis: both the LLM used to generate BraneScript and the
 semantic cache introduced in Chapter~\ref{s:design} are designed to run
 locally, within the same trust boundary as the data, so that neither the
 natural-language intent nor the generated workflow needs to leave the
 organisation in order to be produced, validated, or reused.
 
-Beyond its federated execution model, two further, more practical properties
-made Brane a better fit than the alternatives. First, BraneScript's
-static typing gives the translation pipeline a machine-checkable oracle: the
-Brane compiler can reject a malformed generated workflow before any container
+BraneScript's static typing gives the translation pipeline a way to evaluate its correctness:
+the Brane compiler can reject a malformed generated workflow before any container
 is started or any data is touched, which is precisely the \emph{overt}-error
 detection mechanism the problem statement in Section~\ref{s:motivation}
 requires, and it is a much weaker guarantee that a dynamically typed target
 language (e.g., a plain Python script) could offer, since there the same
-mistake would only surface, if at all, as a runtime failure deep into
-execution. Second, Brane's package model --- typed function signatures
-published through a central registry --- maps directly onto the retrieval
+mistake would only surface, if at all, as a runtime failure deeper into
+execution. Finally, Brane's package model, composed of typed function signatures
+published through a central registry, maps directly onto the retrieval
 problem this thesis needs to solve: a package's signatures are themselves a
 natural, structured retrieval corpus for grounding LLM generation (the RAG
-design described in Chapter~\ref{s:design}), which is not true of execution
-environments whose available capabilities are not declared in any machine-readable
-form. The alternative considered on exactly these points is discussed next.
+design described in Section~\ref{s:retrieval-design}).
 
 BraneScript is the DSL used to express Brane workflows. It is a statically
 typed, procedural language with Python-inspired syntax. Key constructs include:
@@ -412,20 +412,23 @@ typed, procedural language with Python-inspired syntax. Key constructs include:
         a package's function signatures into scope.
     \item \textbf{Function calls}: \texttt{let result := \textit{func}(\textit{arg} := \textit{value});} invokes a package function with named arguments.
     \item \textbf{Data commits}: \texttt{commit\_result(\textit{name}, \textit{result});} persists an intermediate result as a named dataset.
+    \item \textbf{Variable declaration}: \texttt{let \textit{var} := \textit{value};} declares a variable and assigns a value to it.
+    \item \textbf{Class instantiation}: \texttt{new \textit{ClassName}\{ \textit{field} := \textit{value} \}} instantiates a built-in class; the two built-in classes are \texttt{Data} (a reference to a registered dataset, e.g.\ \texttt{new Data\{ name := "heal\_pa\_2" \}}) and \texttt{IntermediateResult} (a transient computation result passed between package calls).
+    \item \textbf{Field access}: dot notation (\texttt{\textit{obj}.\textit{field}}) accesses fields on struct-typed return values from package functions.
+    \item \textbf{Output}: \texttt{println(\textit{expr});} prints a value to standard output; string concatenation uses \texttt{+}.
     \item \textbf{Control flow}: Standard \texttt{if}/\texttt{else} and
         \texttt{for} constructs.
     \item \textbf{Parallel execution}: \texttt{parallel [\textit{stmt1}, \textit{stmt2}]} executes multiple statements concurrently.
 \end{itemize}
 
-The key challenge for LLM-based generation is that BraneScript is not
+The major challenge for LLM-based generation is that BraneScript is not
 represented in standard pre-training corpora. Models must infer its syntax from
 the few examples provided in the system prompt and from the RAG context.
-Supervised fine-tuning on a curated set of BraneScript examples is
+Supervised fine-tuning (Section~\ref{s:fine-tuning-design}) on a curated set of BraneScript examples is
 intended to internalise the syntactic patterns and package invocation conventions
 that the base model cannot reliably produce zero-shot; the specific packages and
 example set used to do so in this thesis are an evaluation testbed and are
-described in Chapter~\ref{s:evaluation}, not a limitation on which packages
-BraneScript or the translation approach can support.
+described in Chapter~\ref{s:evaluation}.
 
 \subsection{Alternative Considered: Dynamos}
 
@@ -445,8 +448,8 @@ in this project, targeting a small subset of intents.
 
 Dynamos was ultimately not adopted as the platform for this thesis, for two
 concrete reasons observed during this early exploration. First, the set of
-available archetypes did not yet cover the breadth of workflow patterns ---
-typed function invocation, control flow, and parallel execution --- that a
+available archetypes did not yet cover the breadth of workflow patterns, like
+typed function invocation, control flow, and parallel execution, that a
 general-purpose scientific translation system needs to be able to target, and
 its microservice composition model was still evolving in ways that would have
 made a stable target for LLM-based generation difficult to maintain over the
@@ -457,8 +460,8 @@ level, in ways that were not always straightforward to diagnose, which was
 further evidence that the framework was not yet mature enough to build a
 production-oriented translation pipeline on top of. Brane's statically typed
 package model and comparatively stable runtime made it the more viable
-choice for the remainder of the thesis, though the underlying motivation ---
-privacy-preserving, federated distribution of scientific computation --- is
+choice for the remainder of the thesis, though the underlying motivation, which is to enable
+privacy-preserving, federated distribution of scientific computation, is
 shared between the two systems, and the translation approach developed here
 does not depend on any feature unique to Brane over Dynamos beyond the
 availability of a stable, typed target language, compiler, and runtime.
@@ -473,7 +476,7 @@ of typed function calls that must be fully specified before it can be
 executed. Had Dynamos been mature enough to serve as the target platform, the
 natural translation target for an intent-based system built on top of it
 would plausibly have been archetype selection and parameterisation, rather
-than full workflow synthesis --- a related but distinct problem from the one
+than full workflow synthesis, a related but distinct problem from the one
 addressed in this thesis, and one that this work does not attempt to resolve.
 
 

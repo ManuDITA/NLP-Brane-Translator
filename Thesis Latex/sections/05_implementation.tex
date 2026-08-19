@@ -13,7 +13,13 @@ attempting generation, it queries the semantic cache
 (Section~\ref{s:cache-impl}) for the intent and returns the cached script and
 result immediately on a hit; on a miss, it decomposes the intent into
 sub-tasks via \texttt{IntentDecomposer} before retrieval, as described in
-Chapter~\ref{s:design}. A candidate workflow is checked for valid function
+Chapter~\ref{s:design}. The step reuses the generation model already loaded in
+memory rather than loading a second one, so its cost is one extra generation
+call rather than one extra model; a \texttt{--skip-decomposition} flag
+(\texttt{pipeline.py}, \texttt{evaluate.py}) disables the step outright,
+isolating its cost from the rest of the pipeline so its effect on the
+generated BraneScript can be assessed independently of retrieval and
+generation. A candidate workflow is checked for valid function
 and argument usage against the retrieved package context before
 \texttt{execute\_workflow()} ever submits it to Brane, which compiles and
 executes it as a single command and returns \texttt{stdout},
@@ -29,8 +35,9 @@ the embedding model, builds the single package retriever shared across the
 run, and connects to the semantic cache's ChromaDB collection; if that
 connection fails, the failure is caught and logged and the run proceeds
 with caching disabled rather than failing outright, while the BraneScript
-syntax reference is loaded once as plain text and needs no embedding model
-at all. A command-line flag allows the cache to be bypassed explicitly for
+syntax reference (\texttt{data/syntax\_reference.md}) is loaded once as plain text and needs no embedding model
+at all: at roughly 450 lines (~2,000 tokens) it is small enough to be
+included in full in every prompt without approaching context-length limits. A command-line flag allows the cache to be bypassed explicitly for
 a given invocation.
 
 \section{Knowledge Base and Retrieval}\label{s:kb-impl}
@@ -235,6 +242,104 @@ level of the interactive dashboard. Cache inspection endpoints
 (\texttt{/api/cache/stats}, \texttt{/api/cache/entries},
 \texttt{/api/cache/invalidate}) expose the semantic cache's state directly to
 the dashboard.
+
+\section{Interaction Sequence}\label{s:interaction-sequence}
+
+Figure~\ref{fig:pipeline-architecture} shows the components involved in a
+single request but not the timing of the messages between them, in
+particular the asynchronous submit/poll/retry pattern of the interactive
+dashboard entry point. Figure~\ref{fig:sequence-diagram} makes that timing
+explicit for the case a researcher exercises in day-to-day use: the
+researcher's browser, the dashboard backend, the semantic cache, the
+generation worker running as a batch job on Snellius, and the Brane runtime
+that ultimately compiles and executes the workflow.
+
+The diagram distinguishes two branches. On a \textbf{cache hit} (top frame,
+steps 1--3), the dashboard looks up the submitted intent against the
+semantic cache and, on a similarity match, returns the cached script and its
+previously recorded execution result directly to the researcher; nothing on
+Snellius or Brane is touched, and no model is loaded. On a \textbf{cache
+miss} (bottom frame, steps 4--14), the dashboard instead submits a SLURM
+batch job to Snellius and immediately hands the researcher back a request
+identifier and a ``submitted'' status (steps 5--6), rather than blocking the
+HTTP request for however long generation and execution take; the
+researcher's browser polls a status endpoint for that identifier until the
+job completes (step 7). On the Snellius side, the worker performs the
+process-architecture steps described in Section~\ref{s:pipeline-variants} in
+order -- decomposing the intent, retrieving package/dataset context, and
+generating a candidate script (step 8) -- and then submits that script to
+the Brane runtime with a single \texttt{brane workflow run} call (step 9),
+receiving back an exit code and captured stdout/stderr (step 10). The worker
+writes this result where the dashboard can find it (step 11); if execution
+failed and retries remain, the dashboard resubmits the same request with the
+failure fed back into the prompt as corrective context (step 12), returning
+to step 5. Once a script executes successfully, the result is written to
+the semantic cache (step 13) before the final script and outcome are
+returned to the researcher (step 14).
+
+The command-line entry point (\texttt{pipeline.py}) follows the same overall
+shape -- cache lookup, decomposition, retrieval, generation, cache store on
+success -- but differs from the diagram in one respect: it has no
+equivalent of step~7's polling, since it runs synchronously to completion on
+the researcher's own machine instead of via a remote batch scheduler.
+
+\begin{figure}[htbp]
+    \centering
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+        lifeline/.style={draw, thick, minimum width=2.6cm, minimum height=0.9cm,
+            align=center, font=\small\bfseries, fill=gray!12},
+        msg/.style={-{Latex[length=2.2mm]}, thick},
+        ret/.style={-{Latex[length=2.2mm]}, thick, dashed},
+        fb/.style={-{Latex[length=2.2mm]}, thick, dashed, red!65!black},
+        lbl/.style={font=\scriptsize, align=center},
+        seqframe/.style={draw, thick, rounded corners=1pt, inner sep=6pt},
+        frametitle/.style={draw, thick, fill=yellow!20, font=\bfseries\scriptsize,
+            align=left, anchor=north west, inner sep=3pt}
+    ]
+        \node[lifeline] (usr)   at (0, 0)    {Researcher};
+        \node[lifeline] (dash)  at (3.8, 0)  {Dashboard};
+        \node[lifeline] (cache) at (7.6, 0)  {Semantic\\Cache};
+        \node[lifeline] (gen)   at (11.4, 0) {Snellius\\worker};
+        \node[lifeline] (brane) at (15.2, 0) {Brane\\runtime};
+
+        \foreach \p in {usr, dash, cache, gen, brane}
+            \draw[dotted] (\p.south) -- ++(0,-20.6);
+
+        \draw[msg] (usr.south |- 0,-1.3) -- node[lbl, above]{1: submit intent} (dash.south |- 0,-1.3);
+
+        \draw[msg] (dash.south |- 0,-2.9) -- node[lbl, above]{2: lookup(intent)} (cache.south |- 0,-2.9);
+        \draw[ret] (cache.south |- 0,-3.7) -- node[lbl, above]{2': cached (script, result)} (dash.south |- 0,-3.7);
+        \draw[msg] (dash.south |- 0,-4.9) -- node[lbl, above]{3: return cached script + result} (usr.south |- 0,-4.9);
+
+        \node[seqframe, fit={(usr.south |- 0,-2.2) (cache.east |- 0,-5.3)}] (frameA) {};
+        \node[frametitle] at (frameA.north west) {Cache hit (similarity $\geq 0.92$)};
+
+        \draw[msg] (dash.south |- 0,-6.9) -- node[lbl, above]{4: lookup(intent) --- miss} (cache.south |- 0,-6.9);
+        \draw[msg] (dash.south |- 0,-8.0) -- node[lbl, above]{5: submit SLURM job (sbatch)} (gen.south |- 0,-8.0);
+        \draw[msg] (dash.south |- 0,-9.1) -- node[lbl, above]{6: req\_id, status=submitted} (usr.south |- 0,-9.1);
+        \draw[msg] (usr.south |- 0,-10.2) -- node[lbl, above]{7: poll GET /api/generate/req\_id (repeated)} (dash.south |- 0,-10.2);
+
+        \draw[msg] (gen.south |- 0,-11.3) -- ++(2.0,0) -- ++(0,-1.3) --
+            node[lbl, right, text width=8cm]{8: decompose intent into sub-tasks; retrieve pkg/dataset context; generate BraneScript}
+            (gen.south |- 0,-12.6);
+
+        \draw[msg] (gen.south |- 0,-14.0) -- node[lbl, above]{9: brane workflow run} (brane.south |- 0,-14.0);
+        \draw[ret] (brane.south |- 0,-14.9) -- node[lbl, above]{10: exit code, stdout/stderr} (gen.south |- 0,-14.9);
+        \draw[msg] (gen.south |- 0,-16.0) -- node[lbl, above]{11: write result} (dash.south |- 0,-16.0);
+        \draw[fb]  (dash.south |- 0,-17.5) -- node[lbl, above, text width=5.5cm]{12: on failure, attempts remain: resubmit with error feedback ($\to$ step 5)} (gen.south |- 0,-17.5);
+        \draw[msg] (dash.south |- 0,-18.8) -- node[lbl, above]{13: on success: store(intent, script, result)} (cache.south |- 0,-18.8);
+        \draw[msg] (dash.south |- 0,-19.9) -- node[lbl, above]{14: final script + execution outcome} (usr.south |- 0,-19.9);
+
+        \node[seqframe, fit={(usr.south |- 0,-6.2) (gen.east |- 0,-20.3)}] (frameB) {};
+        \node[frametitle] at (frameB.north west) {Cache miss --- generate, execute, retry ($\leq 3$ attempts)};
+    \end{tikzpicture}}
+    \caption{Sequence of interactions for the interactive (dashboard) entry
+    point, discussed in the text above.}
+    \label{fig:sequence-diagram}
+\end{figure}
+
+\FloatBarrier
 
 \section{Infrastructure}\label{s:infra-impl}
 

@@ -8,8 +8,10 @@ implications are deferred to Chapter~\ref{s:discussion}.
 \section{Experimental Setup}\label{s:eval-setup}
 
 \textbf{Dataset.} The evaluation dataset consists of 584 unique
-intent--BraneScript pairs, authored manually and split into a training set of
-497 examples and a held-out test set of 87 examples. The test set was not used
+intent--BraneScript pairs, authored manually across nine source files. A
+deduplication pass reduced an initial corpus of 658 examples to 584 by
+removing redundant entries, which were then split into a training set of 497
+examples and a held-out test set of 87 examples. The test set was not used
 during any stage of training or system development. The dataset covers all
 seven Brane packages used in this project (\texttt{healthcare},
 \texttt{genomics}, \texttt{epidemics}, \texttt{statistics},
@@ -33,31 +35,16 @@ complete three-stage pipeline: (1) the \emph{intent decomposer} reformulates
 the user's natural-language intent into a structured set of sub-tasks with
 explicit package and function candidates; (2) the \emph{RAG retriever} fetches
 the most relevant package documentation and example BraneScript fragments per
-sub-task from two independent indices; and (3) the \emph{generator} produces
+sub-task from the retrieval index; and (3) the \emph{generator} produces
 a BraneScript workflow conditioned on the decomposed intent and retrieved
 context. The decomposer ablation in Section~\ref{s:eval-decomp} is the only
 run that deviates from this configuration.
 
-\textbf{Metrics.} Three primary metrics are reported throughout.
-
-\emph{Compile rate} is the fraction of generated scripts that pass the
-BraneScript compiler without error. BraneScript is statically typed, so any
-undefined variable, undefined function call, or syntax error is surfaced at
-compile time.
-
-\emph{Execution rate} is the fraction of generated scripts that execute to
-completion without a runtime error. A script may compile successfully but fail
-at runtime if it invokes a function with incorrect argument types, references
-a dataset name not present in the registry, or triggers an error inside a
-Brane package container.
-
-\emph{Output match rate} is the strictest metric: the fraction of all test
-examples for which the generated script's standard output is an \emph{exact
-string match} of the reference output. Matching is case-sensitive and
-order-sensitive; outputs that contain the correct values but in a different
-order, or with different formatting, are marked incorrect. The metric is
-computed over all examples including those without a stored reference output,
-making it the most conservative measure of end-to-end correctness.
+\textbf{Metrics.} The three primary metrics used throughout this chapter ---
+compile rate, execution rate, and output match rate --- are defined in
+Section~\ref{s:eval-metrics}. The cache-specific metrics (hit rate, correct
+rate, and false-positive rate) are defined in
+Section~\ref{s:cache-metrics}.
 
 \textbf{Hardware.} All generation and fine-tuning runs execute on Snellius,
 the Dutch national HPC facility, on H100 GPU nodes allocated via SLURM.
@@ -70,7 +57,7 @@ Docker-deployed Brane services.
 \subsection{Main results}
 
 Figure~\ref{fig:base-model-comparison} shows compile rate, execution rate, and
-output match rate for all three base models evaluated against the 502 test
+output match rate for all three base models evaluated against the 497 test
 intents.
 
 \begin{figure}[htbp]
@@ -78,7 +65,7 @@ intents.
     \includegraphics[width=\textwidth]{base_model_comparison.png}
     \caption{Compile rate, execution rate, and output match rate for the three
     base models. Each metric group is shown as a cluster of three bars, one
-    per model ($n = 502$).}
+    per model ($n = 497$).}
     \label{fig:base-model-comparison}
 \end{figure}
 
@@ -95,34 +82,41 @@ The gap between execution rate and output match rate widens with scale. For the
 percentage points. This indicates that as model scale increases, the dominant
 remaining failure mode shifts from the script failing to compile or execute to
 the script producing a syntactically and semantically valid workflow whose
-output does not match the reference.
+output does not exactly match the reference.
 
 \subsection{Error type breakdown}\label{s:eval-errors}
 
 To understand \emph{where} each model fails rather than merely \emph{how
 often}, every failed evaluation was classified into one of five categories:
-\emph{compile: syntax error} (a parse or structural error detectable by the
-BraneScript grammar alone), \emph{compile: undefined variable} (a reference to
-a variable that was not previously bound in the script's scope),
-\emph{compile: undefined function} (an invocation of a function not exported
-by the imported packages), \emph{runtime error} (a script that compiled but
-failed during Brane package execution), and \emph{output mismatch} (a script
-that executed without error but produced output that did not match the
-reference). Figure~\ref{fig:error-breakdown} shows the distribution of these
+
+\begin{itemize}
+    \item \emph{Compile: syntax error} --- a parse or structural error
+          detectable by the BraneScript grammar alone.
+    \item \emph{Compile: undefined variable} --- a reference to a variable
+          that was not previously bound in the script's scope.
+    \item \emph{Compile: undefined function} --- an invocation of a function
+          not exported by the imported packages.
+    \item \emph{Runtime error} --- a script that compiled successfully but
+          failed during Brane package execution.
+    \item \emph{Output mismatch} --- a script that executed without error but
+          produced output that did not match the reference.
+\end{itemize}
+
+Figure~\ref{fig:error-breakdown} shows the distribution of these
 categories for the three base models.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\textwidth]{error_breakdown.png}
     \caption{Error type breakdown for the three base models. Each bar shows
-    the fraction of all 502 test examples in each outcome category. Shades of
+    the fraction of all 497 test examples in each outcome category. Shades of
     red distinguish the four compile-error sub-types; amber indicates output
     mismatch; green indicates correct output.}
     \label{fig:error-breakdown}
 \end{figure}
 
 The 4B model shows the most compile-time failures overall. Undefined variable
-errors account for 24.1\% of all 502 test examples, making it the single
+errors account for 24.1\% of all 497 test examples, making it the single
 largest failure category. Syntax errors add a further 17.5\%, and output
 mismatch accounts for 30.5\%. Only 24.1\% of scripts produce a correct result.
 Runtime errors and undefined function errors are minor contributors at 1.8\%
@@ -147,33 +141,44 @@ diverges from the reference. Runtime errors account for 2.4\%.
 \subsection{Two evaluation rounds}\label{s:eval-rounds}
 
 An initial evaluation run was conducted with an early version of the
-system prompt and retrieval configuration. Three engineering issues were
+system prompt and retrieval configuration. Several engineering issues were
 subsequently identified and corrected:
 
 \begin{itemize}
     \item The system prompt permitted empty-string function arguments and
           under-specified \texttt{commit\_result} usage.
     \item RAG package aliases were insufficiently precise, causing the retriever
-          to return documentation for the wrong package.
+          to return documentation for the wrong package. Package keywords were
+          also added to the retrieval index to improve matching precision.
     \item The post-processing step that strips stray markdown tokens from
           generation output was incomplete, causing otherwise valid scripts to
-          fail at the BraneScript lexer.
+          fail at the BraneScript lexer. Additionally, a repetition penalty
+          was added to generation to suppress degenerate repetition loops in
+          which the model emitted sequences of backtick characters after
+          otherwise valid BraneScript.
+    \item The evaluation dataset was audited and intent--BraneScript
+          mismatches were corrected across all examples.
 \end{itemize}
 
 The same model weights were re-evaluated after all three fixes.
-Figure~\ref{fig:baseline-first-run} compares the output match rate before and
-after the three fixes, for all three models. Across all three models the
-output match rate increases substantially: from 3.6\% to 24.1\% for the 4B
-model, from 6.0\% to 36.9\% for the 9B model, and from 13.5\% to 49.6\% for
-the 27B model. The relative ordering of the three models is preserved between
-runs, with the 27B model consistently outperforming the smaller models on this
+Figure~\ref{fig:baseline-first-run} shows a grouped bar chart with one pair
+of bars per model: the left bar (slate blue) represents the pre-fix output
+match rate, and the right bar (teal) represents the post-fix rate. For every
+model, the teal bar is substantially taller than the slate blue bar, indicating
+a consistent improvement across the board. The gap is largest for the 9B model
+and smallest for the 4B model in absolute terms, while the 27B model achieves
+the highest post-fix rate of the three. Across all three models the output
+match rate increases substantially: from 3.6\% to 24.1\% for the 4B model,
+from 6.0\% to 36.9\% for the 9B model, and from 13.5\% to 49.6\% for the 27B
+model. The relative ordering of the three models is preserved between runs,
+with the 27B model consistently outperforming the smaller models on this
 metric.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=0.82\textwidth]{baseline_first_run.png}
     \caption{Output match rate before (Run~1, pre-fix) and after (Run~2,
-    post-fix) the three engineering fixes ($n=502$ in both runs). Identical
+    post-fix) the three engineering fixes ($n=497$ in both runs). Identical
     model weights were used in both runs.}
     \label{fig:baseline-first-run}
 \end{figure}
@@ -184,25 +189,36 @@ runs using identical model weights. The 9B model's execution rate rises from
 
 \subsection{Intent decomposition ablation}\label{s:eval-decomp}
 
-Figure~\ref{fig:decomp-ablation} compares the Qwen3.5-9B model with the full
-pipeline against the same model with the decomposer disabled, where the raw
-intent is passed directly to the retriever and generator without reformulation
-($n = 497$).
+The intent decomposer is the first stage of the pipeline. Given a raw
+natural-language intent, it reformulates the request into a structured set of
+sub-tasks, each annotated with explicit package and function candidates. This
+structured representation is then passed to the RAG retriever and the
+generator. To isolate the contribution of this stage, an ablation run was
+conducted in which the decomposer was entirely disabled: the raw intent string
+was passed directly to the retriever and generator without any type of reformulation while keeping the other pipeline components (the retrieval indices, the generator model,
+the system prompt, and the post-processing step) identical to the full pipeline configuration. The experiment used Qwen3.5-9B as the generator
+and the full 497-example test set.
+
+Figure~\ref{fig:decomp-ablation} presents the results as a grouped bar chart
+with two groups on the x-axis: full pipeline as the first one, and pipeline with no decomposition step as the second.
+For each run, the compile rate (slate blue), execution
+rate (teal), and output match rate (purple) is evaluated. Comparing the two groups, all three bars are
+shorter in the no-decomposition group, indicating a consistent drop across every metric when the decomposer is removed.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.75\textwidth]{decomp_ablation.png}
     \caption{Effect of disabling the intent decomposition stage on
-    Qwen3.5-9B. Slate blue = full pipeline; teal = no decomposition.}
+    Qwen3.5-9B ($n = 497$). Slate blue = compile rate; teal = execution rate;
+    purple = output match rate.}
     \label{fig:decomp-ablation}
 \end{figure}
 
-Removing the decomposer reduces all three metrics. Compile rate falls from
-66.1\% to 48.1\%, a drop of 18.0 percentage points. Execution rate falls from
-64.9\% to 42.0\%, a drop of 22.9 percentage points. Output match rate falls
-from 36.9\% to 26.0\%, a drop of 10.9 percentage points. The largest absolute
-degradation is therefore in execution rate, while output match is the least
-affected of the three metrics in absolute terms.
+Compile rate falls from 66.1\% to 52.9\%, a drop of 13.2 percentage points. Execution rate falls from
+64.9\% to 48.1\%, a drop of 16.8 percentage points. Output match rate falls
+from 36.9\% to 26.0\%, a drop of 10.9 percentage points. The degradation is
+consistent across all three metrics, with execution rate showing the largest
+absolute drop and output match the smallest.
 
 % ──────────────────────────────────────────────────────────────────────────────
 \section{RQ3: Effect of Supervised Fine-Tuning}\label{s:eval-sft}
@@ -210,18 +226,26 @@ affected of the three metrics in absolute terms.
 \subsection{Fine-tuning configurations and results}
 
 Figure~\ref{fig:sft-results} reports results for both SFT models alongside the
-9B base model. \texttt{qwen3.5-9b-3ep} was fine-tuned for three epochs on 560
-examples using the original (pre-August) system prompt.
-\texttt{qwen3.5-9b-ep5} was fine-tuned for five epochs on 497 examples using
-the corrected system prompt. Both use LoRA with rank 16, $\alpha = 32$,
-learning rate $2 \times 10^{-4}$, and a cosine scheduler.
+9B base model. \texttt{qwen3.5-9b-3ep} was fine-tuned for three epochs on the
+pre-deduplication version of the training set (560 examples) using the
+original system prompt. \texttt{qwen3.5-9b-ep5} was fine-tuned for five
+epochs on the final deduplicated training set (497 examples) using the
+corrected system prompt. Both runs share the following hyperparameters:
+
+\begin{itemize}
+    \item \textbf{Method:} QLoRA (quantised LoRA, 4-bit base model)
+    \item \textbf{LoRA rank:} 16; \textbf{LoRA $\alpha$:} 32
+    \item \textbf{Learning rate:} $2 \times 10^{-4}$ with cosine scheduler
+    \item \textbf{Batch size:} 2 per device, gradient accumulation 8 steps (effective batch 16)
+    \item \textbf{Max sequence length:} 2048 tokens
+    \item \textbf{Optimiser:} AdamW with default betas
+\end{itemize}
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.85\textwidth]{sft_results.png}
     \caption{Compile, execution, and output match rates for the Qwen3.5-9B
-    base model and both SFT variants ($n = 502$ for base and 3ep;
-    $n = 497$ for 5ep).}
+    base model and both SFT variants ($n = 497$ for all runs).}
     \label{fig:sft-results}
 \end{figure}
 
@@ -239,49 +263,31 @@ mid-generation, a consequence of the 512-token output limit that was active
 during this evaluation run. These results are therefore not representative of
 the model's learned behaviour and are included for completeness only.
 
-\subsection{Loss curves}
-
-Figure~\ref{fig:loss-curves} shows the training and validation loss for the
-\texttt{qwen3.5-9b-ep5} fine-tuning run across five epochs. Training loss
-decreases steadily from the first epoch through to epoch five, indicating
-consistent convergence over the training set. Validation loss follows a similar
-downward trend in the early epochs before flattening. The gap between training
-and validation loss remains relatively small throughout, and no sharp
-divergence between the two curves is observed over the five-epoch run.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.8\textwidth]{qwen3.5-9b-ep5_loss_curves.png}
-    \caption{Training and validation loss for the \texttt{qwen3.5-9b-ep5}
-    fine-tuning run across five epochs.}
-    \label{fig:loss-curves}
-\end{figure}
-
-\subsection{Held-out validation set}\label{s:eval-val}
-
-Figure~\ref{fig:val-results} reports results for the Qwen3.5-9B base model on
-the held-out 87-example validation set, compared against its performance on
-the full 502-example test set. On the validation set, compile rate is 49.4\%,
-execution rate 46.0\%, and output match 23.0\%. Each metric is lower on the
-validation set than on the test set by 16.7, 18.9, and 13.9 percentage points
-respectively. The relative ordering of compile rate, execution rate, and output
-match is preserved between the two sets.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.75\textwidth]{val_results.png}
-    \caption{Qwen3.5-9B base model results on the test set ($n = 502$)
-    vs.\ the held-out validation set ($n = 87$).}
-    \label{fig:val-results}
-\end{figure}
-
 % ──────────────────────────────────────────────────────────────────────────────
 \section{RQ4: Semantic Cache as a Reproducibility Layer}\label{s:eval-cache}
 
-The semantic cache was seeded with all 584 training intents and their
-reference BraneScript, then queried with 1974 paraphrase intents across eight
-similarity thresholds. Table~\ref{tab:cache-sweep} and
-Figure~\ref{fig:cache-sweep} report the results.
+\textbf{Experiment setup.}
+The semantic cache stores previously generated BraneScript workflows indexed
+by the embedding of the intent that produced them. When a new intent arrives,
+its embedding is compared against all cached entries using cosine similarity.
+If the similarity to any cached entry exceeds a configurable threshold, the
+stored BraneScript is returned directly without invoking the LLM pipeline.
+This allows identical or near-identical intents to bypass generation entirely,
+guaranteeing reproducibility for repeated requests.
+
+To evaluate the cache, it was seeded with all 584 training intents paired with
+their reference BraneScript. The 1974 paraphrase intents described in
+Section~\ref{s:eval-setup} were then used as queries. A paraphrase query is a
+semantically equivalent restatement of an original intent using different
+surface wording. Since each paraphrase corresponds to a known cached entry,
+the expected behaviour is a cache hit returning the correct BraneScript.
+
+Three metrics are reported across eight similarity thresholds from 0.80 to
+0.98, as defined in Section~\ref{s:cache-metrics}: hit rate, correct rate,
+and false-positive rate.
+
+Table~\ref{tab:cache-sweep} and Figure~\ref{fig:cache-sweep} report the
+results across all eight thresholds.
 
 \begin{table}[htbp]
 \centering
