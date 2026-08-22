@@ -942,7 +942,7 @@
       <div class="eval-browser">
         <div class="eval-intent-sidebar">
           <div class="eval-intent-search-wrap">
-            <input type="text" id="eval-intent-search" placeholder="Search by ID or intent text…" />
+            <input type="text" id="eval-intent-search" placeholder="Search by ID, intent text, or model name…" />
           </div>
           <div id="eval-intent-stats" style="padding:7px 14px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;line-height:1.6">
             <span style="color:var(--muted)">Loading…</span>
@@ -1957,7 +1957,9 @@ function renderEvalIntentList() {
   const shown  = evalAllIds.filter(id => {
     if (!search) return true;
     const gt = evalGroundTruth[id] || {};
-    return id.toLowerCase().includes(search) || (gt.intent || '').toLowerCase().includes(search);
+    if (id.toLowerCase().includes(search)) return true;
+    if ((gt.intent || '').toLowerCase().includes(search)) return true;
+    return (evalModelById[id] || []).some(e => (e.model || '').toLowerCase().includes(search));
   });
 
   // Stats bar

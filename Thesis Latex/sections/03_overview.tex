@@ -98,49 +98,8 @@ Physical placement is addressed next, in Section~\ref{s:deployment-architecture}
 
 \begin{figure}[htbp]
     \centering
-    \begin{tikzpicture}[
-        node distance=0.9cm and 1.1cm,
-        proc/.style={rectangle, draw=black, thick, rounded corners, fill=blue!12,
-            minimum width=3.6cm, minimum height=1cm, align=center, font=\small},
-        cache/.style={rectangle, draw=black, thick, rounded corners, fill=gray!15,
-            minimum width=3.6cm, minimum height=1cm, align=center, font=\small},
-        decision/.style={diamond, draw=black, thick, fill=orange!20,
-            aspect=2.2, align=center, font=\scriptsize, inner sep=1pt},
-        store/.style={cylinder, draw=black, thick, fill=green!15, shape border rotate=90,
-            aspect=0.25, minimum height=1.6cm, minimum width=2.2cm, align=center, font=\scriptsize},
-        term/.style={rectangle, draw=black, thick, rounded corners, fill=white,
-            minimum width=2.6cm, minimum height=0.9cm, align=center, font=\small},
-        exec/.style={rectangle, draw=black, thick, rounded corners, fill=red!10,
-            minimum width=3.6cm, minimum height=1cm, align=center, font=\small},
-        rel/.style={-{Latex[length=2mm]}, thick},
-        fb/.style={-{Latex[length=2mm]}, thick, dashed, red!70!black}
-    ]
-        \node[term]                                   (intent)   {User intent};
-        \node[decision, below=of intent]              (hit)      {cache\\hit?};
-        \node[store, right=1.6cm of hit]               (cachedb)  {Semantic\\cache};
-        \node[term, left=1.6cm of hit]                 (result)   {Result to\\researcher};
-
-        \node[proc, below=1.3cm of hit]                (decompose) {Intent decomposition\\(sub-tasks)};
-        \node[proc, below=of decompose]                (retrieve) {Package/dataset\\retrieval (\texttt{brane\_pkg\_db})};
-        \node[term, right=1.1cm of retrieve]            (syntax)   {Static BraneScript\\syntax reference};
-        \node[proc, below=of retrieve]                 (prompt)   {Prompt\\construction};
-        \node[proc, below=of prompt]                   (llm)      {LLM\\generation};
-        \node[exec, below=of llm]                      (brane)    {Brane compile + run\\(\texttt{brane workflow run})};
-
-        \draw[rel] (intent) -- (hit);
-        \draw[rel] (hit) -- node[above, font=\scriptsize]{yes} (result);
-        \draw[rel] (hit) -- node[above, font=\scriptsize]{check} (cachedb);
-        \draw[rel] (hit) -- node[left, font=\scriptsize]{no} (decompose);
-        \draw[rel] (decompose) -- (retrieve);
-        \draw[rel] (syntax) |- (prompt);
-        \draw[rel] (retrieve) -- (prompt);
-        \draw[rel] (prompt) -- (llm);
-        \draw[rel] (llm) -- (brane);
-        \draw[rel] (brane.west) -| ++(-3.6,0) |- node[near start, left, font=\scriptsize]{on success} (result.south);
-        \draw[rel] (brane.east) -| ++(3.6,-0.6) |- node[near start, right, font=\scriptsize]{store} (cachedb.south);
-        \draw[fb] (brane.east) -- ++(1.4,0) |- node[near start, right, font=\scriptsize, align=center]{on failure:\\error feedback} (prompt.east);
-    \end{tikzpicture}
-    \caption{Conceptual architecture shared by both entry points. A cache hit
+    \includegraphics[width=0.82\textwidth]{pipeline_architecture.png}
+    \caption[Pipeline conceptual architecture]{Conceptual architecture shared by both entry points. A cache hit
     returns a previous (intent, workflow, result) triple immediately; on a
     miss, the intent is first decomposed into a short list of sub-tasks,
     which sharpen the query passed to the \emph{only} retrieval component in
@@ -189,63 +148,8 @@ choice ever placing raw data outside the site that owns it
 
 \begin{figure}[htbp]
     \centering
-    \resizebox{0.6\textwidth}{!}{%
-    \begin{tikzpicture}[
-        comp/.style={rectangle, draw=black, thick, rounded corners, fill=blue!10,
-            minimum width=3.8cm, minimum height=0.8cm, align=center, font=\scriptsize},
-        compcache/.style={rectangle, draw=black, thick, rounded corners, fill=gray!18,
-            minimum width=3.8cm, minimum height=0.8cm, align=center, font=\scriptsize},
-        compctrl/.style={rectangle, draw=black, thick, rounded corners, fill=orange!15,
-            minimum width=4.4cm, minimum height=0.8cm, align=center, font=\scriptsize},
-        compexec/.style={rectangle, draw=black, thick, rounded corners, fill=red!10,
-            minimum width=3.2cm, minimum height=0.8cm, align=center, font=\scriptsize},
-        data/.style={cylinder, draw=black, thick, fill=green!15, shape border rotate=90,
-            aspect=0.35, minimum height=1.3cm, minimum width=2.1cm, align=center, font=\tiny},
-        person/.style={rectangle, draw=black, thick, rounded corners, fill=yellow!25,
-            minimum width=2.8cm, minimum height=0.8cm, align=center, font=\small\bfseries},
-        rel/.style={-{Latex[length=2mm]}, thick},
-        site/.style={draw=black!55, densely dashed, thick, rounded corners, inner sep=9pt}
-    ]
-        \node[person] (researcher) at (3.65,12.6) {Researcher};
-
-        \node[comp] (dash-api) at (3.65,10.3) {Frontend / API\\(\texttt{server.py})};
-
-        \node[compcache] (hpc-cache) at (3.65,6.6)  {Semantic cache};
-        \node[comp]      (hpc-dec)   at (3.65,5.65) {Intent decomposition};
-        \node[comp]      (hpc-ret)   at (3.65,4.7)  {Package/dataset retrieval};
-        \node[comp]      (hpc-llm)   at (3.65,3.75) {Fine-tuned LLM};
-
-        \node[compctrl] (ctrl) at (3.65,0.7) {Brane compiler + scheduler};
-
-        \node[compexec] (brt-a) at (0.1,-2.2)  {Brane runtime};
-        \node[data]     (data-a) at (0.1,-3.8) {Local data};
-
-        \node[compexec] (brt-b) at (7.2,-2.2)  {Brane runtime};
-        \node[data]     (data-b) at (7.2,-3.8) {Local data};
-
-        \begin{pgfonlayer}{background}
-            \node[site, fit=(dash-api),
-                label={[font=\bfseries\small]above:Dashboard Server}] (dash-box) {};
-            \node[site, fit=(hpc-cache)(hpc-dec)(hpc-ret)(hpc-llm),
-                label={[align=center, font=\bfseries\small]above:Snellius HPC Cluster\\\normalfont\scriptsize(SLURM batch job)}]
-                (hpc-box) {};
-            \node[site, fit=(ctrl),
-                label={[font=\bfseries\small]above:Brane Control Node}] (ctrl-box) {};
-            \node[site, fit=(brt-a)(data-a),
-                label={[font=\bfseries\small]above:Site A}] (site-a-box) {};
-            \node[site, fit=(brt-b)(data-b),
-                label={[font=\bfseries\small]above:Site B}] (site-b-box) {};
-        \end{pgfonlayer}
-
-        \draw[rel] (researcher.south) -- node[pos=0.5, right, font=\scriptsize]{browser} (dash-box.north);
-        \draw[rel] (dash-box.south) -- node[pos=0.5, right, font=\scriptsize]{submit SLURM job (SSH)} (hpc-box.north);
-        \draw[rel] (hpc-box.south) -- node[pos=0.5, right, font=\scriptsize]{\texttt{brane workflow run}} (ctrl-box.north);
-        \draw[rel] (ctrl-box.south) |- node[near start, left, font=\scriptsize, align=center]{schedule\\execution} (site-a-box.north);
-        \draw[rel] (ctrl-box.south) |- node[near start, right, font=\scriptsize, align=center]{schedule\\execution} (site-b-box.north);
-        \draw[rel] (brt-a) -- (data-a);
-        \draw[rel] (brt-b) -- (data-b);
-    \end{tikzpicture}}
-    \caption{Physical deployment of the components shown in
+    \includegraphics[width=0.85\textwidth]{infra_architecture.png}
+    \caption[Physical deployment topology across infrastructure tiers]{Physical deployment of the components shown in
     Figure~\ref{fig:pipeline-architecture}}
     \label{fig:deployment-topology}
 \end{figure}
@@ -299,14 +203,8 @@ behind Brane CLI interface. The dashboard's other pages are:
 
 \begin{figure}[htbp]
     \centering
-    \fbox{\begin{minipage}{0.85\textwidth}\centering
-    \vspace{2.6cm}
-    {\itshape Screenshot placeholder --- Runs page: stats bar and\\
-    sortable table of past intents with pass/fail verdicts.}
-    \vspace{2.6cm}
-    \end{minipage}}
-    % \includegraphics[width=0.85\textwidth]{dashboard_runs.png}
-    \caption{The Runs page, showing aggregate statistics and a
+    \includegraphics[width=0.95\textwidth]{dashboard-runs.png}
+    \caption[Dashboard: Runs page with intent history]{The Runs page, showing aggregate statistics and a
     searchable, sortable history of every intent previously submitted
     through the dashboard.}
     \label{fig:dashboard-runs}
@@ -314,14 +212,8 @@ behind Brane CLI interface. The dashboard's other pages are:
 
 \begin{figure}[htbp]
     \centering
-    \fbox{\begin{minipage}{0.85\textwidth}\centering
-    \vspace{2.6cm}
-    {\itshape Screenshot placeholder --- Packages/Datasets catalog:\\
-    browsable list of registered packages and datasets.}
-    \vspace{2.6cm}
-    \end{minipage}}
-    % \includegraphics[width=0.85\textwidth]{dashboard_catalog.png}
-    \caption{The Packages catalog, listing every package registered with
+    \includegraphics[width=0.95\textwidth]{dashboard-packages.png}
+    \caption[Dashboard: Packages and Datasets catalog]{The Packages catalog, listing every package registered with
     Brane together with its exposed functions and parameter types; the
     Datasets catalog (not pictured) follows the same layout for registered
     datasets.}
@@ -330,14 +222,8 @@ behind Brane CLI interface. The dashboard's other pages are:
 
 \begin{figure}[htbp]
     \centering
-    \fbox{\begin{minipage}{0.85\textwidth}\centering
-    \vspace{2.6cm}
-    {\itshape Screenshot placeholder --- Evaluation page: model-comparison\\
-    table and per-intent browser.}
-    \vspace{2.6cm}
-    \end{minipage}}
-    % \includegraphics[width=0.85\textwidth]{dashboard_evaluation.png}
-    \caption{The Evaluation page, comparing compile rate, execution rate,
+    \includegraphics[width=0.95\textwidth]{dashboard-runs-individual.png}
+    \caption[Dashboard: per-intent evaluation browser]{The Evaluation page, comparing compile rate, execution rate,
     and output match rate across evaluated models, with a per-intent
     browser for inspecting individual model outputs side by side.}
     \label{fig:dashboard-evaluation}

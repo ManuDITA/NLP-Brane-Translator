@@ -8,11 +8,11 @@ the research questions and the motivation set out in Chapter~\ref{s:intro}.
 
 \subsection{The ceiling problem}
 
-The most striking aspect of the RQ1 results is not the improvement in compile
+The most striking aspect of the \rqref{1} results is not the improvement in compile
 and execution rates across model scales, but the ceiling on output match rate.
-Even at 27B parameters --- a model that compiles 95.6\% of scripts and
-executes 93.2\% --- only 49.6\% of generated workflows produce output that
-matches the reference. This means that for every two scripts the 27B model
+Even at 27B parameters, a model that compiles 95.6\% of scripts and
+executes 93.2\%, only 49.6\% of generated workflows produce output that
+exactly matches the reference. This means that for every two scripts the 27B model
 generates and successfully executes, one produces a wrong answer.
 
 The gap between execution rate (93.2\%) and output match rate (49.6\%) at 27B
@@ -41,36 +41,50 @@ but syntax errors drop sharply from 17.5\% to 4.8\%. The 9B model appears to
 handle BraneScript grammar more reliably while still struggling with state
 tracking across multi-step workflows. The rise in undefined function errors
 (from 1.4\% to 3.8\%) suggests the model is becoming more ambitious in what
-it attempts --- calling package functions it has not verified are available ---
+it attempts, calling package functions it has not verified are available,
 even as its basic syntax improves.
 
 At 27B, compile failures are almost entirely eliminated (syntax: 1.4\%,
 undefined variables: 0.2\%, undefined functions: 2.4\%), but output mismatch
-rises to 43.6\%. The model produces structurally valid workflows that execute
-without error yet return incorrect output. These are the hardest failures to
-detect and correct: unlike a compile error, which is immediately surfaced, a
+rises to 43.6\%. The model produces structurally valid workflows reliably and
+without error, yet returns incorrect output. 
+
+These are the hardest failures to detect and correct:
+unlike a compile error, which is immediately surfaced and detectable by a machine, a
 semantically wrong but syntactically valid BraneScript would silently return
-wrong results to a researcher relying on the pipeline. This class of failure
---- confident, plausible-looking, but incorrect output --- is arguably the
+wrong results to a researcher relying on the pipeline. This class of failure based on confident,
+plausible-looking, but incorrect output, is arguably the
 most practically dangerous failure mode for a system used in scientific data
 analysis.
 
-\subsection{Implications for deployment without a compiler}
+Considering the fact that the pipeline is aimed at domain scientists rather than 
+software engineers, this shift in failure mode has practical implications for 
+deployment: a system that compiles and executes successfully is not necessarily
+a system that produces correct results, and may end up misleading researchers if
+the output is not verified against a reference or ground truth.
 
-An important practical implication of the error profile shift is that compile
-rate is only a reliable quality signal for smaller models. For a 27B-class
-model, a script that compiles is not substantially more likely to be correct
-than one that does not: 43.6\% of examples mismatch even after successful
-execution. Any deployment of this system must therefore include an execution
-step and output verification, not just compilation checking.
+\subsection{Smaller models and their practical value}
+Despite the higher compilation failures seen in the 9B model compared to the 27B model,
+the results hide important details: 
+the smaller model is still capable of producing correct workflows in half of the cases it manages to execute.
 
+The fact that the 9B model is substantially cheaper to run than the 27B model (as it fits
+in a single Nvidia GTX 3060 GPU, a consumer-grade 5-year-old graphics card), 
+suggests that for some use cases, where the cost of running a larger model is prohibitive,
+a smaller model may still be a viable option, provided that additional verification 
+steps are in place to correct its compilation failures.
+The iterative nature of the pipeline proposed in this thesis, where the compilation step can be
+verified and corrected with a feedback loop, allows for a practical trade-off between model size, cost, and accuracy.
+Giving back the compilation error to the model for an iterative correction may allow the 9B model
+to reach similar execution rates as the 27B model, while still being cheaper to run, and therefore 
+more accessible to researchers with limited computational resources.
 % ──────────────────────────────────────────────────────────────────────────────
 \section{RQ2 --- Engineering Effort Dominates Model Scale}\label{s:disc-rq2}
 
-\subsection{Prompt engineering is real}
+\subsection{Prompt engineering as first investment}
 
-The single largest effect observed in this thesis is not a modelling result at
-all: correcting the system prompt and RAG configuration moved the 27B model's
+The single largest effect observed in this thesis came not from model scale but
+from correcting the system prompt and RAG configuration, which moved the 27B model's
 execution rate from 37.9\% to 93.2\% with no change to model weights as represented in Figure~\ref{fig:baseline-first-run}.
 A naive reading of the first evaluation round alone would have concluded that
 even a 27B model is unreliable at BraneScript generation, and that only a
@@ -78,18 +92,17 @@ much larger commercial-grade model could close the gap. After the second round,
 it is clear that this conclusion would have been wrong, and that the actual
 bottleneck was grounding and instruction quality.
 
-This has a direct practical implication for anyone deploying an LLM-based
-translator for a low-resource DSL: investing first in precise retrieval and an
-unambiguous system prompt, and only then in model size or further fine-tuning.
-Because the prompt, retrieval aliases, and output post-processing were all
+This has a direct implication for researchers deploying a local LLM-based
+DSL translators: investing in a precise retrieval and an
+unambiguous system prompt shall be the first priority, and only then model size
+or further fine-tuning shall be taken in consideration.
+Because direct edits to the base the prompt and to the retrieval configuration were all
 revised together between the two evaluation rounds, this finding should be
 read as evidence that retrieval-and-prompt engineering \emph{as a bundle}
 outweighs model scale, not as an isolated measurement of RAG's individual
 contribution against a no-RAG condition (Chapter~\ref{sec:threats}). It also
-validates gap G2 as identified in the literature review
-(Chapter~\ref{s:background}): the missing piece for practical intent-to-WMS
-translation is not raw model capability but a carefully engineered bridge
-between the two.
+validates gap \gap{2}, as the missing piece for practical intent-to-WMS
+translation a carefully engineered bridge between the two and not a larger model alone.
 
 \subsection{The decomposition contribution}
 
@@ -100,91 +113,238 @@ of that bridge: the intent decomposer. Removing it reduces compile rate from
 metrics indicates that the decomposer contributes positively at every stage of
 the pipeline, not just at one particular failure mode.
 
-The most likely mechanism is retrieval quality: without decomposition, the
-RAG retriever receives a long, multi-clause natural-language intent as its
-query. This is a poor match for the chunked package documentation and example
-fragments in the retrieval index, which are written around individual function
-signatures and use cases. By breaking the intent into sub-tasks with explicit
-package and function candidates, the decomposer converts an ambiguous semantic
-query into a precise set of structured queries that align much better with
-the retrieval index's granularity. The decomposer therefore amplifies the
-value of RAG: it makes retrieved context more relevant, which in turn makes
-the generator's task easier.
+A closer look at the error breakdown reveals where decomposition's benefit
+is concentrated. Undefined function errors, where the model calls a function
+that does not exist in the package, occur at virtually the same rate with and
+without decomposition (28.5\% vs.\ 28.8\% of examples). Syntax errors, by
+contrast, fall sharply from 12.3\% to 3.0\% when decomposition is enabled.
+This suggests that the primary contribution of decomposition is not improved
+package or function selection (that is passed to the RAG), but rather that 
+breaking the intent into explicit sub-tasks gives the model a cleaner, more constrained generation
+problem. Smaller, well-scoped sub-tasks appear to reduce the syntactic
+complexity the model must manage in a single generation pass, resulting in
+structurally more correct BraneScript. The function-level hallucinations
+(calling non-existent functions within the correct package) persist at the
+same rate regardless, suggesting they are driven by limitations in the model's
+knowledge of package APIs rather than by input ambiguity.
 
 It is also notable that the output match rate under no-decomposition (26.0\%)
 remains well above zero, meaning the generator can still produce correct
 workflows from unstructured input in roughly one in four cases. This suggests
-the base model has absorbed enough BraneScript knowledge from its pretraining
-to handle simple, single-package intents without decomposition, while the
-multi-package and multi-step cases, which require precise package selection
-and function chaining, are the primary beneficiaries of decomposition.
+the base model can still absorb enough BraneScript knowledge from its inputs
+and produce correct outputs for single-package intents without decomposition.
+
+Finally, a cross-model comparison further underlines decomposition's weight relative to
+model scale. The 4B base model with decomposition enabled achieves 54.6\%
+execution rate, while the 9B model with decomposition disabled reaches only
+48.1\%. Decomposition applied to a smaller model outperforms a model one size
+tier larger running without it. This implies that for deployment scenarios
+where computational resources are constrained, investing in decomposition
+yields more return than upgrading to a larger model.
 
 % ──────────────────────────────────────────────────────────────────────────────
-\section{RQ3 --- Fine-Tuning Requires Train/Inference Consistency}
+\section{RQ3 --- Fine-Tuning Degrades Performance Under Current Conditions}
 
-The regression observed for the 3ep SFT model (49.4\% execution vs.\ 64.9\%
-for the corresponding base model) is, on its own terms, a negative result for
-naively applying supervised fine-tuning. However, its cause --- a mismatch
-between the prompt format used during training and the one used at evaluation
-time --- generalises beyond this project: any fine-tuned model is only as
-reliable as the consistency between how it was trained and how it is
-subsequently prompted. Because BraneScript-generation prompts are themselves a
-moving target during development (the system prompt was revised multiple times
-to fix concrete failure modes, Section~\ref{s:design}), a fine-tuned model is
-effectively coupled to the exact prompt version it was trained against, which
-has implications for how such systems should be maintained in production: a
-prompt change should be treated as invalidating existing fine-tuned adapters
-until they are retrained.
+Both fine-tuned variants collapse to near-zero compile and execution rates on
+the held-out test set, far below the 9B base model they were derived from. The
+comparison between ep5 (five epochs) and ep3-new (three epochs) rules out
+training duration as the cause: the results are nearly identical, confirming
+this is a systematic failure rather than an overfitting artefact.
+
+\subsection{How SFT training is structured}
+
+Each training example is formatted as a three-part conversation. The
+\emph{system message} contains the BraneScript instructions and constraints
+given to the model. The \emph{user message} contains the natural-language
+intent and any retrieved package context. The \emph{assistant message}
+contains the reference BraneScript code to be generated. These three parts
+are concatenated into a single token sequence and fed to the model.
+
+During training, the model is asked to predict each next token given all
+previous ones --- a standard language modelling objective. However, only
+the \emph{assistant} tokens contribute to the loss: the system and user
+tokens are masked and receive zero gradient. This is called response-only
+masking, and its purpose is to teach the model exclusively to generate
+correct BraneScript, not to reproduce the instructions or the user's request.
+The loss function used is cross-entropy: at each assistant token position,
+the model outputs a probability distribution over its vocabulary, and the
+loss penalises assigning low probability to the correct next token. The
+LoRA adapter weights are updated via backpropagation to reduce this loss.
+
+\subsection{Why memorisation occurred}
+
+Three compounding factors drove the training into memorisation rather than
+generalisation.
+
+\paragraph{Dataset too small relative to model capacity.}
+Qwen3.5-9B is a model pre-trained on trillions of tokens. Its LoRA adapter,
+even with a conservative rank of 16, still contains millions of trainable
+parameters. With only 497 training examples, there is vastly more model
+capacity than data. Under these conditions gradient descent finds the path
+of least resistance: memorising the 497 specific input--output mappings
+exactly, rather than abstracting reusable patterns. Studies on fine-tuning
+small and mid-sized LLMs find that measurable generalisation requires at least
+1{,}000--5{,}000 diverse, high-quality examples for code generation
+tasks~\cite{guo2025unveiling,chen2025massive}; 497 falls below the threshold
+at which any generalisation benefit over the base model can be expected.
+
+\paragraph{Learning rate too aggressive.}
+The SFT learning rate of $2 \times 10^{-4}$ is high for a model of this size.
+A high learning rate causes large weight updates per step, snapping the adapter
+tightly to the training examples in very few steps. The training loss collapsed
+to near zero within 0.3 epochs --- after seeing roughly 150 examples for the
+first time --- confirming that memorisation was complete almost immediately.
+A lower learning rate (e.g.\ $1 \times 10^{-5}$) would have slowed this
+process, potentially allowing the model to build more generalisable
+associations before the adapter overfit.
+
+\paragraph{No mechanism to stop memorisation.}
+There was no early stopping based on validation loss, no weight decay, and
+no dropout on the adapter. Nothing penalised or interrupted memorisation once
+it began. The trainer continued updating weights for the full number of epochs
+even though loss had already reached zero, reinforcing the memorised mappings
+further.
+
+\subsection{Why memorisation causes test-set failure}
+
+The LoRA adapter encodes 497 specific context-window patterns: for each
+training example, it learned ``when the system prompt and this specific user
+intent are in context, output this specific BraneScript''. On the test set,
+the system prompt is the same but the user intents are new --- ones the model
+has never seen. The adapter has no memorised answer for them.
+
+Crucially, the adapter does not simply stay inactive on unseen inputs: its
+weights are always applied on top of the base model, and they actively push
+the generation away from what the base model would naturally produce. The
+result is a generation that is neither the clean output of the pre-trained
+base model nor a valid BraneScript: the adapter disrupts the base model's
+competent zero-shot behaviour without replacing it with anything useful.
+This explains why the fine-tuned models (2--4\% compile rate) perform far
+worse than the base model they were derived from (49\% compile rate).
+
+\subsection{Symptoms of memorisation in the generated outputs}
+
+The character of the generated outputs confirms this picture. Three patterns
+appear consistently across both fine-tuned variants.
+
+\paragraph{Verbose inline reasoning.}
+Training examples contain only intent--BraneScript pairs with no comments or
+intermediate reasoning; the average training output is 352~characters.
+Generated outputs average 1{,}800--2{,}000~characters --- roughly five times
+longer. On unseen intents the adapter provides no memorised continuation, and
+the base model's pre-trained code generation behaviour floods back: multi-line
+comment blocks, repeated \texttt{commit\_result} calls with conflicting
+arguments, and self-contradictory remarks about the correct approach.
+
+\paragraph{Context contamination.}
+Although the system and user tokens receive zero loss during training, the
+model still sees them in the context window for every training example. With
+loss collapsing immediately, the model effectively memorises each
+training example as a complete context-window pattern, conflating prompt
+content with assistant output. On unseen inputs it reproduces verbatim
+fragments of the system prompt as inline comments mid-script --- phrases such
+as \texttt{\# Do NOT attempt to re-implement the masking logic} or
+\texttt{\# package function outputs}, drawn directly from the system prompt's
+constraint list, appear inside the generated BraneScript. This is a
+consequence of full-context memorisation rather than a failure of the
+masking scheme itself.
+
+\paragraph{Truncated scripts and EOF errors.}
+95--98\% of compile failures are \texttt{reached end-of-file unexpectedly}
+errors: scripts are syntactically plausible up to the point where they are
+cut off mid-block. The model has a strong prior for starting a BraneScript
+structure (learned from seen examples) but no reliable prior for concluding
+one on a novel intent, so generation simply runs out of coherent content
+before closing all open blocks.
+
+\subsection{Implications and scope of the finding}
+
+The near-zero compile rates should be read as a consequence of insufficient
+training scale rather than as evidence that BraneScript is unlearnable via
+SFT. The most direct remedy is a larger, more diverse training set on the
+order of several thousand examples covering the full range of package
+combinations and intent types. Complementary measures --- a lower learning
+rate, early stopping on validation loss, and data augmentation through intent
+paraphrasing --- would further reduce the risk of memorisation even with a
+modestly sized dataset. Additionally, fine-tuning was limited to the 9B model
+due to GPU allocation constraints on Snellius; larger models (27B, 70B) with
+stronger zero-shot instruction-following capabilities may require fewer
+examples to generalise, making them potentially more robust to the data
+scarcity observed here. All of these remain open directions for future work.
 
 % ──────────────────────────────────────────────────────────────────────────────
-\section{RQ4 --- Semantic Caching Has a Fundamental, Not Just an Engineering, Limit}\label{s:disc-rq4}
+\section{RQ4 --- Semantic Caching as a Practical Reproducibility Layer}\label{s:disc-rq4}
+
+The evaluation of the semantic cache yields two sets of findings that must be
+read together. On one hand, the cache achieves a 99.1\% hit rate and a
+98.3\% correct rate at the 0.92 threshold over the paraphrase test set,
+indicating that sentence-embedding similarity is an effective proxy for
+intent equivalence. On the other hand, the threshold sweep reveals an irreducible
+false-positive floor of approximately 0.9\% for the same threshold value, attributable to the inability
+of general-purpose embeddings to distinguish intents that share the same
+topic but differ in specific parameter values.
+
+The first finding addresses the core design goal of the cache: to return the
+same verified workflow for semantically equivalent intents without repeating
+the generation step ensuring reproducibility. The observed hit and correct rates confirm that this
+goal is met under the evaluation conditions. The second finding establishes
+a boundary on when the cache should be trusted: its error rate is hardly reducible 
+to zero by threshold tuning alone. The two findings together suggest that the cache
+is best understood as a \emph{performance optimisation with a bounded, known error rate} rather
+than a reproducibility guarantee in the strict scientific sense.
 
 \subsection{The false-positive floor}
 
-The cache threshold sweep (Section~\ref{s:eval-cache}) shows an irreducible
-false-positive floor of approximately 0.9\% across thresholds from 0.80 to
-0.92. Unlike the RQ1/RQ2 finding above, this floor is not attributable to
-fixable engineering choices: it follows from the fact that a general-purpose
-sentence embedding model encodes what an intent is \emph{about}, not the
-exact parameter values within it. Two intents that differ only in a threshold
-value, a column name, or a dataset identifier are, for most practical purposes,
-requests for different computations, yet they are nearly indistinguishable in
-embedding space. Raising the threshold above 0.92 reduces the false-positive
-rate only marginally (from 0.8\% to 0.1\% at 0.98) while collapsing the hit
-rate from 99.1\% to 59.1\% --- an extremely poor trade-off that essentially
-defeats the purpose of the cache.
+The cache threshold sweep reveals a
+false-positive rate that remains stable at approximately 0.9\% across
+thresholds from 0.80 to 0.92, and only drops to 0.1\% at a threshold of
+0.98, at which point the hit rate collapses from 99.1\% to 59.1\%.
+This behaviour indicates that the false positives are not a function of the
+threshold being too low, but of the embedding model mixing structurally
+similar intents regardless of parameter values. Unlike the \rqref{1}/\rqref{2}
+findings above, this is not attributable to fixable engineering choices: a
+general-purpose sentence embedding model encodes what an intent is
+\emph{about}, not the exact parameter values within it. Two intents that
+differ only in a threshold value, a column name, or a dataset identifier are,
+for most practical purposes, requests for different computations, yet they
+are nearly indistinguishable in embedding space. Threshold tuning is therefore
+not a completely viable path towards the elimination of false positives.
 
-This is a direct, empirical instance of gap G3 (no agreed definition of intent
-reproducibility, Chapter~\ref{s:background}): the semantic cache implicitly
+This is a direct, empirical instance of gap \gap{3}, where no agreed definition of intent
+reproducibility exists (Chapter~\ref{s:background}): the semantic cache implicitly
 assumes that ``reproducible'' means ``the same workflow for the same
 \emph{propositional} intent'', while for scientific correctness it must mean
 ``the same workflow for the same intent \emph{including all parameter values}''.
 
+A semantic cache that weights parameter values more heavily than topic similarity 
+would be a more appropriate solution for scientific reproducibility, but it would require a
+different embedding model or a custom similarity function that is aware of the DSL's 
+parameter semantics. This is a potential avenue left for future work.
+
 \subsection{The operating point and its practical meaning}
 
-At the default threshold of 0.92, the cache achieves a hit rate of 99.1\% and
-a correct rate of 98.3\% over the 1974 paraphrase intents. The remaining
-0.8\% false-positive rate means that for every 125 cache hits, approximately
+The remaining 0.8\% false-positive rate from the 0.92 threshold means that for every 125 cache hits, approximately
 one will return a workflow intended for a semantically similar but distinct
-intent. In a scientific computing context, this is not a negligible risk: a
+intent. In a scientific computing context, this is not a negligible risk, as a
 wrong workflow executed silently on a dataset could produce results that look
-plausible but are derived from the wrong analysis. The cache therefore should
-not be used as the sole quality gate; it should be treated as a performance
-optimisation that removes redundant LLM calls for clearly equivalent intents,
-while the execution and output verification steps remain active for all
-workflows, cached or not.
+plausible but are derived from the wrong analysis. For this reason, the cache should
+not be used as the sole quality gate.
 
-\subsection{Why the hit rate is so high}
+It is worth noting, however, that the threshold can be treated as a
+confidence dial rather than a fixed parameter. Raising the threshold does not
+simply reduce false positives by a small margin, but it causes the cache to
+abstain on lower-confidence matches entirely, routing them to a fresh
+generation call instead. At 0.96, for example, the false-positive rate drops
+to 0.65\% while the hit rate falls to 88.1\%, meaning that roughly 12\% of
+requests that would have been served from cache are instead regenerated. For
+deployments where correctness is critical and generation cost is acceptable,
+a higher threshold is therefore a principled strategy: uncertain matches will
+receive a new and independently generated workflow rather than a cached one of
+unknown validity. The threshold, in this sense, encodes a policy choice about
+the acceptable trade-off between latency and confidence, and the sweep data
+in Section~\ref{s:eval-cache} provides the empirical basis for making that
+choice explicitly.
 
-The 99.1\% hit rate at threshold 0.92 deserves some scrutiny: it is
-evaluated against paraphrases generated by the same LLM (Qwen3.5-4B) that
-was used to build the cache, using the same embedding model
-(\texttt{all-MiniLM-L6-v2}). Paraphrases from the same model family are
-likely to produce embeddings that cluster more tightly than paraphrases from
-a human or a different model would. The hit rate in real deployment, where
-users rephrase requests with genuinely diverse vocabulary and sentence
-structure, may be lower. This is a limitation discussed further in
-Chapter~\ref{sec:threats}.
 
 % ──────────────────────────────────────────────────────────────────────────────
 \section{Revisiting the Choice of Brane}
@@ -192,18 +352,13 @@ Chapter~\ref{sec:threats}.
 The motivation for using Brane as the testbed for this work
 (Chapter~\ref{s:background}) rested on two properties: its support for
 federated workflows in which the party executing a computation need not own
-the underlying data, and its enforcement --- via typed, sandboxed packages ---
-of that separation at the platform level rather than by convention. The
-results in this thesis evaluate translation accuracy, not privacy directly,
-but the architecture that makes evaluation possible is itself evidence for
-that motivation: every one of the seven packages used in this work
-(\texttt{healthcare}, \texttt{genomics}, \texttt{epidemics},
-\texttt{statistics}, \texttt{text\_analysis}, \texttt{data\_masking},
-\texttt{datetime}) executes against data registered locally, and at no point
-does the generation pipeline --- which may call out to a shared or remote LLM
-service --- receive raw patient or genomic records; it only ever sees the
-intent text and package and dataset \emph{metadata}. The translation problem
-studied here is therefore additive to Brane's existing privacy guarantees
+the underlying data, and its enforcement, via typed, sandboxed packages
+of that separation at the platform level rather than by convention. 
+
+The results in this thesis evaluate translation accuracy and reproducibility, 
+but the selection of an underlying architecture that makes evaluation possible under private conditions
+is itself evidence for a privacy-centered design. 
+The translation problem studied here is therefore additive to Brane's existing privacy guarantees
 rather than a replacement for them: a correct BraneScript workflow inherits
 Brane's data-locality enforcement automatically, simply by virtue of being
 expressed in BraneScript rather than in a Python script with unrestricted file
@@ -230,7 +385,7 @@ Retrieval and prompt engineering account for the largest single improvement
 observed, and should be the first investment for anyone building a similar
 system for a low-resource DSL. The decomposer contributes a further, consistent
 improvement by converting vague multi-clause intents into structured retrieval
-queries; its removal degrades all three metrics by 10--17 percentage points.
+queries.
 
 Scaling the base model from 4B to 27B brings substantial compile and execution
 rate improvements, but the output match ceiling at 49.6\% reveals that scale
@@ -243,11 +398,6 @@ Semantic caching provides a strong and computationally cheap reproducibility
 mechanism for repeated or paraphrased intents, but has an irreducible
 false-positive floor imposed by the limitations of sentence embeddings as a
 proxy for computational equivalence. The threshold of 0.92 represents an
-acceptable operating point, not a principled solution to the parameter
-sensitivity problem.
-
-None of these three layers is a substitute for the others, and each addresses
-a different failure mode: retrieval and prompting address the model's lack of
-BraneScript-specific knowledge, fine-tuning addresses residual syntactic and
-package-usage errors, and caching addresses redundant computation and partial
-reproducibility for repeated intents.
+acceptable operating point and not a principled solution to the parameter
+sensitivity problem. System administrator may choose to tune the threshold to
+a higher value if correctness is critical and generation cost is acceptable.

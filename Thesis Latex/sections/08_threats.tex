@@ -4,32 +4,34 @@ This chapter reports threats to the validity of the experiments in
 Chapter~\ref{s:evaluation}, following the classification proposed by Wohlin
 et al.~\cite{wohlin12}.
 
-\section{Internal Validity}
+\section{Internal Validity}\label{sec:internal-validity}
 
-The training and evaluation datasets were both authored and curated by the
-same researcher who also designed the pipeline and interpreted the results,
-which introduces a risk of confirmation bias in which intents that are known
-to work well with the retrieval and prompt design were more likely to be
-included or phrased favourably. The regression observed for the first SFT
-model (Section~\ref{s:evaluation}) is itself direct evidence of an internal
-validity threat that was realised in practice: a prompt-format mismatch
-between training and evaluation silently degraded a model's measured
-performance and would have been mistaken for a genuine capability regression
-had the cause not been specifically investigated. This raises the possibility
-that other, undetected train/inference inconsistencies remain in the reported
-results. Additionally, the July and August baseline evaluation rounds differ
+The difference between the two baseline evaluation in Subsection~\ref{s:eval-rounds}
+presented in rounds differ
 in more than one variable simultaneously (system prompt, RAG aliases, and
-output post-processing all changed together), so the reported 37.9\%
-$\rightarrow$ 92.7\% improvement cannot be decomposed into the individual
-contribution of each fix.
+output post-processing all changed together), so the reported 13.5\%
+$\rightarrow$ 49.6\% improvement in output match rate for the Qwen3.6-27B model
+cannot be decomposed into the individual contribution of each fix. Additionally, gauging the
+quality of the first prompting round is a subjective judgement, and the choice of which prompts
+to include in the second round was informed by the first round's results, which may have 
+introduced a more refined prompt that would not have been chosen in a blind evaluation.
+
+A second internal validity threat concerns the supervised fine-tuning evaluation.
+The 87 test intents were drawn from the same 584-intent pool used to design
+the training set, meaning both splits share the same package set, the same
+operation types, and the same authoring conventions. The SFT model may
+therefore benefit from near-memorisation of structural patterns present in
+the training data rather than demonstrating genuine generalisation to unseen
+intents. A stricter evaluation would require test intents authored
+independently and targeting package or operation combinations not represented
+in training.
 
 \section{External Validity}
 
-All evaluated intents target one of seven hand-built Brane packages designed
-specifically for this project, covering a curated set of scientific scenarios
-(healthcare, genomics, epidemiology, statistics, text analysis, data masking,
-datetime). It is not established that the translation accuracy, RAG design,
-or cache behaviour reported here generalise to (i)~packages built by other
+All evaluated intents target one of six hand-built Brane packages designed
+specifically for this project, covering a curated set of scientific scenarios. 
+It is not established that the translation accuracy, RAG design,
+or cache behaviour reported in Section~\ref{s:eval-cache} generalise to (i)~packages built by other
 teams with different documentation conventions, (ii)~substantially larger
 package ecosystems, or (iii)~intents drawn from real scientists' requests
 rather than researcher-authored examples. The dataset is also comparatively
@@ -37,24 +39,23 @@ small (584 unique intents) relative to general-purpose code-generation
 benchmarks, which limits confidence that the findings extrapolate to
 significantly more diverse workloads.
 
-\section{Construct Validity}
+The pipeline is also tailored specifically to BraneScript: the RAG retrieval
+is designed around package documentation structure, the decomposition strategy
+targets BraneScript's function-call granularity, and the prompt templates
+encode BraneScript syntax conventions explicitly. Whether the approach
+generalises to other scientific workflow DSLs, such as CWL, Nextflow, or
+Snakemake, is untested; these languages have substantially different
+abstraction models and documentation styles that would require independent
+evaluation.
 
-The three evaluation metrics (compile rate, execution rate, output match rate)
-are proxies for correctness rather than correctness itself. Execution rate in
-particular only certifies that a workflow ran without a runtime error; a
-workflow can execute successfully while still computing the scientifically
-wrong result if the error is not one that Brane surfaces as a failure (e.g., a
-plausible but incorrect statistical computation). Output match rate is a
-stricter proxy but compares exact \texttt{stdout} strings, which penalises
-workflows that are semantically correct but format their output differently
-from the reference (e.g., different rounding or key ordering), and is only
-computed over the subset of examples with a stored reference output, which may
-not be representative of the full evaluation set. Similarly, the cache
-benchmark's ``correct rate'' requires an exact script match, while the
-separately reported ``fuzzy correct rate'' (bigram similarity $\geq 0.95$)
-is a coarser proxy that may both overstate correctness (superficially similar
-but semantically different scripts) and understate it (a correct but
-differently formatted script falling below the similarity threshold).
+All 584 intents in the dataset (and their relative paraphrases) were authored by a single researcher with
+detailed knowledge of both the packages and BraneScript. This means the
+intents may unconsciously reflect what the system handles well, which is a natural
+precise phrasing with well-scoped requests. 
+Real users with less familiarity with the underlying system may
+produce more ambiguous, colloquial, or domain-specific intents that the
+pipeline was not tested against. Additionally, all test intents were formalized in the English language;
+performance for non-native English speakers or non-English intents is unknown.
 
 \section{Conclusion Validity}
 
@@ -64,7 +65,16 @@ Chapter~\ref{s:evaluation}: no repeated-sampling or significance testing was
 performed to quantify the variance introduced by LLM sampling stochasticity,
 so reported percentage differences between models (e.g., 92.7\% vs.\ 63.4\%
 execution rate) should be read as point estimates from a single trial rather
-than as statistically validated effects. The cache threshold sweep is
+than as statistically validated effects. This is particularly relevant for the
+supervised fine-tuning results in Section~\ref{s:eval-sft}: at 87 examples, a
+difference of four correctly translated intents corresponds to approximately
+4.6 percentage points, meaning that the observed gap between the SFT and base
+models may not be statistically distinguishable from sampling noise. Larger
+test sets and repeated runs with different random seeds would be required to
+confirm whether the SFT improvement is a robust effect or a product of the
+specific test split.
+
+The cache threshold sweep is
 comparatively more robust, being computed over 1974 paraphrase queries, but
 still draws on paraphrases generated by a single LLM (Qwen3.5-4B), which may
 itself introduce systematic paraphrasing patterns that do not represent the

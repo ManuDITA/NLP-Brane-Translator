@@ -1,27 +1,50 @@
-
 % Thesis Abstract -----------------------------------------------------
 
 
 %\begin{abstractslong}    %uncommenting this line, gives a different abstract heading
 \begin{abstracts}        %this creates the heading for the abstract page
 
-\noindent \textit{Context}. 
-\todo{at the end}
+Scientific workflows underpin modern data-driven research, yet composing them
+remains a task reserved for those with programming expertise. Domain scientists
+like clinicians, biologists, policy analysts, must all either learn a
+workflow-description language or rely on software engineers to express their
+analytical intent as an executable pipeline. With the recent emergence of large 
+language models (LLMs), an opportunity to bridge this gap by translating natural-language
+descriptions of analytical intent into executable workflows arises.
+At the same time, relying on LLMs to automate this translation 
+raises two practical concerns that are rarely addressed together: 
+\emph{privacy}, since scientific data is often sensitive and cannot be sent to a commercial cloud API, 
+and \emph{reproducibility}, since a system that generates a different workflow each
+time the same question is asked undermines the very goal of scientific
+computing.
 
-\noindent \textit{Goal}. 
-\todo{at the end}
+This thesis explores whether these constraints can be satisfied simultaneously.
+It proposes a pipeline built entirely on locally deployable, open-weight models
+that translates natural-language descriptions of analytical intent into
+executable workflows for the Brane distributed computing framework. By keeping
+inference on-premises and caching verified translations by semantic
+equivalence, the system attempts to close the gap between the ease of
+natural-language expression and the precision that scientific workflow
+execution demands, without compromising on data governance or result
+consistency. The findings offer insight into where the real bottlenecks lie
+when bringing LLM-based automation into resource-constrained, privacy-sensitive
+scientific environments.
 
-\noindent \textit{Method}. 
-\todo{at the end}
-
-\noindent \textit{Results}. 
-\todo{at the end}
-
-\noindent \textit{Conclusions}. 
-\todo{at the end}
+The pipeline combines retrieval-augmented generation, structured intent
+decomposition, and a semantic cache, evaluated across three open-weight model
+scales on a BraneScript test set. The results show that prompt and retrieval
+engineering outweigh model scale as the primary driver of translation quality,
+with the largest model reaching 93\% execution rate after targeted grounding
+improvements. Intent decomposition provides consistent gains at every scale.
+Supervised fine-tuning revealed a prompt-coupling fragility that must be
+managed explicitly in any maintained deployment. The semantic cache achieves
+near-complete hit rates on paraphrased inputs while exposing a fundamental
+limit of embedding-based similarity for parameter-sensitive scientific queries
+--- a tension that points to open problems at the intersection of NLP and
+scientific reproducibility.
 
 \end{abstracts}
 %\end{abstractlongs}
 
 
-% ---------------------------------------------------------------------- 
+% ----------------------------------------------------------------------

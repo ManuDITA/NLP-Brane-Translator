@@ -152,7 +152,7 @@ formats discussed in the remainder of this section extend or specialise.
         \draw[rel] (activity) -- node[left, font=\scriptsize]{wasAssociatedWith} (agent);
         \draw[rel] (result) -- node[right, font=\scriptsize, xshift=1mm]{wasAttributedTo} (agent);
     \end{tikzpicture}
-    \caption{The core PROV-DM graph: entities (yellow ellipses), activities
+    \caption[PROV-DM core graph: entities, activities, and agents]{The core PROV-DM graph: entities (yellow ellipses), activities
         (blue rectangles), and agents (orange pentagons) connected by the
         \texttt{used}, \texttt{wasGeneratedBy}, \texttt{wasAssociatedWith},
         and \texttt{wasAttributedTo} relations, following standard PROV-O
@@ -323,39 +323,44 @@ A systematic review of the scientific workflow, provenance, intent-based
 orchestration, and LLM literature reveals five persistent gaps:
 
 \begin{description}
+    \phantomsection\label{gap:1}
     \item[G1 --- Intent Provenance Model.] No existing system defines a formal
         model for recording the intent that triggered a workflow execution
         alongside the standard retrospective execution provenance.
 
+    \phantomsection\label{gap:2}
     \item[G2 --- Hybrid Intent-to-WMS Bridge.] No system simultaneously supports
         declarative natural-language intent expression, translation to a
         target WMS DSL, and WMS-grade reproducibility guarantees. Systems either
         provide natural-language interfaces without WMS integration, or WMS
         integration without natural-language interfaces.
 
+    \phantomsection\label{gap:3}
     \item[G3 --- Intent Reproducibility Definition.] There is no agreed
         definition of what it means for an intent-based system to be
         reproducible: do two semantically equivalent intents need to produce the
         same workflow, or is it acceptable for them to produce different but
         equally valid ones?
 
+    \phantomsection\label{gap:4}
     \item[G4 --- Human-in-the-Loop Trust Checkpoints.] Existing proposals
         for LLM-based workflow generation do not provide principled mechanisms
         for a scientist to inspect and approve a generated workflow before
         execution, particularly important in safety-sensitive or privacy-sensitive
         domains.
 
+    \phantomsection\label{gap:5}
     \item[G5 --- Cross-Paradigm Benchmarks.] There are no publicly available
         benchmarks that evaluate intent-based systems against conventional user-defined WMS
         approaches on the same scientific tasks.
 \end{description}
 
-This thesis addresses \textbf{G2} directly: it implements a hybrid bridge
+This thesis addresses \gap{2} directly: it implements a hybrid bridge
 between natural-language intent expression and the Brane WMS via LLM-based
-BraneScript generation. It also addresses \textbf{G1} by proposing an intent
+BraneScript generation. It also addresses \gap{1} by proposing an intent
 provenance model that records the mapping from natural-language intent to
 generated workflow alongside standard retrospective execution provenance
-(Chapter~\ref{ch:design}). Finally, it provides partial evidence towards \textbf{G3}
+(Chapter~\ref{ch:design}). Finally, it provides partial evidence towards \gap{3}
 through the semantic cache threshold analysis.
 
 % ------------------------------------------------------------------
